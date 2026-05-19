@@ -1,0 +1,39 @@
+.DS_Store
+.cursor/
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Generated app artifacts
+webapp/.next/
+webapp/out/
+webapp/node_modules/
+webapp/python/
+webapp/tsconfig.tsbuildinfo
+webapp/storage/uploads/*
+!webapp/storage/uploads/.gitkeep
+webapp/storage/generated-contracts/*
+!webapp/storage/generated-contracts/.gitkeep
+webapp/storage/drafts/*
+!webapp/storage/drafts/.gitkeep
+
+# Local source documents and deployment archives
+/*.docx
+/*.xlsx
+/*.png
+/*.rar
+/*.zip
+/*.tar.gz
+/zhanweifu/
+/generate_*.py
+/quote_pdf_table_agent.py
+/scripts/
+/合同模板/
+/报价单/

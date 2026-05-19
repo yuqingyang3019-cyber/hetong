@@ -1,0 +1,140 @@
+name: Deploy to AgentRun
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: "20"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: webapp/requirements.txt
+
+      - name: Install Node dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Install Python dependencies
+        working-directory: webapp
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Run tests
+        working-directory: webapp
+        run: npm test
+
+      - name: Build Next.js
+        working-directory: webapp
+        run: npm run build
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
+      DASHSCOPE_MODEL: ${{ secrets.DASHSCOPE_MODEL }}
+      DASHSCOPE_ENABLE_THINKING: ${{ secrets.DASHSCOPE_ENABLE_THINKING }}
+      ALIYUN_OCR_ENDPOINT: ${{ secrets.ALIYUN_OCR_ENDPOINT }}
+      ALIYUN_OCR_REGION_ID: ${{ secrets.ALIYUN_OCR_REGION_ID }}
+      ALIYUN_OCR_SCENE: ${{ secrets.ALIYUN_OCR_SCENE }}
+      ALIYUN_OCR_OUTPUT_TABLE: ${{ secrets.ALIYUN_OCR_OUTPUT_TABLE }}
+      ALIYUN_OCR_LINELESS_TABLE: ${{ secrets.ALIYUN_OCR_LINELESS_TABLE }}
+    concurrency:
+      group: agentrun-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: webapp/requirements.txt
+
+      - name: Install Serverless Devs
+        run: npm install -g @serverless-devs/s
+
+      - name: Install Node dependencies
+        working-directory: webapp
+        run: npm ci
+
+      - name: Build Next.js
+        working-directory: webapp
+        run: npm run build
+
+      - name: Vendor Python dependencies
+        working-directory: webapp
+        run: |
+          rm -rf python
+          python3 -m pip install -r requirements.txt -t python
+
+      - name: Configure Aliyun credentials
+        run: |
+          s config add \
+            --AccountID ${{ secrets.ALIYUN_ACCOUNT_ID }} \
+            --AccessKeyID ${{ secrets.ALIYUN_ACCESS_KEY_ID }} \
+            --AccessKeySecret ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }} \
+            --alias default
+
+      - name: Build AgentRun package
+        run: s build -t s.yaml
+
+      - name: Deploy to AgentRun
+        run: s deploy -t s.yaml --assume-yes
+
+      - name: Get endpoint URL
+        id: get-url
+        run: |
+          ENDPOINT_URL=$(s info -t s.yaml 2>/dev/null | sed -n 's/.*\(https:\/\/[^[:space:]]*\).*/\1/p' | head -1)
+          echo "endpoint_url=$ENDPOINT_URL" >> "$GITHUB_OUTPUT"
+          echo "Endpoint URL: $ENDPOINT_URL"
+
+      - name: Health check
+        if: steps.get-url.outputs.endpoint_url != ''
+        run: |
+          sleep 10
+          ENDPOINT_URL="${{ steps.get-url.outputs.endpoint_url }}"
+          curl -f "${ENDPOINT_URL}/"
+
+      - name: AGUI protocol check
+        if: steps.get-url.outputs.endpoint_url != ''
+        run: |
+          ENDPOINT_URL="${{ steps.get-url.outputs.endpoint_url }}"
+          curl -f -N "${ENDPOINT_URL}/ag-ui/agent" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "Accept: text/event-stream" \
+            -d '{"threadId":"ci-thread","runId":"ci-run","state":{},"messages":[{"id":"ci-msg","role":"user","content":"健康检查"}],"tools":[],"context":[],"forwardedProps":{"healthCheck":true}}'

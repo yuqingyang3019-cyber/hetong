@@ -1,0 +1,8 @@
+.env
+.env.*
+node_modules
+storage/uploads/*
+storage/generated-contracts/*
+storage/drafts/*
+templates/original/*
+templates/docx/*

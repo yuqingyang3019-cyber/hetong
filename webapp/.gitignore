@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+python
+.env
+.env.local
+storage/uploads/*
+!storage/uploads/.gitkeep
+storage/generated-contracts/*
+!storage/generated-contracts/.gitkeep
+storage/drafts/*
+!storage/drafts/.gitkeep
+templates/original/*
+templates/docx/*

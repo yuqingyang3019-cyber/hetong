@@ -1,0 +1,85 @@
+{
+  "template": {
+    "id": "professionalSubcontract",
+    "engine": "docxtpl",
+    "syntax": "jinja2",
+    "docx": "zhanweifu/professional-subcontract.docx"
+  },
+  "scalars": [
+    {
+      "key": "contractNo",
+      "label": "合同编号"
+    },
+    {
+      "key": "signYear",
+      "label": "签订年"
+    },
+    {
+      "key": "signMonth",
+      "label": "签订月"
+    },
+    {
+      "key": "signDay",
+      "label": "签订日"
+    },
+    {
+      "key": "supplierName",
+      "label": "分包方名称"
+    },
+    {
+      "key": "supplierAddress",
+      "label": "分包方联系地址"
+    },
+    {
+      "key": "supplierBank",
+      "label": "分包方开户银行"
+    },
+    {
+      "key": "supplierAccount",
+      "label": "分包方银行账号"
+    },
+    {
+      "key": "supplierTaxNo",
+      "label": "分包方税号"
+    },
+    {
+      "key": "supplierPhone",
+      "label": "分包方电话"
+    },
+    {
+      "key": "supplierFax",
+      "label": "分包方传真"
+    },
+    {
+      "key": "projectName",
+      "label": "工程名称"
+    },
+    {
+      "key": "engineeringLocation",
+      "label": "工程地点"
+    },
+    {
+      "key": "engineeringScope",
+      "label": "工程范围"
+    }
+  ],
+  "tables": {
+    "items": {
+      "label": "付款节点",
+      "columns": [
+        {
+          "key": "node",
+          "label": "节点"
+        },
+        {
+          "key": "progressDescription",
+          "label": "完成施工进度节点描述"
+        },
+        {
+          "key": "paymentRate",
+          "label": "经甲方确认完成后，支付合同价款的比例（%）"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,51 @@
+edition: 3.0.0
+name: hetong-agui
+access: default
+
+vars:
+  region: cn-hangzhou
+  agent_name: hetong-agui
+  role: acs:ram::${config("AccountID")}:role/AliyunAgentRunDefaultRole
+
+resources:
+  agent:
+    component: agentrun
+    props:
+      region: ${vars.region}
+      agent:
+        name: ${vars.agent_name}
+        description: 合同生成 Agent，支持 AGUI 报价单上传与合同下载链接返回
+        role: ${vars.role}
+        code:
+          src: ./webapp
+          language: nodejs20
+          command:
+            - npm
+            - run
+            - start
+        cpu: 1.0
+        memory: 2048
+        port: 3000
+        instanceConcurrency: 20
+        internetAccess: true
+        environmentVariables:
+          NODE_ENV: production
+          NEXT_TELEMETRY_DISABLED: "1"
+          PORT: "3000"
+          PYTHONPATH: /code/python:/opt/python:/code:/code/python
+          DASHSCOPE_API_KEY: ${env("DASHSCOPE_API_KEY")}
+          DASHSCOPE_BASE_URL: ${env("DASHSCOPE_BASE_URL")}
+          DASHSCOPE_MODEL: ${env("DASHSCOPE_MODEL")}
+          DASHSCOPE_ENABLE_THINKING: ${env("DASHSCOPE_ENABLE_THINKING")}
+          ALIYUN_ACCESS_KEY_ID: ${env("ALIYUN_ACCESS_KEY_ID")}
+          ALIYUN_ACCESS_KEY_SECRET: ${env("ALIYUN_ACCESS_KEY_SECRET")}
+          ALIYUN_OCR_ENDPOINT: ${env("ALIYUN_OCR_ENDPOINT")}
+          ALIYUN_OCR_REGION_ID: ${env("ALIYUN_OCR_REGION_ID")}
+          ALIYUN_OCR_SCENE: ${env("ALIYUN_OCR_SCENE")}
+          ALIYUN_OCR_OUTPUT_TABLE: ${env("ALIYUN_OCR_OUTPUT_TABLE")}
+          ALIYUN_OCR_LINELESS_TABLE: ${env("ALIYUN_OCR_LINELESS_TABLE")}
+        logConfig: auto
+        endpoints:
+          - name: Default
+            version: LATEST
+            description: 默认入口

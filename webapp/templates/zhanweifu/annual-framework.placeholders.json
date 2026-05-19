@@ -1,0 +1,114 @@
+{
+  "template": {
+    "id": "annualFramework",
+    "engine": "docxtpl",
+    "syntax": "jinja2",
+    "docx": "zhanweifu/annual-framework.docx"
+  },
+  "scalars": [
+    {
+      "key": "contractNo",
+      "label": "合同编号"
+    },
+    {
+      "key": "signYear",
+      "label": "签订年"
+    },
+    {
+      "key": "signMonth",
+      "label": "签订月"
+    },
+    {
+      "key": "signDay",
+      "label": "签订日"
+    },
+    {
+      "key": "supplierName",
+      "label": "乙方名称"
+    },
+    {
+      "key": "supplierAddress",
+      "label": "乙方地址"
+    },
+    {
+      "key": "supplierAccount",
+      "label": "乙方银行帐号"
+    },
+    {
+      "key": "supplierTaxNo",
+      "label": "乙方税号"
+    }
+  ],
+  "tables": {
+    "items": {
+      "label": "采购订单明细",
+      "columns": [
+        {
+          "key": "index",
+          "label": "序号"
+        },
+        {
+          "key": "tagNo",
+          "label": "位号"
+        },
+        {
+          "key": "name",
+          "label": "品名"
+        },
+        {
+          "key": "spec",
+          "label": "规格型号"
+        },
+        {
+          "key": "unit",
+          "label": "单位"
+        },
+        {
+          "key": "quantity",
+          "label": "数量"
+        },
+        {
+          "key": "deliveryDays",
+          "label": "货期"
+        },
+        {
+          "key": "unitPrice",
+          "label": "单价（元）"
+        },
+        {
+          "key": "totalPrice",
+          "label": "含税金额（万元）"
+        },
+        {
+          "key": "remark",
+          "label": "备注"
+        }
+      ]
+    },
+    "priceItems": {
+      "label": "年度协议价",
+      "columns": [
+        {
+          "key": "name",
+          "label": "名称"
+        },
+        {
+          "key": "model",
+          "label": "型号"
+        },
+        {
+          "key": "unitPrice",
+          "label": "单价(元)"
+        },
+        {
+          "key": "params",
+          "label": "参数"
+        },
+        {
+          "key": "remark",
+          "label": "备注"
+        }
+      ]
+    }
+  }
+}
