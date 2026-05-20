@@ -55,6 +55,7 @@ type AguiEvent = Record<string, unknown> & {
 };
 
 const encoder = new TextEncoder();
+const MIN_TEXT_QUOTE_LENGTH = 30;
 
 function encodeEvent(event: AguiEvent) {
   return encoder.encode(`data: ${JSON.stringify({ timestamp: Date.now(), ...event })}\n\n`);
@@ -89,6 +90,25 @@ function getTextAndFileContent(message: Message | undefined) {
     .join("\n");
   const filePart = content.find((part) => (part.type === "document" || part.type === "image") && part.source);
   return { text, filePart };
+}
+
+function summarizeInput(input: RunAgentInput) {
+  const lastMessage = getLastUserMessage(input.messages);
+  const content = lastMessage?.content;
+  return {
+    messageCount: input.messages?.length ?? 0,
+    lastUserMessageRole: lastMessage?.role,
+    contentKind: Array.isArray(content) ? "multimodal" : typeof content,
+    contentTypes: Array.isArray(content) ? content.map((part) => part.type) : undefined,
+    stateKeys: input.state ? Object.keys(input.state) : [],
+    forwardedPropKeys: input.forwardedProps ? Object.keys(input.forwardedProps) : [],
+  };
+}
+
+function isLikelyQuoteText(text: string) {
+  const normalized = text.trim();
+  if (normalized.length < MIN_TEXT_QUOTE_LENGTH) return false;
+  return /报价|合同|合计|总价|金额|税|货物|设备|型号|数量|单价|采购|供应商|需方|供方/.test(normalized);
 }
 
 function metadataFileName(metadata: Record<string, unknown> | undefined) {
@@ -227,61 +247,77 @@ async function* runContractAgent(input: RunAgentInput, request: Request): AsyncG
   yield { type: "RUN_STARTED", threadId, runId };
   yield { type: "TEXT_MESSAGE_START", messageId, role: "assistant" };
 
-  if (isHealthCheck(input)) {
-    yield textEvent(messageId, "AGUI 合同生成服务正常。");
+  try {
+    appLog.info("ag-ui-agent", "run input", summarizeInput(input));
+
+    if (isHealthCheck(input)) {
+      yield textEvent(messageId, "AGUI 合同生成服务正常。");
+      yield { type: "TEXT_MESSAGE_END", messageId };
+      yield { type: "RUN_FINISHED", threadId, runId, result: { ok: true } };
+      return;
+    }
+
+    const { text, filePart } = getTextAndFileContent(getLastUserMessage(input.messages));
+    if (!filePart && !isLikelyQuoteText(text)) {
+      yield textEvent(
+        messageId,
+        "我还没有收到可解析的报价单。请上传 PDF/Excel/图片报价单，或直接粘贴完整报价单文本；如果只是打招呼，可以继续发送问题。",
+      );
+      yield { type: "TEXT_MESSAGE_END", messageId };
+      yield { type: "RUN_FINISHED", threadId, runId, result: { needsQuote: true } };
+      return;
+    }
+
+    yield textEvent(messageId, "已收到报价单，开始解析。\n");
+
+    const parseToolCallId = newId("tool_parse");
+    yield { type: "TOOL_CALL_START", toolCallId: parseToolCallId, toolCallName: "parse_quote_file", parentMessageId: messageId };
+    const sourceFile = filePart ? await saveInputFile(filePart) : await saveTextQuote(text);
+    const quoteText = filePart ? await extractTextFromFile(sourceFile.storedPath, sourceFile.mimeType) : text;
+    yield {
+      type: "TOOL_CALL_RESULT",
+      messageId: newId("tool_result"),
+      toolCallId: parseToolCallId,
+      role: "tool",
+      content: JSON.stringify({ fileName: sourceFile.originalName, textLength: quoteText.length }),
+    };
+    yield { type: "TOOL_CALL_END", toolCallId: parseToolCallId };
+    yield textEvent(messageId, "报价单解析完成，开始生成合同。\n");
+
+    const renderToolCallId = newId("tool_render");
+    yield { type: "TOOL_CALL_START", toolCallId: renderToolCallId, toolCallName: "render_contract", parentMessageId: messageId };
+    const draft = await createDraft(sourceFile, quoteText, getTemplateType(input));
+    const result = await renderContract(draft);
+    const downloadUrl = absoluteUrl(request, result.downloadUrl);
+    yield {
+      type: "TOOL_CALL_RESULT",
+      messageId: newId("tool_result"),
+      toolCallId: renderToolCallId,
+      role: "tool",
+      content: JSON.stringify({ draftId: draft.id, contractId: result.id, downloadUrl }),
+    };
+    yield { type: "TOOL_CALL_END", toolCallId: renderToolCallId };
+
+    yield textEvent(messageId, `合同已生成，点击下载：${downloadUrl}`);
+    yield {
+      type: "CUSTOM",
+      name: "contract_generated",
+      value: {
+        draftId: draft.id,
+        contractId: result.id,
+        fileName: `${result.id}.docx`,
+        downloadUrl,
+      },
+    };
     yield { type: "TEXT_MESSAGE_END", messageId };
-    yield { type: "RUN_FINISHED", threadId, runId, result: { ok: true } };
-    return;
+    yield { type: "RUN_FINISHED", threadId, runId, result: { draftId: draft.id, contractId: result.id, downloadUrl } };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "AGUI 运行失败";
+    appLog.error("ag-ui-agent", "run failed", error);
+    yield textEvent(messageId, `处理失败：${message}`);
+    yield { type: "TEXT_MESSAGE_END", messageId };
+    yield { type: "RUN_ERROR", message };
   }
-
-  const { text, filePart } = getTextAndFileContent(getLastUserMessage(input.messages));
-  if (!filePart && !text) {
-    throw new Error("请上传报价单文件，或直接发送报价单文本");
-  }
-
-  yield textEvent(messageId, "已收到报价单，开始解析。\n");
-
-  const parseToolCallId = newId("tool_parse");
-  yield { type: "TOOL_CALL_START", toolCallId: parseToolCallId, toolCallName: "parse_quote_file", parentMessageId: messageId };
-  const sourceFile = filePart ? await saveInputFile(filePart) : await saveTextQuote(text);
-  const quoteText = filePart ? await extractTextFromFile(sourceFile.storedPath, sourceFile.mimeType) : text;
-  yield {
-    type: "TOOL_CALL_RESULT",
-    messageId: newId("tool_result"),
-    toolCallId: parseToolCallId,
-    role: "tool",
-    content: JSON.stringify({ fileName: sourceFile.originalName, textLength: quoteText.length }),
-  };
-  yield { type: "TOOL_CALL_END", toolCallId: parseToolCallId };
-  yield textEvent(messageId, "报价单解析完成，开始生成合同。\n");
-
-  const renderToolCallId = newId("tool_render");
-  yield { type: "TOOL_CALL_START", toolCallId: renderToolCallId, toolCallName: "render_contract", parentMessageId: messageId };
-  const draft = await createDraft(sourceFile, quoteText, getTemplateType(input));
-  const result = await renderContract(draft);
-  const downloadUrl = absoluteUrl(request, result.downloadUrl);
-  yield {
-    type: "TOOL_CALL_RESULT",
-    messageId: newId("tool_result"),
-    toolCallId: renderToolCallId,
-    role: "tool",
-    content: JSON.stringify({ draftId: draft.id, contractId: result.id, downloadUrl }),
-  };
-  yield { type: "TOOL_CALL_END", toolCallId: renderToolCallId };
-
-  yield textEvent(messageId, `合同已生成，点击下载：${downloadUrl}`);
-  yield {
-    type: "CUSTOM",
-    name: "contract_generated",
-    value: {
-      draftId: draft.id,
-      contractId: result.id,
-      fileName: `${result.id}.docx`,
-      downloadUrl,
-    },
-  };
-  yield { type: "TEXT_MESSAGE_END", messageId };
-  yield { type: "RUN_FINISHED", threadId, runId, result: { draftId: draft.id, contractId: result.id, downloadUrl } };
 }
 
 export async function POST(request: Request) {

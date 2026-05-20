@@ -28,4 +28,30 @@ describe("/ag-ui/agent", () => {
     expect(body).toContain('"type":"TEXT_MESSAGE_CONTENT"');
     expect(body).toContain('"type":"RUN_FINISHED"');
   });
+
+  it("does not treat short greetings as quote text", async () => {
+    const request = new Request("http://localhost/ag-ui/agent", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "text/event-stream",
+      },
+      body: JSON.stringify({
+        threadId: "thread_test",
+        runId: "run_test",
+        state: {},
+        messages: [{ id: "msg_test", role: "user", content: "hi" }],
+        tools: [],
+        context: [],
+        forwardedProps: {},
+      }),
+    });
+
+    const response = await POST(request);
+    const body = await response.text();
+
+    expect(body).toContain("我还没有收到可解析的报价单");
+    expect(body).toContain('"needsQuote":true');
+    expect(body).not.toContain("开始生成合同");
+  });
 });
