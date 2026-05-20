@@ -92,6 +92,10 @@ jobs:
         working-directory: webapp
         run: npm run build
 
+      - name: Prune development Node dependencies
+        working-directory: webapp
+        run: npm prune --omit=dev
+
       - name: Vendor Python dependencies
         working-directory: webapp
         run: |
