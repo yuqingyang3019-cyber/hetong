@@ -23,6 +23,13 @@ webapp/storage/generated-contracts/*
 !webapp/storage/generated-contracts/.gitkeep
 webapp/storage/drafts/*
 !webapp/storage/drafts/.gitkeep
+agent/.venv/
+agent/storage/uploads/*
+!agent/storage/uploads/.gitkeep
+agent/storage/contracts/*
+!agent/storage/contracts/.gitkeep
+agent/storage/drafts/*
+!agent/storage/drafts/.gitkeep
 
 # Local source documents and deployment archives
 /*.docx

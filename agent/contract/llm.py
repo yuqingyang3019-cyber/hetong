@@ -1,0 +1,97 @@
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+from openai import OpenAI
+
+from .config import TemplateConfig
+
+
+SYSTEM_PROMPT = """你是合同占位符字段匹配助手。你的任务是根据用户提供的报价单解析文本，理解采购内容与表格结构，再按「合同模板字段契约」输出 JSON。
+规则：
+1. 只输出严格 JSON，不要 Markdown、解释或其它文本。
+2. 输出中的字段名必须与字段契约中的英文 key 完全一致；禁止输出契约中未声明的字段名。
+3. 标量字段在报价单中找不到依据时填 null；不要凭常识编造公司税号、银行账号等商务标识信息。
+4. 可以根据同义词、列名、上下文做合理匹配。
+5. 表格为数组：报价单中凡单独计价的一行各占一行；每行对象只包含契约声明的列，无法确定的列填 null。
+6. 不要合并多笔计价到一行；不要把页脚总价误填到某一明细行的 totalPrice。
+7. 表格示例行仅为结构示意，你必须按报价单实际行数输出多行。"""
+
+
+def require_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise RuntimeError(f"缺少环境变量 {name}")
+    return value
+
+
+def _set_by_dot_path(target: dict[str, Any], dot_path: str, value: Any) -> None:
+    parts = dot_path.split(".")
+    current = target
+    for part in parts[:-1]:
+        next_value = current.get(part)
+        if not isinstance(next_value, dict):
+            next_value = {}
+            current[part] = next_value
+        current = next_value
+    current[parts[-1]] = value
+
+
+def build_output_shape(config: TemplateConfig) -> dict[str, Any]:
+    shape: dict[str, Any] = {}
+    for key in config.scalar_keys:
+        _set_by_dot_path(shape, key, None)
+    for table_name, columns in config.table_bindings.items():
+        empty_row = {column: None for column in columns}
+        shape[table_name] = [empty_row, empty_row.copy()]
+    return shape
+
+
+def prune_to_shape(shape: Any, patch: Any) -> Any:
+    if shape is None:
+        return patch if patch is not None else None
+    if isinstance(shape, list) and shape and isinstance(shape[0], dict):
+        if not isinstance(patch, list):
+            return []
+        columns = list(shape[0].keys())
+        return [
+            {column: row.get(column) if isinstance(row, dict) else None for column in columns}
+            for row in patch
+        ]
+    if isinstance(shape, dict):
+        source = patch if isinstance(patch, dict) else {}
+        return {key: prune_to_shape(value, source.get(key)) for key, value in shape.items()}
+    return shape
+
+
+def extract_template_render_data(quote_text: str, config: TemplateConfig) -> dict[str, Any]:
+    api_key = require_env("DASHSCOPE_API_KEY")
+    model = require_env("DASHSCOPE_MODEL")
+    base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1").strip()
+    enable_thinking = os.getenv("DASHSCOPE_ENABLE_THINKING", "true").lower() != "false"
+    output_shape = build_output_shape(config)
+    user_payload = {
+        "quoteText": quote_text,
+        "templateFieldDefinitions": {
+            "scalars": config.schema.get("scalars", []),
+            "tables": config.schema.get("tables", {}),
+        },
+        "outputShapeExample": output_shape,
+    }
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    completion = client.chat.completions.create(
+        model=model,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+        ],
+        extra_body={"enable_thinking": True} if enable_thinking else None,
+    )
+    content = completion.choices[0].message.content
+    if not content or not content.strip():
+        raise RuntimeError("百炼模型返回内容为空")
+    parsed = json.loads(content)
+    return prune_to_shape(output_shape, parsed)

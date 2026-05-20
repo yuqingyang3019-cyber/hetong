@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+jinja2
+python-multipart
+openai
+pdfplumber
+docxtpl>=0.16
+python-docx
+openpyxl
+xlrd
+requests
+pytest
+httpx
+ag-ui-protocol

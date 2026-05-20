@@ -1,0 +1,8 @@
+storage/uploads/*
+!storage/uploads/.gitkeep
+storage/contracts/*
+!storage/contracts/.gitkeep
+storage/drafts/*
+!storage/drafts/.gitkeep
+__pycache__/
+.pytest_cache/

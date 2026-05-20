@@ -1,0 +1,237 @@
+{
+  "template": {
+    "id": "caigouhetong",
+    "engine": "docxtpl",
+    "syntax": "jinja2",
+    "docx": "zhanweifu/caigouhetong.docx"
+  },
+  "scalars": [
+    {
+      "key": "contractNo",
+      "label": "合同编号"
+    },
+    {
+      "key": "signYear",
+      "label": "签订年"
+    },
+    {
+      "key": "signMonth",
+      "label": "签订月"
+    },
+    {
+      "key": "signDay",
+      "label": "签订日"
+    },
+    {
+      "key": "buyerPhone",
+      "label": "甲方电话"
+    },
+    {
+      "key": "buyerFax",
+      "label": "甲方传真"
+    },
+    {
+      "key": "supplierName",
+      "label": "乙方名称"
+    },
+    {
+      "key": "supplierAddress",
+      "label": "乙方联系地址"
+    },
+    {
+      "key": "supplierBank",
+      "label": "乙方开户银行"
+    },
+    {
+      "key": "supplierAccount",
+      "label": "乙方银行账号"
+    },
+    {
+      "key": "supplierTaxNo",
+      "label": "乙方税号"
+    },
+    {
+      "key": "supplierPhone",
+      "label": "乙方电话"
+    },
+    {
+      "key": "supplierFax",
+      "label": "乙方传真"
+    },
+    {
+      "key": "projectName",
+      "label": "项目名称"
+    },
+    {
+      "key": "purchaseSubject",
+      "label": "采购内容"
+    },
+    {
+      "key": "totalAmountChinese",
+      "label": "合同总金额大写"
+    },
+    {
+      "key": "taxRate",
+      "label": "税率"
+    },
+    {
+      "key": "amountWithoutTax",
+      "label": "不计税金额"
+    },
+    {
+      "key": "taxAmount",
+      "label": "税金"
+    },
+    {
+      "key": "otherTerms",
+      "label": "其他约定"
+    },
+    {
+      "key": "deliveryPlace",
+      "label": "交货地点"
+    },
+    {
+      "key": "deliveryYear",
+      "label": "发货年"
+    },
+    {
+      "key": "deliveryMonth",
+      "label": "发货月"
+    },
+    {
+      "key": "deliveryDay",
+      "label": "发货日"
+    },
+    {
+      "key": "replacementDeadlineDays",
+      "label": "补足或更换期限"
+    },
+    {
+      "key": "repairDeadlineDays",
+      "label": "维修或更换期限"
+    },
+    {
+      "key": "qualityPenaltyRate",
+      "label": "质量违约金比例"
+    },
+    {
+      "key": "warrantyYears",
+      "label": "质保期年"
+    },
+    {
+      "key": "warrantyMonths",
+      "label": "质保期月"
+    },
+    {
+      "key": "warrantyStartDate",
+      "label": "质保期起算日"
+    },
+    {
+      "key": "advancePaymentRate",
+      "label": "预付款比例"
+    },
+    {
+      "key": "acceptancePaymentRate",
+      "label": "验收后付款比例"
+    },
+    {
+      "key": "warrantyDepositRate",
+      "label": "质保金比例"
+    },
+    {
+      "key": "supplierRepresentativeName",
+      "label": "乙方代表姓名"
+    },
+    {
+      "key": "supplierRepresentativeIdNo",
+      "label": "乙方代表身份证号码"
+    },
+    {
+      "key": "supplierRepresentativePhone",
+      "label": "乙方代表联系电话"
+    },
+    {
+      "key": "supplierRepresentativeAddress",
+      "label": "乙方代表联系地址"
+    },
+    {
+      "key": "supplierRepresentativeEmail",
+      "label": "乙方代表邮箱"
+    },
+    {
+      "key": "lateDeliveryPenaltyRate",
+      "label": "逾期交货违约金比例"
+    },
+    {
+      "key": "lateTerminationDays",
+      "label": "逾期解除期限"
+    },
+    {
+      "key": "lateTerminationPenaltyRate",
+      "label": "逾期解除违约金比例"
+    },
+    {
+      "key": "generalPenaltyRate",
+      "label": "一般违约金比例"
+    },
+    {
+      "key": "buyerAuthorizedRepresentative",
+      "label": "甲方授权代表"
+    },
+    {
+      "key": "supplierAuthorizedRepresentative",
+      "label": "乙方授权代表"
+    },
+    {
+      "key": "signatureYear",
+      "label": "签署年"
+    },
+    {
+      "key": "signatureMonth",
+      "label": "签署月"
+    },
+    {
+      "key": "signatureDay",
+      "label": "签署日"
+    }
+  ],
+  "tables": {
+    "items": {
+      "label": "货物明细",
+      "columns": [
+        {
+          "key": "index",
+          "label": "序号"
+        },
+        {
+          "key": "name",
+          "label": "货物名称"
+        },
+        {
+          "key": "spec",
+          "label": "规格/型号/材质"
+        },
+        {
+          "key": "unit",
+          "label": "单位"
+        },
+        {
+          "key": "quantity",
+          "label": "数量"
+        },
+        {
+          "key": "unitPrice",
+          "label": "单价"
+        },
+        {
+          "key": "totalPrice",
+          "label": "总价"
+        },
+        {
+          "key": "remark",
+          "label": "备注"
+        }
+      ]
+    }
+  }
+}

@@ -14,25 +14,28 @@ resources:
       region: ${vars.region}
       agent:
         name: ${vars.agent_name}
-        description: 合同生成 Agent，支持 AGUI 报价单上传与合同下载链接返回
+        description: 合同生成 Agent H5 一体化应用
         role: ${vars.role}
         code:
-          src: ./webapp
-          language: nodejs20
+          src: ./agent
+          language: python3.12
           command:
-            - npm
-            - run
-            - start
+            - python3
+            - -m
+            - uvicorn
+            - main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "9000"
         cpu: 1.0
         memory: 2048
-        port: 3000
+        port: 9000
         instanceConcurrency: 20
         internetAccess: true
         environmentVariables:
-          NODE_ENV: production
-          NEXT_TELEMETRY_DISABLED: "1"
-          PORT: "3000"
-          PYTHONPATH: /code/python:/opt/python:/code:/code/python
+          PORT: "9000"
+          PYTHONPATH: /code:/code/python:/opt/python
           DASHSCOPE_API_KEY: ${env("DASHSCOPE_API_KEY")}
           DASHSCOPE_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
           DASHSCOPE_MODEL: ${env("DASHSCOPE_MODEL")}
@@ -44,6 +47,10 @@ resources:
           ALIYUN_OCR_SCENE: Advanced
           ALIYUN_OCR_OUTPUT_TABLE: "true"
           ALIYUN_OCR_LINELESS_TABLE: "false"
+          DINGTALK_CLIENT_ID: ${env("DINGTALK_CLIENT_ID")}
+          DINGTALK_CLIENT_SECRET: ${env("DINGTALK_CLIENT_SECRET")}
+          DINGTALK_AGENT_ID: ${env("DINGTALK_AGENT_ID")}
+          DINGTALK_CORP_ID: ${env("DINGTALK_CORP_ID")}
         endpoints:
           - name: Default
             version: LATEST
