@@ -52,9 +52,6 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
-      ACTIONS_STEP_DEBUG: true
-      SERVERLESS_DEVS_DEBUG: "*"
-      DEBUG: "*"
       ALIYUN_ACCOUNT_ID: ${{ secrets.ALIYUN_ACCOUNT_ID }}
       ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
       ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
@@ -112,15 +109,15 @@ jobs:
             -f
 
       - name: Build AgentRun package
-        run: s build -t s.yaml --debug
+        run: s build -t s.yaml
 
       - name: Deploy to AgentRun
-        run: s deploy -t s.yaml --assume-yes --debug
+        run: s deploy -t s.yaml --assume-yes
 
       - name: Get endpoint URL
         id: get-url
         run: |
-          s info -t s.yaml --debug
+          s info -t s.yaml
           ENDPOINT_URL=$(s info -t s.yaml 2>/dev/null | sed -n 's/.*\(https:\/\/[^[:space:]]*\).*/\1/p' | head -1)
           echo "endpoint_url=$ENDPOINT_URL" >> "$GITHUB_OUTPUT"
           echo "Endpoint URL: $ENDPOINT_URL"
@@ -139,6 +136,6 @@ jobs:
       - name: Dump AgentRun logs on failure
         if: failure()
         run: |
-          s info -t s.yaml --debug || true
+          s info -t s.yaml || true
           s logs -t s.yaml --type fail || true
           s logs -t s.yaml --tail 100 || true

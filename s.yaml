@@ -44,7 +44,6 @@ resources:
           ALIYUN_OCR_SCENE: Advanced
           ALIYUN_OCR_OUTPUT_TABLE: "true"
           ALIYUN_OCR_LINELESS_TABLE: "false"
-        logConfig: auto
         endpoints:
           - name: Default
             version: LATEST
