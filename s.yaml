@@ -5,7 +5,7 @@ access: default
 vars:
   region: cn-hangzhou
   agent_name: hetong-agui
-  role: acs:ram::${config("AccountID")}:role/AliyunAgentRunDefaultRole
+  role: acs:ram::${config("AccountID")}:role/AliyunAgentRunFunAgentRole
 
 resources:
   agent:
