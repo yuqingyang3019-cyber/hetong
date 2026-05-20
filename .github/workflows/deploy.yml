@@ -99,10 +99,11 @@ jobs:
       - name: Configure Aliyun credentials
         run: |
           s config add \
+            -a default \
             --AccountID ${{ secrets.ALIYUN_ACCOUNT_ID }} \
             --AccessKeyID ${{ secrets.ALIYUN_ACCESS_KEY_ID }} \
             --AccessKeySecret ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }} \
-            --alias default
+            -f
 
       - name: Build AgentRun package
         run: s build -t s.yaml
