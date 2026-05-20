@@ -39,10 +39,6 @@ jobs:
       ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       DASHSCOPE_MODEL: ${{ secrets.DASHSCOPE_MODEL }}
-      DINGTALK_CLIENT_ID: ${{ secrets.DINGTALK_CLIENT_ID }}
-      DINGTALK_CLIENT_SECRET: ${{ secrets.DINGTALK_CLIENT_SECRET }}
-      DINGTALK_AGENT_ID: ${{ secrets.DINGTALK_AGENT_ID }}
-      DINGTALK_CORP_ID: ${{ secrets.DINGTALK_CORP_ID }}
     concurrency:
       group: agentrun-deploy
       cancel-in-progress: true

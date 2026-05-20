@@ -47,10 +47,10 @@ resources:
           ALIYUN_OCR_SCENE: Advanced
           ALIYUN_OCR_OUTPUT_TABLE: "true"
           ALIYUN_OCR_LINELESS_TABLE: "false"
-          DINGTALK_CLIENT_ID: ${env("DINGTALK_CLIENT_ID")}
-          DINGTALK_CLIENT_SECRET: ${env("DINGTALK_CLIENT_SECRET")}
-          DINGTALK_AGENT_ID: ${env("DINGTALK_AGENT_ID")}
-          DINGTALK_CORP_ID: ${env("DINGTALK_CORP_ID")}
+          DINGTALK_CLIENT_ID: ""
+          DINGTALK_CLIENT_SECRET: ""
+          DINGTALK_AGENT_ID: ""
+          DINGTALK_CORP_ID: ""
         endpoints:
           - name: Default
             version: LATEST
