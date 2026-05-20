@@ -91,15 +91,18 @@ jobs:
         id: get-url
         run: |
           s info -t s.yaml
-          ENDPOINT_URL=$(s info -t s.yaml 2>/dev/null | sed -n 's/.*\(https:\/\/[^[:space:]]*\).*/\1/p' | head -1)
+          URLS=$(s info -t s.yaml 2>/dev/null | grep -Eo 'https?://[^[:space:]]+')
+          ENDPOINT_URL=$(echo "$URLS" | grep 'agentrun-data' | head -1)
+          H5_URL=$(echo "$URLS" | grep -v 'agentrun-data' | tail -1)
           echo "endpoint_url=$ENDPOINT_URL" >> "$GITHUB_OUTPUT"
+          echo "h5_url=$H5_URL" >> "$GITHUB_OUTPUT"
           echo "Endpoint URL: $ENDPOINT_URL"
+          echo "H5 URL: $H5_URL"
 
       - name: H5 page check
+        if: steps.get-url.outputs.h5_url != ''
         run: |
-          H5_URL=$(s info -t s.yaml 2>/dev/null | sed -n 's/.*\(https:\/\/[^[:space:]]*\).*/\1/p' | tail -1)
-          echo "H5 URL: $H5_URL"
-          test -n "$H5_URL"
+          H5_URL="${{ steps.get-url.outputs.h5_url }}"
           curl --fail-with-body --connect-timeout 10 --max-time 60 "$H5_URL" | grep "合同生成助手"
 
       - name: AGUI protocol check
