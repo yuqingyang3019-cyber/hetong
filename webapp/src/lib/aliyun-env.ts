@@ -21,11 +21,11 @@ export function getDashScopeConfig() {
 
 /** 文字识别 OCR（RecognizeAllText） */
 export function getOcrRecognizeAllTextConfig() {
-  const scene = requireEnv("ALIYUN_OCR_SCENE");
+  const scene = process.env.ALIYUN_OCR_SCENE?.trim() || "Advanced";
   return {
     accessKeyId: requireEnv("ALIYUN_ACCESS_KEY_ID"),
     accessKeySecret: requireEnv("ALIYUN_ACCESS_KEY_SECRET"),
-    endpoint: requireEnv("ALIYUN_OCR_ENDPOINT"),
+    endpoint: process.env.ALIYUN_OCR_ENDPOINT?.trim() || "ocr-api.cn-hangzhou.aliyuncs.com",
     regionId: process.env.ALIYUN_OCR_REGION_ID?.trim() || "cn-hangzhou",
     /** API 的 Type 参数，如 General、Advanced */
     type: normalizeOcrType(scene),

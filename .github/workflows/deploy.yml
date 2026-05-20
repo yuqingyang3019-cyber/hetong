@@ -58,11 +58,6 @@ jobs:
       DASHSCOPE_BASE_URL: ${{ secrets.DASHSCOPE_BASE_URL }}
       DASHSCOPE_MODEL: ${{ secrets.DASHSCOPE_MODEL }}
       DASHSCOPE_ENABLE_THINKING: ${{ secrets.DASHSCOPE_ENABLE_THINKING }}
-      ALIYUN_OCR_ENDPOINT: ${{ secrets.ALIYUN_OCR_ENDPOINT }}
-      ALIYUN_OCR_REGION_ID: ${{ secrets.ALIYUN_OCR_REGION_ID }}
-      ALIYUN_OCR_SCENE: ${{ secrets.ALIYUN_OCR_SCENE }}
-      ALIYUN_OCR_OUTPUT_TABLE: ${{ secrets.ALIYUN_OCR_OUTPUT_TABLE }}
-      ALIYUN_OCR_LINELESS_TABLE: ${{ secrets.ALIYUN_OCR_LINELESS_TABLE }}
     concurrency:
       group: agentrun-deploy
       cancel-in-progress: false

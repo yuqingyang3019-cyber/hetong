@@ -39,11 +39,11 @@ resources:
           DASHSCOPE_ENABLE_THINKING: ${env("DASHSCOPE_ENABLE_THINKING")}
           ALIYUN_ACCESS_KEY_ID: ${env("ALIYUN_ACCESS_KEY_ID")}
           ALIYUN_ACCESS_KEY_SECRET: ${env("ALIYUN_ACCESS_KEY_SECRET")}
-          ALIYUN_OCR_ENDPOINT: ${env("ALIYUN_OCR_ENDPOINT")}
-          ALIYUN_OCR_REGION_ID: ${env("ALIYUN_OCR_REGION_ID")}
-          ALIYUN_OCR_SCENE: ${env("ALIYUN_OCR_SCENE")}
-          ALIYUN_OCR_OUTPUT_TABLE: ${env("ALIYUN_OCR_OUTPUT_TABLE")}
-          ALIYUN_OCR_LINELESS_TABLE: ${env("ALIYUN_OCR_LINELESS_TABLE")}
+          ALIYUN_OCR_ENDPOINT: ocr-api.cn-hangzhou.aliyuncs.com
+          ALIYUN_OCR_REGION_ID: cn-hangzhou
+          ALIYUN_OCR_SCENE: Advanced
+          ALIYUN_OCR_OUTPUT_TABLE: "true"
+          ALIYUN_OCR_LINELESS_TABLE: "false"
         logConfig: auto
         endpoints:
           - name: Default
