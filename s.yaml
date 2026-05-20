@@ -20,9 +20,9 @@ resources:
           src: ./webapp
           language: nodejs20
           command:
-            - npm
-            - run
-            - start
+            - sh
+            - -c
+            - python3 -m pip install -r requirements.txt -t python && npm run start
         cpu: 1.0
         memory: 2048
         port: 3000

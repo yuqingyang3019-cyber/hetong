@@ -93,11 +93,9 @@ jobs:
         working-directory: webapp
         run: npm prune --omit=dev
 
-      - name: Vendor Python dependencies
+      - name: Clear vendored Python dependencies
         working-directory: webapp
-        run: |
-          rm -rf python
-          python3 -m pip install -r requirements.txt -t python
+        run: rm -rf python
 
       - name: Configure Aliyun credentials
         run: |
