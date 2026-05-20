@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>合同生成助手</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.41/dingtalk.open.js"></script>
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">钉钉 H5 微应用</p>
+        <h1>合同生成助手</h1>
+        <p>选择合同模板，上传报价单，自动生成合同并返回下载链接。</p>
+      </section>
+
+      <section class="card">
+        <label>
+          合同模板
+          <select id="templateType">
+            <option value="caigouhetong">采购合同（通用设备）</option>
+            <option value="nonStandardNoInstall">设备采购合同（不含安装）</option>
+            <option value="nonStandardWithInstall">设备采购合同（含安装）</option>
+            <option value="annualFramework">年度采购框架合同</option>
+            <option value="professionalSubcontract">专业工程分包合同</option>
+            <option value="laborSubcontract">劳务分包合同（清包工）</option>
+          </select>
+        </label>
+
+        <label>
+          报价单文件
+          <input id="quoteFile" type="file" accept=".pdf,.xls,.xlsx,.txt" />
+        </label>
+
+        <button id="generateButton" type="button">上传并生成合同</button>
+        <p id="status" class="status">等待上传报价单。</p>
+      </section>
+
+      <section class="card log-card">
+        <h2>处理进度</h2>
+        <pre id="log"></pre>
+        <a id="downloadLink" class="download" href="#" hidden>下载合同</a>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

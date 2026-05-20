@@ -1,0 +1,9 @@
+{
+  "name": "hetong-h5-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node dist/index.cjs"
+  }
+}

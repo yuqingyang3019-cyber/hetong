@@ -30,6 +30,7 @@ agent/storage/contracts/*
 !agent/storage/contracts/.gitkeep
 agent/storage/drafts/*
 !agent/storage/drafts/.gitkeep
+frontend/dist/
 
 # Local source documents and deployment archives
 /*.docx

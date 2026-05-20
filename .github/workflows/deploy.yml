@@ -7,6 +7,7 @@ on:
   workflow_dispatch:
 
 env:
+  NODE_VERSION: "20"
   PYTHON_VERSION: "3.12"
 
 jobs:
@@ -28,6 +29,15 @@ jobs:
 
       - name: Run tests
         run: python3 -m pytest agent/tests
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build H5 frontend
+        working-directory: frontend
+        run: npm run build
 
   deploy:
     needs: test
@@ -56,6 +66,15 @@ jobs:
       - name: Install Serverless Devs
         run: npm install -g @serverless-devs/s
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Build H5 frontend
+        working-directory: frontend
+        run: npm run build
+
       - name: Configure Aliyun credentials
         run: |
           s config add \
@@ -78,6 +97,13 @@ jobs:
           ENDPOINT_URL=$(s info -t s.yaml 2>/dev/null | sed -n 's/.*\(https:\/\/[^[:space:]]*\).*/\1/p' | head -1)
           echo "endpoint_url=$ENDPOINT_URL" >> "$GITHUB_OUTPUT"
           echo "Endpoint URL: $ENDPOINT_URL"
+
+      - name: H5 page check
+        run: |
+          H5_URL=$(s info -t s.yaml 2>/dev/null | sed -n 's/.*\(https:\/\/[^[:space:]]*\).*/\1/p' | tail -1)
+          echo "H5 URL: $H5_URL"
+          test -n "$H5_URL"
+          curl --fail-with-body --connect-timeout 10 --max-time 60 "$H5_URL" | grep "合同生成助手"
 
       - name: AGUI protocol check
         if: steps.get-url.outputs.endpoint_url != ''

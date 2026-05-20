@@ -55,3 +55,31 @@ resources:
           - name: Default
             version: LATEST
             description: 默认入口
+
+  h5-web:
+    component: fc3
+    props:
+      region: ${vars.region}
+      functionName: ${vars.agent_name}_h5_web
+      description: 合同生成助手 H5 前端
+      runtime: custom
+      code: ./frontend/dist
+      customRuntimeConfig:
+        command:
+          - node
+          - index.cjs
+      cpu: 0.5
+      memory: 512
+      diskSize: 512
+      timeout: 3600
+      port: 9000
+      instanceConcurrency: 100
+      internetAccess: true
+      environmentVariables:
+        AGENT_ENDPOINT: ${resources.agent.output.agent.endpoints.0.url}
+      customDomain:
+        protocol: HTTP
+        route:
+          path: '/*'
+          qualifier: LATEST
+        domainName: auto
