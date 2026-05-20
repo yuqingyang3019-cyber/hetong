@@ -20,14 +20,8 @@ resources:
           src: ./agent
           language: python3.12
           command:
-            - python3
-            - -m
-            - uvicorn
-            - main:app
-            - --host
-            - 0.0.0.0
-            - --port
-            - "9000"
+            - sh
+            - bootstrap.sh
         cpu: 1.0
         memory: 2048
         port: 9000
