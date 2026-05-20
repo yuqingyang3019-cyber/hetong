@@ -1,17 +1,8 @@
 import { writeFile } from "fs/promises";
 import path from "path";
 import { appLog } from "@/lib/app-log";
-import { extractTextFromFile } from "@/lib/extract-text";
-import { extractTemplateRenderData } from "@/lib/llm-extract";
-import { mergeLlmPatchIntoRenderData } from "@/lib/merge-render-data";
-import { normalizeRenderDataFromQuote } from "@/lib/normalize-render-from-quote";
-import { renderContract } from "@/lib/render-docx";
-import { saveDraft } from "@/lib/draft-store";
-import { getTemplateConfig } from "@/lib/template-config";
 import { ensureStorage, newId, safeFileName } from "@/lib/storage";
 import { uploadsDir } from "@/lib/paths";
-import { validateDraft } from "@/lib/validate-draft";
-import type { ContractDraft } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -48,14 +39,18 @@ type RunAgentInput = {
   forwardedProps?: Record<string, unknown>;
 };
 
-type SourceFile = ContractDraft["sourceFile"];
+type SourceFile = {
+  originalName: string;
+  storedPath: string;
+  mimeType: string;
+  size: number;
+};
 
 type AguiEvent = Record<string, unknown> & {
   type: string;
 };
 
 const encoder = new TextEncoder();
-const MIN_TEXT_QUOTE_LENGTH = 30;
 
 function encodeEvent(event: AguiEvent) {
   return encoder.encode(`data: ${JSON.stringify({ timestamp: Date.now(), ...event })}\n\n`);
@@ -103,12 +98,6 @@ function summarizeInput(input: RunAgentInput) {
     stateKeys: input.state ? Object.keys(input.state) : [],
     forwardedPropKeys: input.forwardedProps ? Object.keys(input.forwardedProps) : [],
   };
-}
-
-function isLikelyQuoteText(text: string) {
-  const normalized = text.trim();
-  if (normalized.length < MIN_TEXT_QUOTE_LENGTH) return false;
-  return /报价|合同|合计|总价|金额|税|货物|设备|型号|数量|单价|采购|供应商|需方|供方/.test(normalized);
 }
 
 function metadataFileName(metadata: Record<string, unknown> | undefined) {
@@ -189,50 +178,16 @@ async function saveInputFile(part: InputContent): Promise<SourceFile> {
   return persistBuffer(parsed.buffer, fileName, parsed.mimeType);
 }
 
-async function saveTextQuote(text: string): Promise<SourceFile> {
-  const buffer = Buffer.from(text, "utf8");
-  return persistBuffer(buffer, "agui-quote.txt", "text/plain");
-}
-
-function getTemplateType(input: RunAgentInput) {
-  const fromForwardedProps = input.forwardedProps?.templateType;
-  const fromState = input.state?.templateType;
-  if (typeof fromForwardedProps === "string" && fromForwardedProps.trim()) return fromForwardedProps.trim();
-  if (typeof fromState === "string" && fromState.trim()) return fromState.trim();
-  return "caigouhetong";
-}
-
-async function createDraft(sourceFile: SourceFile, quoteText: string, templateType: string) {
-  const config = getTemplateConfig(templateType);
-  const extractedData = await extractTemplateRenderData(quoteText, config);
-  let renderData = mergeLlmPatchIntoRenderData(extractedData, config);
-  const normalized = normalizeRenderDataFromQuote(renderData, quoteText, config);
-  renderData = normalized.renderData;
-  const validation = validateDraft(renderData, config);
-  const warnings = [...normalized.warnings, ...validation.warnings];
-  const now = new Date().toISOString();
-
-  const draft: ContractDraft = {
-    id: newId("draft"),
-    templateType: config.type,
-    sourceFile,
-    ocrText: quoteText,
-    extractedData,
-    renderData,
-    missingFields: validation.missingFields,
-    warnings,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  return saveDraft(draft);
-}
-
 function absoluteUrl(request: Request, pathOrUrl: string) {
   if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
   const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host") ?? "";
   const proto = request.headers.get("x-forwarded-proto") ?? "https";
   return host ? `${proto}://${host}${pathOrUrl}` : pathOrUrl;
+}
+
+function uploadDownloadUrl(request: Request, sourceFile: SourceFile) {
+  const fileName = path.basename(sourceFile.storedPath);
+  return absoluteUrl(request, `/api/uploads/${encodeURIComponent(fileName)}/download`);
 }
 
 function isHealthCheck(input: RunAgentInput) {
@@ -257,60 +212,54 @@ async function* runContractAgent(input: RunAgentInput, request: Request): AsyncG
       return;
     }
 
-    const { text, filePart } = getTextAndFileContent(getLastUserMessage(input.messages));
-    if (!filePart && !isLikelyQuoteText(text)) {
+    const { filePart } = getTextAndFileContent(getLastUserMessage(input.messages));
+    if (!filePart) {
+      const summary = summarizeInput(input);
       yield textEvent(
         messageId,
-        "我还没有收到可解析的报价单。请上传 PDF/Excel/图片报价单，或直接粘贴完整报价单文本；如果只是打招呼，可以继续发送问题。",
+        `未收到 AGUI 附件。请在钉钉里发送 PDF/Excel/图片附件后重试。\n\n输入摘要：${JSON.stringify(summary)}`,
       );
       yield { type: "TEXT_MESSAGE_END", messageId };
-      yield { type: "RUN_FINISHED", threadId, runId, result: { needsQuote: true } };
+      yield { type: "RUN_FINISHED", threadId, runId, result: { needsAttachment: true, inputSummary: summary } };
       return;
     }
 
-    yield textEvent(messageId, "已收到报价单，开始解析。\n");
+    yield textEvent(messageId, "已收到 AGUI 附件，开始保存。\n");
 
-    const parseToolCallId = newId("tool_parse");
-    yield { type: "TOOL_CALL_START", toolCallId: parseToolCallId, toolCallName: "parse_quote_file", parentMessageId: messageId };
-    const sourceFile = filePart ? await saveInputFile(filePart) : await saveTextQuote(text);
-    const quoteText = filePart ? await extractTextFromFile(sourceFile.storedPath, sourceFile.mimeType) : text;
+    const saveToolCallId = newId("tool_save_attachment");
+    yield { type: "TOOL_CALL_START", toolCallId: saveToolCallId, toolCallName: "save_agui_attachment", parentMessageId: messageId };
+    const sourceFile = await saveInputFile(filePart);
+    const downloadUrl = uploadDownloadUrl(request, sourceFile);
     yield {
       type: "TOOL_CALL_RESULT",
       messageId: newId("tool_result"),
-      toolCallId: parseToolCallId,
+      toolCallId: saveToolCallId,
       role: "tool",
-      content: JSON.stringify({ fileName: sourceFile.originalName, textLength: quoteText.length }),
+      content: JSON.stringify({
+        fileName: sourceFile.originalName,
+        mimeType: sourceFile.mimeType,
+        size: sourceFile.size,
+        downloadUrl,
+      }),
     };
-    yield { type: "TOOL_CALL_END", toolCallId: parseToolCallId };
-    yield textEvent(messageId, "报价单解析完成，开始生成合同。\n");
+    yield { type: "TOOL_CALL_END", toolCallId: saveToolCallId };
 
-    const renderToolCallId = newId("tool_render");
-    yield { type: "TOOL_CALL_START", toolCallId: renderToolCallId, toolCallName: "render_contract", parentMessageId: messageId };
-    const draft = await createDraft(sourceFile, quoteText, getTemplateType(input));
-    const result = await renderContract(draft);
-    const downloadUrl = absoluteUrl(request, result.downloadUrl);
-    yield {
-      type: "TOOL_CALL_RESULT",
-      messageId: newId("tool_result"),
-      toolCallId: renderToolCallId,
-      role: "tool",
-      content: JSON.stringify({ draftId: draft.id, contractId: result.id, downloadUrl }),
-    };
-    yield { type: "TOOL_CALL_END", toolCallId: renderToolCallId };
-
-    yield textEvent(messageId, `合同已生成，点击下载：${downloadUrl}`);
+    yield textEvent(
+      messageId,
+      `附件已收到并保存。\n文件名：${sourceFile.originalName}\n类型：${sourceFile.mimeType}\n大小：${sourceFile.size} 字节\n下载链接：${downloadUrl}`,
+    );
     yield {
       type: "CUSTOM",
-      name: "contract_generated",
+      name: "attachment_received",
       value: {
-        draftId: draft.id,
-        contractId: result.id,
-        fileName: `${result.id}.docx`,
+        fileName: sourceFile.originalName,
+        mimeType: sourceFile.mimeType,
+        size: sourceFile.size,
         downloadUrl,
       },
     };
     yield { type: "TEXT_MESSAGE_END", messageId };
-    yield { type: "RUN_FINISHED", threadId, runId, result: { draftId: draft.id, contractId: result.id, downloadUrl } };
+    yield { type: "RUN_FINISHED", threadId, runId, result: { attachmentReceived: true, downloadUrl } };
   } catch (error) {
     const message = error instanceof Error ? error.message : "AGUI 运行失败";
     appLog.error("ag-ui-agent", "run failed", error);
