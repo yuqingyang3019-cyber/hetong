@@ -59,7 +59,7 @@ jobs:
       DASHSCOPE_MODEL: ${{ secrets.DASHSCOPE_MODEL }}
     concurrency:
       group: agentrun-deploy
-      cancel-in-progress: false
+      cancel-in-progress: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -125,7 +125,7 @@ jobs:
         run: |
           sleep 30
           ENDPOINT_URL="${{ steps.get-url.outputs.endpoint_url }}"
-          curl --fail-with-body --retry 5 --retry-delay 10 --retry-all-errors -N "${ENDPOINT_URL}/ag-ui/agent" \
+          curl --fail-with-body --connect-timeout 10 --max-time 300 --retry 2 --retry-delay 10 --retry-all-errors -N "${ENDPOINT_URL}/ag-ui/agent" \
             -X POST \
             -H "Content-Type: application/json" \
             -H "Accept: text/event-stream" \
