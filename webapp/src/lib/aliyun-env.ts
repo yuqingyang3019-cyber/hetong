@@ -14,7 +14,7 @@ export function getDashScopeConfig() {
     baseURL:
       process.env.DASHSCOPE_BASE_URL?.trim() ||
       "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: process.env.DASHSCOPE_MODEL?.trim() || "qwen3.6-plus",
+    model: requireEnv("DASHSCOPE_MODEL"),
     enableThinking: process.env.DASHSCOPE_ENABLE_THINKING !== "false",
   };
 }
