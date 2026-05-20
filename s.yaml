@@ -5,7 +5,7 @@ access: default
 vars:
   region: cn-hangzhou
   agent_name: hetong-agui
-  role: acs:ram::${config("AccountID")}:role/AliyunAgentRunFunAgentRole
+  role: acs:ram::${env("ALIYUN_ACCOUNT_ID")}:role/AliyunAgentRunFunAgentRole
 
 resources:
   agent:
@@ -34,9 +34,9 @@ resources:
           PORT: "3000"
           PYTHONPATH: /code/python:/opt/python:/code:/code/python
           DASHSCOPE_API_KEY: ${env("DASHSCOPE_API_KEY")}
-          DASHSCOPE_BASE_URL: ${env("DASHSCOPE_BASE_URL")}
+          DASHSCOPE_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
           DASHSCOPE_MODEL: ${env("DASHSCOPE_MODEL")}
-          DASHSCOPE_ENABLE_THINKING: ${env("DASHSCOPE_ENABLE_THINKING")}
+          DASHSCOPE_ENABLE_THINKING: "true"
           ALIYUN_ACCESS_KEY_ID: ${env("ALIYUN_ACCESS_KEY_ID")}
           ALIYUN_ACCESS_KEY_SECRET: ${env("ALIYUN_ACCESS_KEY_SECRET")}
           ALIYUN_OCR_ENDPOINT: ocr-api.cn-hangzhou.aliyuncs.com
