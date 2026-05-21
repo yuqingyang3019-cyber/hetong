@@ -1,5 +1,0 @@
-pdfplumber
-docxtpl>=0.16
-python-docx
-openpyxl
-xlrd

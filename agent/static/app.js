@@ -1,9 +1,19 @@
 const statusEl = document.querySelector("#status");
 const logEl = document.querySelector("#log");
 const downloadLink = document.querySelector("#downloadLink");
+const parseButton = document.querySelector("#parseButton");
 const generateButton = document.querySelector("#generateButton");
 const quoteFile = document.querySelector("#quoteFile");
+const previewCard = document.querySelector("#previewCard");
+const quoteTextPreview = document.querySelector("#quoteTextPreview");
 const templateType = document.querySelector("#templateType");
+const agentEndpoint = (window.__AGENT_ENDPOINT__ || "").replace(/\/$/, "");
+
+let parsedUpload = null;
+
+function apiUrl(path) {
+  return `${agentEndpoint}${path}`;
+}
 
 function appendLog(text) {
   logEl.textContent += text;
@@ -17,7 +27,7 @@ async function loginWithDingTalk() {
     window.dd.requestAuthCode({
       corpId,
       onSuccess: async (result) => {
-        await fetch("/api/dingtalk/login", {
+        await fetch(apiUrl("/api/dingtalk/login"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ code: result.code, corpId }),
@@ -31,7 +41,7 @@ async function loginWithDingTalk() {
 
 async function uploadQuote(file) {
   const data = await fileToDataUrl(file);
-  const response = await fetch("/api/uploads", {
+  const response = await fetch(apiUrl("/api/uploads"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -44,6 +54,19 @@ async function uploadQuote(file) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.detail || body.error || "上传失败");
+  }
+  return response.json();
+}
+
+async function parseUploadedQuote(uploadId) {
+  const response = await fetch(apiUrl(`/api/uploads/${encodeURIComponent(uploadId)}/quote-text`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ templateType: templateType.value }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || body.error || "解析报价单失败");
   }
   return response.json();
 }
@@ -73,8 +96,8 @@ function parseSseBuffer(buffer) {
     .filter(Boolean);
 }
 
-async function generateContract(uploadId) {
-  const response = await fetch("/ag-ui/agent", {
+async function generateContract(uploadId, quoteText) {
+  const response = await fetch(apiUrl("/ag-ui/agent"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -90,6 +113,7 @@ async function generateContract(uploadId) {
       forwardedProps: {
         uploadId,
         templateType: templateType.value,
+        quoteText,
       },
     }),
   });
@@ -118,7 +142,25 @@ async function generateContract(uploadId) {
   }
 }
 
-generateButton.addEventListener("click", async () => {
+function resetPreview() {
+  parsedUpload = null;
+  previewCard.hidden = true;
+  quoteTextPreview.value = "";
+  downloadLink.hidden = true;
+}
+
+quoteFile.addEventListener("change", () => {
+  resetPreview();
+  statusEl.textContent = "等待上传报价单。";
+  logEl.textContent = "";
+});
+
+templateType.addEventListener("change", () => {
+  resetPreview();
+  statusEl.textContent = "模板已切换，请重新解析报价单。";
+});
+
+parseButton.addEventListener("click", async () => {
   const file = quoteFile.files?.[0];
   if (!file) {
     statusEl.textContent = "请先选择报价单文件。";
@@ -128,21 +170,56 @@ generateButton.addEventListener("click", async () => {
     statusEl.textContent = "报价单文件为空，请重新选择文件。";
     return;
   }
+  parseButton.disabled = true;
   generateButton.disabled = true;
   logEl.textContent = "";
   downloadLink.hidden = true;
+  previewCard.hidden = true;
   try {
     statusEl.textContent = "正在上传报价单...";
     const upload = await uploadQuote(file);
     appendLog(`已上传：${upload.originalName}\n`);
+    statusEl.textContent = "正在解析报价单...";
+    const parsed = await parseUploadedQuote(upload.id);
+    parsedUpload = upload;
+    quoteTextPreview.value = parsed.quoteText || "";
+    previewCard.hidden = false;
+    appendLog(`已解析：${parsed.textLength || 0} 字符\n`);
+    statusEl.textContent = "请确认报价单解析文本。";
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "处理失败";
+    statusEl.textContent = message;
+    appendLog(`\n处理失败：${message}`);
+  } finally {
+    parseButton.disabled = false;
+    generateButton.disabled = false;
+  }
+});
+
+generateButton.addEventListener("click", async () => {
+  if (!parsedUpload) {
+    statusEl.textContent = "请先上传并解析报价单。";
+    return;
+  }
+  const quoteText = quoteTextPreview.value.trim();
+  if (!quoteText) {
+    statusEl.textContent = "解析文本为空，请补充后再生成合同。";
+    return;
+  }
+  parseButton.disabled = true;
+  generateButton.disabled = true;
+  downloadLink.hidden = true;
+  logEl.textContent = "";
+  try {
     statusEl.textContent = "正在生成合同...";
-    await generateContract(upload.id);
+    await generateContract(parsedUpload.id, quoteText);
     statusEl.textContent = "合同已生成。";
   } catch (error) {
     const message = error instanceof Error ? error.message : "处理失败";
     statusEl.textContent = message;
     appendLog(`\n处理失败：${message}`);
   } finally {
+    parseButton.disabled = false;
     generateButton.disabled = false;
   }
 });

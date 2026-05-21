@@ -62,12 +62,20 @@ label {
 
 select,
 input,
+textarea,
 button {
   border: 1px solid #d7dce8;
   border-radius: 12px;
   font: inherit;
   min-height: 46px;
   padding: 10px 12px;
+}
+
+textarea {
+  line-height: 1.6;
+  min-height: 220px;
+  resize: vertical;
+  white-space: pre-wrap;
 }
 
 button {
@@ -84,6 +92,12 @@ button:disabled {
 
 .status {
   color: #475467;
+  margin: 0;
+}
+
+.hint {
+  color: #667085;
+  line-height: 1.6;
   margin: 0;
 }
 

@@ -12,7 +12,7 @@
       <section class="hero">
         <p class="eyebrow">钉钉 H5 微应用</p>
         <h1>合同生成助手</h1>
-        <p>选择合同模板，上传报价单，自动生成合同并返回下载链接。</p>
+        <p>选择合同模板，上传报价单，先确认解析文本，再生成合同并返回下载链接。</p>
       </section>
 
       <section class="card">
@@ -30,8 +30,21 @@
           <input id="quoteFile" type="file" accept=".pdf,.xls,.xlsx,.txt" />
         </label>
 
-        <button id="generateButton" type="button">上传并生成合同</button>
+        <button id="parseButton" type="button">上传并解析报价单</button>
         <p id="status" class="status">等待上传报价单。</p>
+      </section>
+
+      <section id="previewCard" class="card" hidden>
+        <div>
+          <p class="eyebrow">报价单解析文本</p>
+          <h2>确认后生成合同</h2>
+          <p class="hint">请检查下方文本，必要时可直接修正，再点击确认生成合同。</p>
+        </div>
+        <label>
+          解析内容
+          <textarea id="quoteTextPreview" rows="12"></textarea>
+        </label>
+        <button id="generateButton" type="button">确认文本并生成合同</button>
       </section>
 
       <section class="card log-card">

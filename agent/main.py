@@ -251,9 +251,24 @@ def extract_agui_attachment(input_data: dict[str, Any]) -> dict[str, Any] | None
     return None
 
 
-def generate_contract(upload_id: str, template_type: str) -> dict[str, Any]:
+def extract_quote_text(upload_id: str) -> tuple[dict[str, Any], str]:
+    upload = load_upload(upload_id)
+    extract_start = time.perf_counter()
+    quote_text = extract_text_from_file(Path(upload["path"]), upload.get("mimeType", ""))
+    log_info(
+        "quote text extracted",
+        uploadId=upload_id,
+        fileName=upload.get("fileName"),
+        quoteTextLength=len(quote_text),
+        elapsedMs=elapsed_ms(extract_start),
+    )
+    return upload, quote_text
+
+
+def generate_contract(upload_id: str, template_type: str, quote_text: str | None = None) -> dict[str, Any]:
     start = time.perf_counter()
-    log_info("contract generation start", uploadId=upload_id, templateType=template_type)
+    has_confirmed_text = bool(quote_text and quote_text.strip())
+    log_info("contract generation start", uploadId=upload_id, templateType=template_type, confirmedQuoteText=has_confirmed_text)
     try:
         upload = load_upload(upload_id)
         log_info(
@@ -268,15 +283,16 @@ def generate_contract(upload_id: str, template_type: str) -> dict[str, Any]:
         config = get_template_config(template_type)
         log_info("contract template loaded", uploadId=upload_id, templateType=config.type)
 
-        extract_start = time.perf_counter()
-        quote_text = extract_text_from_file(Path(upload["path"]), upload.get("mimeType", ""))
-        log_info(
-            "quote text extracted",
-            uploadId=upload_id,
-            fileName=upload.get("fileName"),
-            quoteTextLength=len(quote_text),
-            elapsedMs=elapsed_ms(extract_start),
-        )
+        if has_confirmed_text:
+            quote_text = quote_text.strip()
+            log_info(
+                "quote text confirmed by user",
+                uploadId=upload_id,
+                fileName=upload.get("fileName"),
+                quoteTextLength=len(quote_text),
+            )
+        else:
+            upload, quote_text = extract_quote_text(upload_id)
 
         llm_start = time.perf_counter()
         log_info("llm extraction start", uploadId=upload_id, templateType=config.type, quoteTextLength=len(quote_text))
@@ -402,12 +418,49 @@ def download_upload(file_name: str) -> FileResponse:
     return FileResponse(path, media_type=content_type_for_file(path), filename=path.name)
 
 
+@app.post("/api/uploads/{upload_id}/quote-text")
+async def parse_quote_text_api(upload_id: str, request: Request) -> dict[str, Any]:
+    start = time.perf_counter()
+    client_host = request.client.host if request.client else None
+    template_type = "caigouhetong"
+    if "application/json" in request.headers.get("content-type", ""):
+        payload = await request.json()
+        if isinstance(payload, dict) and payload.get("templateType"):
+            template_type = str(payload["templateType"])
+    log_info("quote text api request start", clientHost=client_host, uploadId=upload_id, templateType=template_type)
+    upload, quote_text = extract_quote_text(upload_id)
+    config = get_template_config(template_type)
+    response = {
+        "uploadId": upload_id,
+        "originalName": upload.get("originalName"),
+        "fileName": upload.get("fileName"),
+        "mimeType": upload.get("mimeType"),
+        "templateType": config.type,
+        "quoteText": quote_text,
+        "textLength": len(quote_text),
+    }
+    log_info(
+        "quote text api request finished",
+        clientHost=client_host,
+        uploadId=upload_id,
+        templateType=config.type,
+        quoteTextLength=len(quote_text),
+        elapsedMs=elapsed_ms(start),
+    )
+    return response
+
+
 @app.post("/api/contracts/generate")
-def generate_contract_api(request: Request, uploadId: str = Form(...), templateType: str = Form("caigouhetong")) -> dict[str, Any]:
+def generate_contract_api(
+    request: Request,
+    uploadId: str = Form(...),
+    templateType: str = Form("caigouhetong"),
+    quoteText: str | None = Form(None),
+) -> dict[str, Any]:
     start = time.perf_counter()
     client_host = request.client.host if request.client else None
     log_info("contract api request start", clientHost=client_host, uploadId=uploadId, templateType=templateType)
-    draft = generate_contract(uploadId, templateType)
+    draft = generate_contract(uploadId, templateType, quoteText)
     url = contract_download_path(draft["contractId"])
     response = {
         "contractId": draft["contractId"],
@@ -453,9 +506,19 @@ async def agui_stream(input_data: dict[str, Any], request: Request) -> AsyncGene
             log_info("agui run finished", threadId=thread_id, runId=run_id, result="healthCheck", elapsedMs=elapsed_ms(start))
             return
 
-        upload_id = forwarded.get("uploadId") or (input_data.get("state") or {}).get("uploadId")
-        template_type = forwarded.get("templateType") or (input_data.get("state") or {}).get("templateType") or "caigouhetong"
-        log_info("agui run context resolved", threadId=thread_id, runId=run_id, uploadId=upload_id, templateType=template_type)
+        state = input_data.get("state") if isinstance(input_data.get("state"), dict) else {}
+        upload_id = forwarded.get("uploadId") or state.get("uploadId")
+        template_type = forwarded.get("templateType") or state.get("templateType") or "caigouhetong"
+        quote_text_value = forwarded.get("quoteText") or state.get("quoteText")
+        quote_text = quote_text_value.strip() if isinstance(quote_text_value, str) and quote_text_value.strip() else None
+        log_info(
+            "agui run context resolved",
+            threadId=thread_id,
+            runId=run_id,
+            uploadId=upload_id,
+            templateType=template_type,
+            confirmedQuoteText=bool(quote_text),
+        )
         if not upload_id:
             log_info("agui attachment lookup start", threadId=thread_id, runId=run_id)
             attachment = extract_agui_attachment(input_data)
@@ -478,10 +541,20 @@ async def agui_stream(input_data: dict[str, Any], request: Request) -> AsyncGene
                 log_info("agui run finished", threadId=thread_id, runId=run_id, result="needsUpload", elapsedMs=elapsed_ms(start))
                 return
 
-        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "正在解析报价单...\n"})
+        if quote_text:
+            yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "已确认报价单文本。\n"})
+        else:
+            yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "正在解析报价单...\n"})
         yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "正在生成合同...\n"})
-        log_info("agui contract generation dispatch", threadId=thread_id, runId=run_id, uploadId=upload_id, templateType=template_type)
-        draft = generate_contract(upload_id, template_type)
+        log_info(
+            "agui contract generation dispatch",
+            threadId=thread_id,
+            runId=run_id,
+            uploadId=upload_id,
+            templateType=template_type,
+            confirmedQuoteText=bool(quote_text),
+        )
+        draft = generate_contract(upload_id, template_type, quote_text)
         download_url = absolute_url(request, contract_download_path(draft["contractId"]))
         yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": f"合同已生成，点击下载：{download_url}"})
         yield sse_event({"type": "CUSTOM", "name": "contract_generated", "value": {"contractId": draft["contractId"], "downloadUrl": download_url}})

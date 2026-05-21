@@ -12,17 +12,6 @@ __pycache__/
 !.env.example
 
 # Generated app artifacts
-webapp/.next/
-webapp/out/
-webapp/node_modules/
-webapp/python/
-webapp/tsconfig.tsbuildinfo
-webapp/storage/uploads/*
-!webapp/storage/uploads/.gitkeep
-webapp/storage/generated-contracts/*
-!webapp/storage/generated-contracts/.gitkeep
-webapp/storage/drafts/*
-!webapp/storage/drafts/.gitkeep
 agent/.venv/
 agent/python/
 agent/storage/uploads/*
