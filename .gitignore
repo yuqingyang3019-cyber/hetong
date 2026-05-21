@@ -24,6 +24,7 @@ webapp/storage/generated-contracts/*
 webapp/storage/drafts/*
 !webapp/storage/drafts/.gitkeep
 agent/.venv/
+agent/python/
 agent/storage/uploads/*
 !agent/storage/uploads/.gitkeep
 agent/storage/contracts/*
