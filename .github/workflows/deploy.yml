@@ -79,7 +79,14 @@ jobs:
         run: |
           rm -rf agent/python
           python3 -m pip install --upgrade pip
-          python3 -m pip install --target agent/python -r agent/requirements.txt
+          python3 -m pip install \
+            --target agent/python \
+            --platform manylinux2014_x86_64 \
+            --implementation cp \
+            --python-version 312 \
+            --abi cp312 \
+            --only-binary=:all: \
+            -r agent/requirements.txt
 
       - name: Configure Aliyun credentials
         run: |

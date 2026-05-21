@@ -156,6 +156,30 @@ def parse_data_source(value: str, fallback_mime_type: str) -> tuple[bytes, str]:
     return base64.b64decode(value), fallback_mime_type
 
 
+async def read_upload_payload(request: Request, file: UploadFile | None) -> tuple[bytes, str, str, int | None, str]:
+    content_type = request.headers.get("content-type", "")
+    if "application/json" in content_type:
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="上传请求体格式不正确")
+        original_name = str(payload.get("originalName") or payload.get("fileName") or "quote.bin")
+        mime_type = str(payload.get("mimeType") or "application/octet-stream")
+        data = payload.get("data") or payload.get("contentBase64")
+        if not isinstance(data, str) or not data:
+            raise HTTPException(status_code=400, detail="上传请求缺少文件内容")
+        try:
+            content, parsed_mime = parse_data_source(data, mime_type)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="上传文件内容不是合法 base64") from exc
+        declared_size = payload.get("size")
+        return content, original_name, parsed_mime, declared_size if isinstance(declared_size, int) else None, "json-base64"
+
+    if file is None:
+        raise HTTPException(status_code=400, detail="请上传报价单文件")
+    content = await file.read()
+    return content, file.filename or "quote.bin", file.content_type or "application/octet-stream", None, "multipart"
+
+
 def last_user_message(input_data: dict[str, Any]) -> dict[str, Any] | None:
     messages = input_data.get("messages") or []
     for message in reversed(messages):
@@ -318,24 +342,53 @@ def h5(request: Request) -> HTMLResponse:
 
 
 @app.post("/api/uploads")
-async def upload_file(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
+async def upload_file(request: Request, file: UploadFile | None = File(None)) -> dict[str, Any]:
     start = time.perf_counter()
-    original_name = file.filename or "quote.bin"
-    mime_type = file.content_type or "application/octet-stream"
     client_host = request.client.host if request.client else None
-    log_info("upload request start", clientHost=client_host, originalName=original_name, mimeType=mime_type)
+    content_type = request.headers.get("content-type", "")
+    log_info("upload request start", clientHost=client_host, contentType=content_type)
     try:
-        content = await file.read()
-        log_info("upload bytes read", originalName=original_name, mimeType=mime_type, size=len(content))
+        content, original_name, mime_type, declared_size, uploadMode = await read_upload_payload(request, file)
+        log_info(
+            "upload bytes read",
+            originalName=original_name,
+            mimeType=mime_type,
+            size=len(content),
+            declaredSize=declared_size,
+            uploadMode=uploadMode,
+        )
+        if not content:
+            log_warning(
+                "upload request rejected empty file",
+                clientHost=client_host,
+                originalName=original_name,
+                mimeType=mime_type,
+                declaredSize=declared_size,
+                uploadMode=uploadMode,
+                elapsedMs=elapsed_ms(start),
+            )
+            raise HTTPException(status_code=400, detail="上传文件为空，请重新选择报价单文件")
+        if declared_size is not None and declared_size != len(content):
+            log_warning(
+                "upload size mismatch",
+                clientHost=client_host,
+                originalName=original_name,
+                declaredSize=declared_size,
+                decodedSize=len(content),
+                uploadMode=uploadMode,
+            )
         record = save_upload_bytes(content, original_name, mime_type)
         log_info(
             "upload request finished",
             clientHost=client_host,
             uploadId=record["id"],
             fileName=record["fileName"],
+            uploadMode=uploadMode,
             elapsedMs=elapsed_ms(start),
         )
         return {**record, "downloadUrl": upload_download_path(record["fileName"])}
+    except HTTPException:
+        raise
     except Exception as exc:
         log_exception("upload request failed", exc, clientHost=client_host, originalName=original_name, elapsedMs=elapsed_ms(start))
         raise

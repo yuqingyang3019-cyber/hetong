@@ -1,4 +1,5 @@
 from pathlib import Path
+import base64
 
 from fastapi.testclient import TestClient
 
@@ -33,6 +34,39 @@ def test_upload_and_download_txt() -> None:
     download = client.get(body["downloadUrl"])
     assert download.status_code == 200
     assert download.text == "hello quote"
+
+
+def test_upload_json_base64_and_download_txt() -> None:
+    response = client.post(
+        "/api/uploads",
+        json={
+            "originalName": "quote.txt",
+            "mimeType": "text/plain",
+            "size": len(b"hello quote"),
+            "data": base64.b64encode(b"hello quote").decode("ascii"),
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["size"] == len(b"hello quote")
+
+    download = client.get(body["downloadUrl"])
+    assert download.status_code == 200
+    assert download.text == "hello quote"
+
+
+def test_upload_rejects_empty_file() -> None:
+    response = client.post(
+        "/api/uploads",
+        json={
+            "originalName": "empty.pdf",
+            "mimeType": "application/pdf",
+            "size": 0,
+            "data": "",
+        },
+    )
+    assert response.status_code == 400
+    assert "文件内容" in response.json()["detail"]
 
 
 def test_agui_health_check() -> None:

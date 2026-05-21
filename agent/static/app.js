@@ -30,17 +30,31 @@ async function loginWithDingTalk() {
 }
 
 async function uploadQuote(file) {
-  const formData = new FormData();
-  formData.set("file", file);
+  const data = await fileToDataUrl(file);
   const response = await fetch("/api/uploads", {
     method: "POST",
-    body: formData,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      originalName: file.name || "quote.bin",
+      mimeType: file.type || "application/octet-stream",
+      size: file.size,
+      data,
+    }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
     throw new Error(body.detail || body.error || "上传失败");
   }
   return response.json();
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("读取报价单文件失败"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function parseSseBuffer(buffer) {
@@ -108,6 +122,10 @@ generateButton.addEventListener("click", async () => {
   const file = quoteFile.files?.[0];
   if (!file) {
     statusEl.textContent = "请先选择报价单文件。";
+    return;
+  }
+  if (file.size === 0) {
+    statusEl.textContent = "报价单文件为空，请重新选择文件。";
     return;
   }
   generateButton.disabled = true;
