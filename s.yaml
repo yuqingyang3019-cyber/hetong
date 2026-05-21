@@ -60,16 +60,17 @@ resources:
       code: ./frontend/dist
       customRuntimeConfig:
         command:
-          - node
-          - index.cjs
+          - /bin/bash
+          - start.sh
+        port: 8000
       cpu: 0.5
-      memory: 512
+      memorySize: 512
       diskSize: 512
       timeout: 3600
-      port: 9000
       instanceConcurrency: 100
       internetAccess: true
       environmentVariables:
+        PORT: "8000"
         AGENT_ENDPOINT: ${resources.agent.output.agent.endpoints.0.url}
       customDomain:
         protocol: HTTP
