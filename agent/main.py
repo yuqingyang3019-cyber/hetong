@@ -10,6 +10,7 @@ import time
 import uuid
 from pathlib import Path
 from typing import Any, AsyncGenerator
+from urllib.parse import urlsplit
 
 import requests
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -98,6 +99,9 @@ def absolute_url(request: Request, path: str) -> str:
         return path
     forwarded_host = request.headers.get("x-forwarded-host")
     host = forwarded_host or request.headers.get("host") or ""
+    host = host.split(",", 1)[0].strip()
+    if "://" in host:
+        host = urlsplit(host).netloc
     proto = request.headers.get("x-forwarded-proto") or "https"
     return f"{proto}://{host}{path}" if host else path
 
@@ -112,6 +116,25 @@ def contract_download_path(contract_id: str) -> str:
 
 def content_type_for_file(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+
+def contract_download_payload(draft: dict[str, Any], request: Request, include_data_url: bool = False) -> dict[str, Any]:
+    contract_id = draft["contractId"]
+    download_path = contract_download_path(contract_id)
+    payload = {
+        "contractId": contract_id,
+        "downloadUrl": absolute_url(request, download_path),
+        "downloadPath": download_path,
+    }
+    contract_path = Path(str(draft.get("contractPath") or ""))
+    if include_data_url and contract_path.exists():
+        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        encoded = base64.b64encode(contract_path.read_bytes()).decode("ascii")
+        payload.update({
+            "fileName": contract_path.name,
+            "downloadDataUrl": f"data:{content_type};base64,{encoded}",
+        })
+    return payload
 
 
 def save_upload_bytes(content: bytes, original_name: str, mime_type: str) -> dict[str, Any]:
@@ -461,10 +484,8 @@ def generate_contract_api(
     client_host = request.client.host if request.client else None
     log_info("contract api request start", clientHost=client_host, uploadId=uploadId, templateType=templateType)
     draft = generate_contract(uploadId, templateType, quoteText)
-    url = contract_download_path(draft["contractId"])
     response = {
-        "contractId": draft["contractId"],
-        "downloadUrl": absolute_url(request, url),
+        **contract_download_payload(draft, request),
         "templateType": draft["templateType"],
         "quoteTextLength": draft["quoteTextLength"],
     }
@@ -555,11 +576,20 @@ async def agui_stream(input_data: dict[str, Any], request: Request) -> AsyncGene
             confirmedQuoteText=bool(quote_text),
         )
         draft = generate_contract(upload_id, template_type, quote_text)
-        download_url = absolute_url(request, contract_download_path(draft["contractId"]))
-        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": f"合同已生成，点击下载：{download_url}"})
-        yield sse_event({"type": "CUSTOM", "name": "contract_generated", "value": {"contractId": draft["contractId"], "downloadUrl": download_url}})
+        download_payload = contract_download_payload(draft, request, include_data_url=True)
+        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "合同已生成，请点击下方按钮下载。"})
+        yield sse_event({"type": "CUSTOM", "name": "contract_generated", "value": download_payload})
         yield sse_event({"type": "TEXT_MESSAGE_END", "messageId": message_id})
-        yield sse_event({"type": "RUN_FINISHED", "threadId": thread_id, "runId": run_id, "result": {"contractId": draft["contractId"], "downloadUrl": download_url}})
+        yield sse_event({
+            "type": "RUN_FINISHED",
+            "threadId": thread_id,
+            "runId": run_id,
+            "result": {
+                "contractId": download_payload["contractId"],
+                "downloadUrl": download_payload["downloadUrl"],
+                "downloadPath": download_payload["downloadPath"],
+            },
+        })
         log_info(
             "agui run finished",
             threadId=thread_id,

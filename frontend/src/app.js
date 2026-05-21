@@ -20,6 +20,20 @@ function appendLog(text) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+function applyDownloadLink(value) {
+  if (value.downloadDataUrl) {
+    downloadLink.href = value.downloadDataUrl;
+    downloadLink.download = value.fileName || `${value.contractId || "contract"}.docx`;
+  } else if (value.downloadPath) {
+    downloadLink.href = apiUrl(value.downloadPath);
+    downloadLink.removeAttribute("download");
+  } else {
+    downloadLink.href = value.downloadUrl;
+    downloadLink.removeAttribute("download");
+  }
+  downloadLink.hidden = false;
+}
+
 async function loginWithDingTalk() {
   if (!window.dd || !window.location.search.includes("corpId=")) return;
   const corpId = new URLSearchParams(window.location.search).get("corpId");
@@ -134,8 +148,7 @@ async function generateContract(uploadId, quoteText) {
     for (const event of events) {
       if (event.type === "TEXT_MESSAGE_CONTENT") appendLog(event.delta || "");
       if (event.type === "CUSTOM" && event.name === "contract_generated") {
-        downloadLink.href = event.value.downloadUrl;
-        downloadLink.hidden = false;
+        applyDownloadLink(event.value || {});
       }
       if (event.type === "RUN_ERROR") throw new Error(event.message || "生成失败");
     }
@@ -147,6 +160,7 @@ function resetPreview() {
   previewCard.hidden = true;
   quoteTextPreview.value = "";
   downloadLink.hidden = true;
+  downloadLink.removeAttribute("download");
 }
 
 quoteFile.addEventListener("change", () => {
