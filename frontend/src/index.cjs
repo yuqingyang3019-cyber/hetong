@@ -5,6 +5,7 @@ const { extname, join, normalize } = require("node:path");
 const root = __dirname;
 const port = Number(process.env.PORT || 9000);
 const agentEndpoint = process.env.AGENT_ENDPOINT || "http://127.0.0.1:9010";
+const dingtalkClientId = (process.env.DINGTALK_CLIENT_ID || "").trim();
 const dingtalkCorpId = (process.env.DINGTALK_CORP_ID || "").trim();
 
 const contentTypes = {
@@ -36,6 +37,7 @@ const server = http.createServer((req, res) => {
       res,
       200,
       `window.__AGENT_ENDPOINT__ = ${JSON.stringify(agentEndpoint)};\n` +
+        `window.__DINGTALK_CLIENT_ID__ = ${JSON.stringify(dingtalkClientId)};\n` +
         `window.__DINGTALK_CORP_ID__ = ${JSON.stringify(dingtalkCorpId)};\n`,
       "application/javascript; charset=utf-8",
     );

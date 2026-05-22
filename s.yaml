@@ -73,6 +73,7 @@ resources:
       environmentVariables:
         PORT: "8000"
         AGENT_ENDPOINT: ${resources.agent.output.agent.endpoints.0.url}
+        DINGTALK_CLIENT_ID: ${env("DINGTALK_CLIENT_ID")}
         DINGTALK_CORP_ID: ${env("DINGTALK_CORP_ID")}
       customDomain:
         protocol: HTTP

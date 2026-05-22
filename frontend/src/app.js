@@ -23,6 +23,7 @@ const accessModal = document.querySelector("#accessModal");
 const accessModalMessage = document.querySelector("#accessModalMessage");
 
 const agentEndpoint = (window.__AGENT_ENDPOINT__ || "").replace(/\/$/, "");
+const clientIdFromConfig = (window.__DINGTALK_CLIENT_ID__ || "").trim();
 const corpIdFromConfig = (window.__DINGTALK_CORP_ID__ || "").trim();
 
 let parsedUpload = null;
@@ -288,10 +289,14 @@ function waitForDingTalkReady(timeoutMs = 8000) {
   });
 }
 
-function requestDingTalkAuthCode(corpId, timeoutMs = 12000) {
+function requestDingTalkAuthCode(corpId, clientId, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     if (!isDingTalkClient()) {
       reject(new Error("请在钉钉客户端内打开合同生成助手"));
+      return;
+    }
+    if (!clientId) {
+      reject(new Error("缺少钉钉 Client ID，请联系管理员检查 DINGTALK_CLIENT_ID 配置"));
       return;
     }
 
@@ -312,6 +317,7 @@ function requestDingTalkAuthCode(corpId, timeoutMs = 12000) {
     try {
       window.dd.requestAuthCode({
         corpId,
+        clientId,
         onSuccess: finish(resolve),
         onFail: finish((err) => reject(new Error(err?.errorMessage || err?.message || "免登失败"))),
       });
@@ -386,6 +392,7 @@ async function initAuth() {
     new URLSearchParams(window.location.search).get("corpId") ||
     authContext.corpId ||
     "";
+  const clientId = clientIdFromConfig || "";
 
   if (!isDingTalkClient()) {
     blockNonDingTalkAccess();
@@ -399,8 +406,15 @@ async function initAuth() {
     if (loginHintEl) loginHintEl.textContent = "config.js 可注入 __DINGTALK_CORP_ID__。";
     return;
   }
+  if (!clientId) {
+    sessionReady = false;
+    setStatus("缺少钉钉 Client ID，无法免登。", "error");
+    setProgress("auth", "error", "缺少 DINGTALK_CLIENT_ID，无法发起钉钉免登。");
+    if (loginHintEl) loginHintEl.textContent = "config.js 可注入 __DINGTALK_CLIENT_ID__。";
+    return;
+  }
 
-  await waitForDingTalkReady().then(() => requestDingTalkAuthCode(corpId)).then(async (result) => {
+  await waitForDingTalkReady().then(() => requestDingTalkAuthCode(corpId, clientId)).then(async (result) => {
     const code = result && result.code;
     if (!code) {
       throw new Error("未获取到免登授权码");
