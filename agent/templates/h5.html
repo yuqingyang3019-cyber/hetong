@@ -4,8 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f8fafc" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>合同生成助手</title>
     <link rel="stylesheet" href="/static/app.css" />
     <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.41/dingtalk.open.js"></script>
@@ -19,7 +17,7 @@
       <section class="hero">
         <p class="eyebrow">钉钉 H5 微应用</p>
         <h1>合同生成助手</h1>
-        <p>选择合同模板，上传报价单，先确认解析文本，再生成合同并返回下载链接。</p>
+        <p>上传报价单后自动解析合同要素，确认文本无误即可生成正式合同。</p>
       </section>
 
       <section id="userBar" class="card user-bar" hidden>
@@ -35,9 +33,15 @@
         </div>
       </section>
 
-      <section class="card">
-        <label>
-          合同模板
+      <section class="card form-card">
+        <div class="card-heading">
+          <p class="eyebrow">第 1 步</p>
+          <h2>上传报价单</h2>
+          <p class="hint">先选择合同模板，再上传报价单文件。解析完成后会进入文本确认环节。</p>
+        </div>
+
+        <label class="field">
+          <span class="field-label">合同模板</span>
           <select id="templateType">
             {% for option in templates %}
               <option value="{{ option.type }}">{{ option.displayName }}</option>
@@ -45,31 +49,79 @@
           </select>
         </label>
 
-        <label>
-          报价单文件
-          <input id="quoteFile" type="file" accept=".pdf,.xls,.xlsx,.txt" />
+        <label class="field file-field" for="quoteFile">
+          <span class="field-label">报价单文件</span>
+          <span class="upload-dropzone" id="uploadDropzone">
+            <span class="upload-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img" focusable="false">
+                <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
+              </svg>
+            </span>
+            <span class="upload-copy">
+              <span id="fileNameText" class="upload-title">点击选择报价单文件</span>
+              <span id="fileMetaText" class="upload-meta">支持 PDF、Excel、TXT 格式</span>
+            </span>
+          </span>
+          <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.txt" />
         </label>
 
         <button id="parseButton" type="button" disabled>上传并解析报价单</button>
-        <p id="status" class="status" aria-live="polite">等待上传报价单。</p>
+        <p id="status" class="status" aria-live="polite">正在准备免登环境…</p>
       </section>
 
-      <section id="previewCard" class="card" hidden>
-        <div>
+      <section id="previewCard" class="card preview-card" hidden>
+        <div class="card-heading">
           <p class="eyebrow">报价单解析文本</p>
           <h2>确认后生成合同</h2>
           <p class="hint">请检查下方文本，必要时可直接修正，再点击确认生成合同。</p>
         </div>
-        <label>
-          解析内容
+        <label class="field">
+          <span class="field-label">解析内容</span>
           <textarea id="quoteTextPreview" rows="12"></textarea>
         </label>
         <button id="generateButton" type="button" disabled>确认文本并生成合同</button>
       </section>
 
-      <section class="card log-card">
-        <h2>处理进度</h2>
-        <pre id="log"></pre>
+      <section class="card progress-card">
+        <div class="card-heading">
+          <p class="eyebrow">处理进度</p>
+          <h2>流程状态</h2>
+          <p class="hint" id="progressHint">系统会在每一步完成后自动更新状态。</p>
+        </div>
+        <ol class="step-list" id="progressSteps">
+          <li class="step is-active" data-step="auth">
+            <span class="step-dot" aria-hidden="true"></span>
+            <span>
+              <strong>钉钉免登</strong>
+              <small>确认当前用户身份</small>
+            </span>
+          </li>
+          <li class="step" data-step="upload">
+            <span class="step-dot" aria-hidden="true"></span>
+            <span>
+              <strong>上传并解析</strong>
+              <small>读取报价单内容</small>
+            </span>
+          </li>
+          <li class="step" data-step="review">
+            <span class="step-dot" aria-hidden="true"></span>
+            <span>
+              <strong>确认文本</strong>
+              <small>检查合同关键内容</small>
+            </span>
+          </li>
+          <li class="step" data-step="generate">
+            <span class="step-dot" aria-hidden="true"></span>
+            <span>
+              <strong>生成合同</strong>
+              <small>输出可下载文件</small>
+            </span>
+          </li>
+        </ol>
+        <details class="log-details">
+          <summary>查看详细日志</summary>
+          <pre id="log"></pre>
+        </details>
         <a id="downloadLink" class="download" href="#" hidden>下载合同</a>
       </section>
     </main>
