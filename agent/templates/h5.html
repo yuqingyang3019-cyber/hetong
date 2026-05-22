@@ -2,7 +2,10 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f8fafc" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>合同生成助手</title>
     <link rel="stylesheet" href="/static/app.css" />
     <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.41/dingtalk.open.js"></script>
@@ -21,7 +24,7 @@
 
       <section id="userBar" class="card user-bar" hidden>
         <div class="user-bar-content">
-          <img id="userAvatar" class="user-avatar" alt="" width="48" height="48" hidden />
+          <img id="userAvatar" class="user-avatar" alt="用户头像" width="48" height="48" hidden />
           <div class="user-meta">
             <p id="userName" class="user-name">—</p>
             <p id="userDept" class="user-detail">部门：—</p>
@@ -48,7 +51,7 @@
         </label>
 
         <button id="parseButton" type="button" disabled>上传并解析报价单</button>
-        <p id="status" class="status">等待上传报价单。</p>
+        <p id="status" class="status" aria-live="polite">等待上传报价单。</p>
       </section>
 
       <section id="previewCard" class="card" hidden>
