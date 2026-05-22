@@ -22,7 +22,6 @@ const progressSteps = Array.from(document.querySelectorAll("[data-step]"));
 const accessModal = document.querySelector("#accessModal");
 const accessModalMessage = document.querySelector("#accessModalMessage");
 
-const agentEndpoint = (window.__AGENT_ENDPOINT__ || "").replace(/\/$/, "");
 const clientIdFromConfig = (window.__DINGTALK_CLIENT_ID__ || "").trim();
 const corpIdFromConfig = (window.__DINGTALK_CORP_ID__ || "").trim();
 
@@ -33,7 +32,7 @@ let sessionReady = false;
 let busy = false;
 
 function apiUrl(path) {
-  return `${agentEndpoint}${path}`;
+  return path;
 }
 
 function fetchAuth(url, options = {}) {
@@ -375,7 +374,7 @@ async function initAuth() {
   appendStageLog("免登初始化", "开始");
   appendStageLog(
     "免登配置",
-    `agentEndpoint=${configState(agentEndpoint)} corpId=${configState(corpIdFromConfig)} clientId=${configState(clientIdFromConfig)}`,
+    `api=同域代理 corpId=${configState(corpIdFromConfig)} clientId=${configState(clientIdFromConfig)}`,
   );
   appendStageLog(
     "运行环境",
