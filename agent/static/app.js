@@ -19,6 +19,8 @@ const fileNameText = document.querySelector("#fileNameText");
 const fileMetaText = document.querySelector("#fileMetaText");
 const progressHint = document.querySelector("#progressHint");
 const progressSteps = Array.from(document.querySelectorAll("[data-step]"));
+const accessModal = document.querySelector("#accessModal");
+const accessModalMessage = document.querySelector("#accessModalMessage");
 
 const agentEndpoint = (window.__AGENT_ENDPOINT__ || "").replace(/\/$/, "");
 const corpIdFromConfig = (window.__DINGTALK_CORP_ID__ || "").trim();
@@ -100,16 +102,24 @@ function isDingTalkClient() {
   const userAgent = window.navigator.userAgent || "";
   const platform = getDingTalkPlatform();
 
+  if (!window.dd?.requestAuthCode) return false;
   if (platform === "notindingtalk") return false;
-  if (/dingtalk/i.test(userAgent)) return true;
-  return Boolean(window.dd?.requestAuthCode && platform && platform !== "notindingtalk");
+  if (platform) return true;
+  return /dingtalk/i.test(userAgent);
+}
+
+function showAccessModal(message) {
+  if (!accessModal) return;
+  if (accessModalMessage) accessModalMessage.textContent = message;
+  accessModal.hidden = false;
 }
 
 function blockNonDingTalkAccess(message = "请在钉钉客户端内打开合同生成助手。") {
   sessionReady = false;
   setInteractionEnabled(false);
   hideUserBar();
-  setStatus(message, "error");
+  setStatus("当前环境不可用", "error");
+  showAccessModal("合同生成助手仅支持从钉钉微应用访问。请返回钉钉客户端后重新打开应用。");
   setProgress("auth", "error", "当前访问环境不是钉钉客户端，已禁止上传和生成。");
   if (loginHintEl) loginHintEl.textContent = message;
 }
