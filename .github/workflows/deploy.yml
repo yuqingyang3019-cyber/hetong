@@ -49,13 +49,11 @@ jobs:
       ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
       DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
       DASHSCOPE_MODEL: ${{ secrets.DASHSCOPE_MODEL }}
-      DINGTALK_APP_KEY: ${{ secrets.DINGTALK_APP_KEY }}
-      DINGTALK_APP_SECRET: ${{ secrets.DINGTALK_APP_SECRET }}
+      DINGTALK_CLIENT_ID: ${{ secrets.DINGTALK_CLIENT_ID }}
+      DINGTALK_CLIENT_SECRET: ${{ secrets.DINGTALK_CLIENT_SECRET }}
       DINGTALK_CORP_ID: ${{ secrets.DINGTALK_CORP_ID }}
-      DINGTALK_AGENT_ID: ${{ secrets.DINGTALK_AGENT_ID }}
       APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
       AGENT_ALLOWED_ORIGINS: ${{ secrets.AGENT_ALLOWED_ORIGINS }}
-      AGENT_ALLOWED_ORIGIN_REGEX: ${{ secrets.AGENT_ALLOWED_ORIGIN_REGEX }}
     concurrency:
       group: agentrun-deploy
       cancel-in-progress: true
@@ -103,6 +101,25 @@ jobs:
             --AccessKeyID ${{ secrets.ALIYUN_ACCESS_KEY_ID }} \
             --AccessKeySecret ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }} \
             -f
+
+      - name: Verify required secrets for deploy
+        run: |
+          set -euo pipefail
+          missing=""
+          for var in ALIYUN_ACCOUNT_ID ALIYUN_ACCESS_KEY_ID ALIYUN_ACCESS_KEY_SECRET \
+            DASHSCOPE_API_KEY DASHSCOPE_MODEL \
+            DINGTALK_CLIENT_ID DINGTALK_CLIENT_SECRET DINGTALK_CORP_ID \
+            APP_SESSION_SECRET AGENT_ALLOWED_ORIGINS; do
+            val="$(printenv "$var" || true)"
+            if [ -z "$val" ]; then
+              missing="$missing $var"
+            fi
+          done
+          if [ -n "${missing# }" ]; then
+            echo "::error::缺少或未配置的环境变量（GitHub Secrets）：${missing# }"
+            echo "请对照 s.yaml 中 environmentVariables 的 env(...) 项补齐后再部署。"
+            exit 1
+          fi
 
       - name: Deploy to AgentRun
         run: s deploy -t s.yaml --assume-yes
