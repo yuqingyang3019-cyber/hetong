@@ -1003,7 +1003,7 @@ def dingtalk_login(request: Request, payload: dict = Body(...)) -> JSONResponse:
         raise HTTPException(status_code=400, detail="缺少免登授权码 code")
 
     try:
-        access_token = dingtalk_oapi.get_app_access_token()
+        access_token = dingtalk_oapi.get_app_access_token(corp_id or None)
         info_by_code = dingtalk_oapi.get_userid_by_login_code(access_token, str(code))
         userid = str(info_by_code.get("userid") or "").strip()
         if not userid:

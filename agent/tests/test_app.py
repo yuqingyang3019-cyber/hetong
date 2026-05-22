@@ -1,6 +1,6 @@
 from pathlib import Path
 import base64
-from unittest.mock import ANY, patch
+from unittest.mock import ANY, Mock, patch
 
 from fastapi.testclient import TestClient
 
@@ -337,7 +337,7 @@ def test_dingtalk_login_sets_session_and_allows_upload(monkeypatch) -> None:
 
     dingtalk_oapi.clear_token_cache()
     isolated = TestClient(app)
-    with patch.object(dingtalk_oapi, "get_app_access_token", return_value="tok"), patch.object(
+    with patch.object(dingtalk_oapi, "get_app_access_token", return_value="tok") as app_token, patch.object(
         dingtalk_oapi,
         "get_userid_by_login_code",
         return_value={"userid": "uid1", "name": "Nick", "unionid": "union-x"},
@@ -355,6 +355,7 @@ def test_dingtalk_login_sets_session_and_allows_upload(monkeypatch) -> None:
         login = isolated.post("/api/dingtalk/login", json={"code": "tmpcode", "corpId": "corp-x"})
 
     assert login.status_code == 200
+    app_token.assert_called_once_with("corp-x")
     login_body = login.json()
     assert login_body["ok"] is True
     assert login_body["user"]["name"] == "张三"
@@ -391,3 +392,26 @@ def test_dingtalk_login_code_uses_h5_microapp_code(monkeypatch) -> None:
     assert result["userid"] == "uid1"
     assert result["unionid"] == "union-x"
     assert result["authMode"] == "h5_microapp"
+
+
+def test_dingtalk_getuserinfo_uses_form_payload() -> None:
+    from agent import dingtalk_oapi
+
+    response = Mock()
+    response.status_code = 200
+    response.json.return_value = {
+        "errcode": 0,
+        "errmsg": "ok",
+        "result": {"userid": "uid1", "unionid": "union-x"},
+    }
+
+    with patch.object(dingtalk_oapi.requests, "post", return_value=response) as post:
+        result = dingtalk_oapi.get_userid_by_auth_code("app-token", "h5-code")
+
+    post.assert_called_once_with(
+        dingtalk_oapi._GETUSERINFO_URL,
+        data={"access_token": "app-token", "code": "h5-code"},
+        headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
+        timeout=15,
+    )
+    assert result["userid"] == "uid1"

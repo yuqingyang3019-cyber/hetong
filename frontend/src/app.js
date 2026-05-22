@@ -474,11 +474,9 @@ async function initAuth() {
   setStatus("正在钉钉内免登…");
   if (loginHintEl) loginHintEl.textContent = "正在获取免登授权码…";
 
-  const corpId =
-    corpIdFromConfig ||
-    new URLSearchParams(window.location.search).get("corpId") ||
-    authContext.corpId ||
-    "";
+  const searchParams = new URLSearchParams(window.location.search);
+  const corpIdFromUrl = searchParams.get("corpid") || searchParams.get("corpId") || "";
+  const corpId = corpIdFromUrl || authContext.corpId || corpIdFromConfig || "";
   const clientId = clientIdFromConfig || "";
 
   if (!isDingTalkClient()) {

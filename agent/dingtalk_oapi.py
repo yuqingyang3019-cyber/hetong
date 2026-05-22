@@ -18,15 +18,12 @@ _USER_GET_URL = "https://oapi.dingtalk.com/topapi/v2/user/get"
 _DEPT_GET_URL = "https://oapi.dingtalk.com/topapi/v2/department/get"
 
 _lock = threading.Lock()
-_cached_access_token: str | None = None
-_cached_expires_at: float = 0.0
+_cached_access_tokens: dict[str, tuple[str, float]] = {}
 
 
 def clear_token_cache() -> None:
-    global _cached_access_token, _cached_expires_at
     with _lock:
-        _cached_access_token = None
-        _cached_expires_at = 0.0
+        _cached_access_tokens.clear()
 
 
 def _dingtalk_errcode_ok(value: Any) -> bool:
@@ -79,15 +76,12 @@ def get_legacy_app_credentials() -> tuple[str, str]:
     return app_key, app_secret
 
 
-def _cache_access_token(token: str, expires_in: int, fetched_at: float) -> None:
-    global _cached_access_token, _cached_expires_at
-
+def _cache_access_token(cache_key: str, token: str, expires_in: int, fetched_at: float) -> None:
     with _lock:
-        _cached_access_token = token
-        _cached_expires_at = fetched_at + max(60, expires_in)
+        _cached_access_tokens[cache_key] = (token, fetched_at + max(60, expires_in))
 
 
-def _get_oauth_access_token(client_id: str, client_secret: str, corp_id: str, fetched_at: float) -> str:
+def _get_oauth_access_token(client_id: str, client_secret: str, corp_id: str, fetched_at: float, cache_key: str) -> str:
     resp = requests.post(
         _OAUTH_TOKEN_URL_TEMPLATE.format(corp_id=quote(corp_id, safe="")),
         json={
@@ -104,11 +98,11 @@ def _get_oauth_access_token(client_id: str, client_secret: str, corp_id: str, fe
         raise RuntimeError(f"钉钉 OAuth2 token 未返回 access_token: {data}")
 
     expires_in = int(data.get("expires_in") or 7200)
-    _cache_access_token(token, expires_in, fetched_at)
+    _cache_access_token(cache_key, token, expires_in, fetched_at)
     return token
 
 
-def _get_legacy_access_token(app_key: str, app_secret: str, fetched_at: float) -> str:
+def _get_legacy_access_token(app_key: str, app_secret: str, fetched_at: float, cache_key: str) -> str:
     resp = requests.get(
         _GETTOKEN_URL,
         params={"appkey": app_key, "appsecret": app_secret},
@@ -124,34 +118,43 @@ def _get_legacy_access_token(app_key: str, app_secret: str, fetched_at: float) -
         raise RuntimeError("钉钉 gettoken 未返回 access_token")
 
     expires_in = int(data.get("expires_in") or 7200)
-    _cache_access_token(token, expires_in, fetched_at)
+    _cache_access_token(cache_key, token, expires_in, fetched_at)
     return token
 
 
-def get_app_access_token() -> str:
+def get_app_access_token(corp_id: str | None = None) -> str:
     """获取企业内部应用 access_token，带进程内缓存（提前 120 秒刷新）。"""
     now = time.time()
-    with _lock:
-        if _cached_access_token and now < _cached_expires_at - 120:
-            return _cached_access_token
 
-    client_id, client_secret, corp_id = get_client_credentials()
+    client_id, client_secret, configured_corp_id = get_client_credentials()
+    effective_corp_id = (corp_id or configured_corp_id).strip()
     if client_id or client_secret:
-        if not client_id or not client_secret or not corp_id:
+        if not client_id or not client_secret or not effective_corp_id:
             raise RuntimeError("新版钉钉凭证需要同时配置 DINGTALK_CLIENT_ID、DINGTALK_CLIENT_SECRET 和 DINGTALK_CORP_ID")
-        return _get_oauth_access_token(client_id, client_secret, corp_id, now)
+        cache_key = f"oauth:{effective_corp_id}"
+        with _lock:
+            cached = _cached_access_tokens.get(cache_key)
+            if cached and now < cached[1] - 120:
+                return cached[0]
+        return _get_oauth_access_token(client_id, client_secret, effective_corp_id, now, cache_key)
 
     app_key, app_secret = get_legacy_app_credentials()
     if app_key and app_secret:
-        return _get_legacy_access_token(app_key, app_secret, now)
+        cache_key = f"legacy:{app_key}"
+        with _lock:
+            cached = _cached_access_tokens.get(cache_key)
+            if cached and now < cached[1] - 120:
+                return cached[0]
+        return _get_legacy_access_token(app_key, app_secret, now, cache_key)
 
     raise RuntimeError("未配置钉钉应用凭证：需要新版 CLIENT_ID/SECRET/CORP_ID 或旧版 APP_KEY/APP_SECRET")
 
 
 def get_userid_by_auth_code(access_token: str, auth_code: str) -> dict[str, Any]:
     resp = requests.post(
-        f"{_GETUSERINFO_URL}?access_token={quote(access_token, safe='')}",
-        json={"code": auth_code},
+        _GETUSERINFO_URL,
+        data={"access_token": access_token, "code": auth_code},
+        headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
         timeout=15,
     )
     _raise_for_dingtalk_status(resp, "通过免登码获取钉钉用户信息")
