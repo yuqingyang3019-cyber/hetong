@@ -45,6 +45,7 @@ resources:
           DINGTALK_CLIENT_SECRET: ${env("DINGTALK_CLIENT_SECRET")}
           DINGTALK_CORP_ID: ${env("DINGTALK_CORP_ID")}
           APP_SESSION_SECRET: ${env("APP_SESSION_SECRET")}
+          HETONG_SKIP_AUTH: "true"
           AGENT_ALLOWED_ORIGINS: ${env("AGENT_ALLOWED_ORIGINS")}
         endpoints:
           - name: Default

@@ -393,11 +393,6 @@ async function initAuth() {
   );
   setProgress("auth", "active", "正在确认钉钉免登状态。");
 
-  if (!isDingTalkClient()) {
-    blockNonDingTalkAccess();
-    return;
-  }
-
   let statusResponse;
   try {
     appendStageLog("读取鉴权状态", "请求 /api/auth/status");
@@ -433,6 +428,11 @@ async function initAuth() {
     );
     setStatus("请选择报价单文件。");
     setProgress("upload", "active", "免登已就绪，请上传报价单。");
+    return;
+  }
+
+  if (!isDingTalkClient()) {
+    blockNonDingTalkAccess();
     return;
   }
 
