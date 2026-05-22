@@ -996,7 +996,7 @@ def dingtalk_login(request: Request, payload: dict = Body(...)) -> JSONResponse:
             "configured": False,
             "codeReceived": bool(code),
             "corpId": corp_id or None,
-            "message": "未配置钉钉 AppKey/AppSecret，已跳过服务端免登",
+            "message": "未配置钉钉 Client ID/Client Secret/CorpId，已跳过服务端免登",
         })
 
     if not code:

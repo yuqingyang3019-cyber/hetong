@@ -329,8 +329,9 @@ def test_agui_requires_login_when_enforced(monkeypatch) -> None:
 def test_dingtalk_login_sets_session_and_allows_upload(monkeypatch) -> None:
     monkeypatch.setenv("HETONG_SKIP_AUTH", "false")
     monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
-    monkeypatch.setenv("DINGTALK_APP_KEY", "ak")
-    monkeypatch.setenv("DINGTALK_APP_SECRET", "sk")
+    monkeypatch.setenv("DINGTALK_CLIENT_ID", "cid")
+    monkeypatch.setenv("DINGTALK_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("DINGTALK_CORP_ID", "corp")
 
     from agent import dingtalk_oapi
 
@@ -372,7 +373,7 @@ def test_dingtalk_login_sets_session_and_allows_upload(monkeypatch) -> None:
     dingtalk_oapi.clear_token_cache()
 
 
-def test_dingtalk_login_code_uses_oauth_user_access_token(monkeypatch) -> None:
+def test_dingtalk_login_code_uses_h5_microapp_code(monkeypatch) -> None:
     monkeypatch.setenv("DINGTALK_CLIENT_ID", "cid")
     monkeypatch.setenv("DINGTALK_CLIENT_SECRET", "csecret")
     monkeypatch.setenv("DINGTALK_CORP_ID", "corp")
@@ -381,22 +382,12 @@ def test_dingtalk_login_code_uses_oauth_user_access_token(monkeypatch) -> None:
 
     with patch.object(
         dingtalk_oapi,
-        "get_user_access_token_by_auth_code",
-        return_value={"accessToken": "user-token", "corpId": "corp"},
-    ) as user_token, patch.object(
-        dingtalk_oapi,
-        "get_current_user_by_user_access_token",
-        return_value={"unionId": "union-x", "nick": "Nick", "avatarUrl": "avatar.png"},
-    ) as current_user, patch.object(
-        dingtalk_oapi,
-        "get_userid_by_unionid",
-        return_value={"userid": "uid1", "contact_type": 0},
-    ) as by_unionid:
-        result = dingtalk_oapi.get_userid_by_login_code("app-token", "oauth-code")
+        "get_userid_by_auth_code",
+        return_value={"userid": "uid1", "unionid": "union-x"},
+    ) as by_auth_code:
+        result = dingtalk_oapi.get_userid_by_login_code("app-token", "h5-code")
 
-    user_token.assert_called_once_with("oauth-code")
-    current_user.assert_called_once_with("user-token")
-    by_unionid.assert_called_once_with("app-token", "union-x")
+    by_auth_code.assert_called_once_with("app-token", "h5-code")
     assert result["userid"] == "uid1"
     assert result["unionid"] == "union-x"
-    assert result["authMode"] == "oauth2"
+    assert result["authMode"] == "h5_microapp"

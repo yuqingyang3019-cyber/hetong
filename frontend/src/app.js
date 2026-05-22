@@ -443,7 +443,7 @@ async function initAuth() {
     appendStageLog("免登配置失败", "服务端未配置钉钉应用");
     setStatus("服务端未配置钉钉应用，无法免登。", "error");
     setProgress("auth", "error", "服务端未配置钉钉应用，无法免登。");
-    if (loginHintEl) loginHintEl.textContent = "请联系管理员配置 DINGTALK_APP_KEY / DINGTALK_APP_SECRET。";
+    if (loginHintEl) loginHintEl.textContent = "请联系管理员配置 DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_CORP_ID。";
     return;
   }
 

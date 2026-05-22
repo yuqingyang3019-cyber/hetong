@@ -13,10 +13,7 @@ import requests
 
 _GETTOKEN_URL = "https://oapi.dingtalk.com/gettoken"
 _OAUTH_TOKEN_URL_TEMPLATE = "https://api.dingtalk.com/v1.0/oauth2/{corp_id}/token"
-_USER_ACCESS_TOKEN_URL = "https://api.dingtalk.com/v1.0/oauth2/userAccessToken"
-_CONTACT_USER_ME_URL = "https://api.dingtalk.com/v1.0/contact/users/me"
 _GETUSERINFO_URL = "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo"
-_GET_BY_UNIONID_URL = "https://oapi.dingtalk.com/topapi/user/getbyunionid"
 _USER_GET_URL = "https://oapi.dingtalk.com/topapi/v2/user/get"
 _DEPT_GET_URL = "https://oapi.dingtalk.com/topapi/v2/department/get"
 
@@ -57,6 +54,25 @@ def get_client_credentials() -> tuple[str, str, str]:
     return client_id, client_secret, corp_id
 
 
+def _raise_for_dingtalk_status(resp: requests.Response, operation: str) -> None:
+    if resp.status_code < 400:
+        return
+
+    try:
+        body: Any = resp.json()
+    except ValueError:
+        body = resp.text[:500]
+
+    if isinstance(body, dict):
+        code = body.get("code") or body.get("errcode")
+        message = body.get("message") or body.get("errmsg")
+        detail = f"code={code} message={message} body={body}"
+    else:
+        detail = f"body={body}"
+
+    raise requests.HTTPError(f"{operation} 失败：HTTP {resp.status_code} {detail}", response=resp)
+
+
 def get_legacy_app_credentials() -> tuple[str, str]:
     app_key = (os.getenv("DINGTALK_APP_KEY") or "").strip()
     app_secret = (os.getenv("DINGTALK_APP_SECRET") or "").strip()
@@ -81,7 +97,7 @@ def _get_oauth_access_token(client_id: str, client_secret: str, corp_id: str, fe
         },
         timeout=15,
     )
-    resp.raise_for_status()
+    _raise_for_dingtalk_status(resp, "获取钉钉应用 access_token")
     data = resp.json()
     token = data.get("access_token")
     if not token or not isinstance(token, str):
@@ -98,7 +114,7 @@ def _get_legacy_access_token(app_key: str, app_secret: str, fetched_at: float) -
         params={"appkey": app_key, "appsecret": app_secret},
         timeout=15,
     )
-    resp.raise_for_status()
+    _raise_for_dingtalk_status(resp, "获取钉钉旧版应用 access_token")
     data = resp.json()
     if not _dingtalk_errcode_ok(data.get("errcode")):
         raise RuntimeError(f"钉钉 gettoken 失败: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
@@ -138,7 +154,7 @@ def get_userid_by_auth_code(access_token: str, auth_code: str) -> dict[str, Any]
         json={"code": auth_code},
         timeout=15,
     )
-    resp.raise_for_status()
+    _raise_for_dingtalk_status(resp, "通过免登码获取钉钉用户信息")
     data = resp.json()
     if not _dingtalk_errcode_ok(data.get("errcode")):
         raise RuntimeError(f"钉钉 getuserinfo 失败: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
@@ -152,88 +168,10 @@ def get_userid_by_auth_code(access_token: str, auth_code: str) -> dict[str, Any]
     return result
 
 
-def get_user_access_token_by_auth_code(auth_code: str) -> dict[str, Any]:
-    client_id, client_secret, _corp_id = get_client_credentials()
-    if not client_id or not client_secret:
-        raise RuntimeError("缺少 DINGTALK_CLIENT_ID 或 DINGTALK_CLIENT_SECRET，无法使用新版免登授权码")
-
-    resp = requests.post(
-        _USER_ACCESS_TOKEN_URL,
-        json={
-            "clientId": client_id,
-            "clientSecret": client_secret,
-            "code": auth_code,
-            "grantType": "authorization_code",
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    access_token = data.get("accessToken")
-    if not access_token or not isinstance(access_token, str):
-        raise RuntimeError(f"钉钉 userAccessToken 未返回 accessToken: {data}")
-    return data
-
-
-def get_current_user_by_user_access_token(user_access_token: str) -> dict[str, Any]:
-    resp = requests.get(
-        _CONTACT_USER_ME_URL,
-        headers={"x-acs-dingtalk-access-token": user_access_token},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    union_id = data.get("unionId")
-    if not union_id or not isinstance(union_id, str):
-        raise RuntimeError(f"钉钉 contact/users/me 未返回 unionId: {data}")
-    return data
-
-
-def get_userid_by_unionid(access_token: str, unionid: str) -> dict[str, Any]:
-    resp = requests.post(
-        f"{_GET_BY_UNIONID_URL}?access_token={quote(access_token, safe='')}",
-        json={"unionid": unionid},
-        timeout=15,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    if not _dingtalk_errcode_ok(data.get("errcode")):
-        raise RuntimeError(f"钉钉 getbyunionid 失败: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
-
-    result = data.get("result")
-    if not isinstance(result, dict):
-        raise RuntimeError("钉钉 getbyunionid 返回缺少 result")
-    userid = result.get("userid")
-    if not userid:
-        raise RuntimeError("钉钉 getbyunionid 未返回 userid")
-    return result
-
-
-def get_userid_by_oauth_auth_code(access_token: str, auth_code: str) -> dict[str, Any]:
-    user_token = get_user_access_token_by_auth_code(auth_code)
-    user_access_token = str(user_token["accessToken"])
-    me = get_current_user_by_user_access_token(user_access_token)
-    unionid = str(me["unionId"])
-    userid_result = get_userid_by_unionid(access_token, unionid)
-    return {
-        **userid_result,
-        "unionid": unionid,
-        "name": me.get("nick"),
-        "nick": me.get("nick"),
-        "avatar": me.get("avatarUrl"),
-        "mobile": me.get("mobile"),
-        "email": me.get("email"),
-        "openId": me.get("openId"),
-        "authCorpId": user_token.get("corpId"),
-        "authMode": "oauth2",
-    }
-
-
 def get_userid_by_login_code(access_token: str, auth_code: str) -> dict[str, Any]:
-    client_id, client_secret, _corp_id = get_client_credentials()
-    if client_id and client_secret:
-        return get_userid_by_oauth_auth_code(access_token, auth_code)
-    return get_userid_by_auth_code(access_token, auth_code)
+    result = get_userid_by_auth_code(access_token, auth_code)
+    result.setdefault("authMode", "h5_microapp")
+    return result
 
 
 def get_user_detail(access_token: str, userid: str, language: str = "zh_CN") -> dict[str, Any]:
@@ -242,7 +180,7 @@ def get_user_detail(access_token: str, userid: str, language: str = "zh_CN") -> 
         json={"userid": userid, "language": language},
         timeout=15,
     )
-    resp.raise_for_status()
+    _raise_for_dingtalk_status(resp, "获取钉钉用户详情")
     data = resp.json()
     if not _dingtalk_errcode_ok(data.get("errcode")):
         raise RuntimeError(f"钉钉 user/get 失败: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
@@ -291,7 +229,7 @@ def get_department_name(access_token: str, dept_id: int) -> str | None:
             json={"dept_id": dept_id},
             timeout=10,
         )
-        resp.raise_for_status()
+        _raise_for_dingtalk_status(resp, "获取钉钉部门信息")
         data = resp.json()
         if not _dingtalk_errcode_ok(data.get("errcode")):
             return None
