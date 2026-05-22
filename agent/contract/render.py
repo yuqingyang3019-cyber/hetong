@@ -1,9 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
+
+try:
+    from zoneinfo import ZoneInfo
+except ModuleNotFoundError:
+    def ZoneInfo(name: str) -> timezone:
+        if name == "Asia/Shanghai":
+            return timezone(timedelta(hours=8))
+        return timezone.utc
 
 from docxtpl import DocxTemplate
 
@@ -20,8 +27,10 @@ def _pending(label: str) -> str:
     return f"【待填写：{label}】"
 
 
-def _value_for_context(value: Any, label: str) -> str:
+def _value_for_context(value: Any, label: str, blank_missing: bool = False) -> str:
     if value is None or str(value).strip() == "":
+        if blank_missing:
+            return ""
         return _pending(label)
     return str(value)
 
@@ -59,11 +68,11 @@ def merge_render_data(patch: dict[str, Any], config: TemplateConfig) -> dict[str
     return out
 
 
-def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig) -> dict[str, Any]:
+def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, blank_missing: bool = False) -> dict[str, Any]:
     scalar_labels = {field["key"]: field["label"] for field in config.schema.get("scalars", [])}
     context: dict[str, Any] = {}
     for key in config.scalar_keys:
-        context[key] = _value_for_context(render_data.get(key), scalar_labels.get(key, key))
+        context[key] = _value_for_context(render_data.get(key), scalar_labels.get(key, key), blank_missing)
     for table_name, columns in config.table_bindings.items():
         table_def = config.schema.get("tables", {}).get(table_name, {})
         labels = {column["key"]: column["label"] for column in table_def.get("columns", [])}
@@ -73,18 +82,18 @@ def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig) -
             for row in rows:
                 source = row if isinstance(row, dict) else {}
                 mapped_rows.append({
-                    column: _value_for_context(source.get(column), labels.get(column, column))
+                    column: _value_for_context(source.get(column), labels.get(column, column), blank_missing)
                     for column in columns
                 })
         context[table_name] = mapped_rows
     return context
 
 
-def render_contract(render_data: dict[str, Any], config: TemplateConfig, contract_id: str) -> Path:
+def render_contract(render_data: dict[str, Any], config: TemplateConfig, contract_id: str, blank_missing: bool = False) -> Path:
     ensure_storage()
     template_path = template_docx_path(config.type)
     output_path = CONTRACTS_DIR / f"{contract_id}.docx"
     doc = DocxTemplate(str(template_path))
-    doc.render(build_docxtpl_context(render_data, config))
+    doc.render(build_docxtpl_context(render_data, config, blank_missing=blank_missing))
     doc.save(str(output_path))
     return output_path

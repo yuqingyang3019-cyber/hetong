@@ -11,7 +11,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Annotated, Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Optional
 from urllib.parse import urlsplit
 
 import requests
@@ -142,9 +142,6 @@ def get_current_user(request: Request) -> dict[str, Any]:
     if not payload:
         raise HTTPException(status_code=401, detail="登录态无效，请重新登录")
     return payload
-
-
-CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
 
 
 def public_user_from_session(payload: dict[str, Any]) -> dict[str, Any]:
@@ -349,6 +346,90 @@ def table_row_counts(data: dict[str, Any]) -> dict[str, int]:
     return {key: len(value) for key, value in data.items() if isinstance(value, list)}
 
 
+def _get_by_dot_path(data: dict[str, Any], key: str) -> Any:
+    if key in data:
+        return data.get(key)
+    current: Any = data
+    for part in key.split("."):
+        if not isinstance(current, dict) or part not in current:
+            return None
+        current = current[part]
+    return current
+
+
+def _is_blank_field(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, list):
+        return len(value) == 0
+    if isinstance(value, dict):
+        return all(_is_blank_field(item) for item in value.values())
+    return False
+
+
+def _field_display_value(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def classify_extracted_fields(extracted: dict[str, Any], config: Any) -> dict[str, Any]:
+    recognized_fields: list[dict[str, Any]] = []
+    missing_fields: list[dict[str, Any]] = []
+    scalar_labels = {field["key"]: field.get("label") or field["key"] for field in config.schema.get("scalars", [])}
+
+    for key in config.scalar_keys:
+        value = _get_by_dot_path(extracted, key)
+        item = {"type": "scalar", "key": key, "label": scalar_labels.get(key, key)}
+        if _is_blank_field(value):
+            missing_fields.append(item)
+        else:
+            recognized_fields.append({**item, "value": _field_display_value(value)})
+
+    for table_name, columns in config.table_bindings.items():
+        table_def = config.schema.get("tables", {}).get(table_name, {})
+        table_label = table_def.get("label") or table_name
+        column_labels = {column["key"]: column.get("label") or column["key"] for column in table_def.get("columns", [])}
+        rows_value = extracted.get(table_name)
+        rows = rows_value if isinstance(rows_value, list) else []
+        if not rows:
+            missing_fields.append({"type": "table", "key": table_name, "label": table_label, "reason": "未识别到明细行"})
+            continue
+
+        display_rows: list[list[dict[str, str]]] = []
+        for row_index, row in enumerate(rows):
+            source = row if isinstance(row, dict) else {}
+            display_row: list[dict[str, str]] = []
+            for column in columns:
+                value = source.get(column)
+                label = column_labels.get(column, column)
+                if _is_blank_field(value):
+                    missing_fields.append({
+                        "type": "tableCell",
+                        "key": f"{table_name}.{row_index}.{column}",
+                        "label": f"{table_label} 第 {row_index + 1} 行 {label}",
+                    })
+                else:
+                    display_row.append({"key": column, "label": label, "value": _field_display_value(value)})
+            display_rows.append(display_row)
+
+        recognized_fields.append({
+            "type": "table",
+            "key": table_name,
+            "label": table_label,
+            "rowCount": len(rows),
+            "rows": display_rows,
+        })
+
+    return {
+        "recognizedFields": recognized_fields,
+        "missingFields": missing_fields,
+        "tableRowCounts": table_row_counts(extracted),
+    }
+
+
 def extract_agui_attachment(input_data: dict[str, Any]) -> dict[str, Any] | None:
     message = last_user_message(input_data)
     content = message.get("content") if message else None
@@ -405,10 +486,23 @@ def extract_quote_text(upload_id: str) -> tuple[dict[str, Any], str]:
     return upload, quote_text
 
 
-def generate_contract(upload_id: str, template_type: str, quote_text: str | None = None) -> dict[str, Any]:
+def generate_contract(
+    upload_id: str,
+    template_type: str,
+    quote_text: str | None = None,
+    extra_info: str | None = None,
+    extracted_data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     start = time.perf_counter()
     has_confirmed_text = bool(quote_text and quote_text.strip())
-    log_info("contract generation start", uploadId=upload_id, templateType=template_type, confirmedQuoteText=has_confirmed_text)
+    has_confirmed_data = isinstance(extracted_data, dict)
+    log_info(
+        "contract generation start",
+        uploadId=upload_id,
+        templateType=template_type,
+        confirmedQuoteText=has_confirmed_text,
+        confirmedExtractedData=has_confirmed_data,
+    )
     try:
         upload = load_upload(upload_id)
         log_info(
@@ -434,23 +528,38 @@ def generate_contract(upload_id: str, template_type: str, quote_text: str | None
         else:
             upload, quote_text = extract_quote_text(upload_id)
 
-        llm_start = time.perf_counter()
-        log_info("llm extraction start", uploadId=upload_id, templateType=config.type, quoteTextLength=len(quote_text))
-        extracted = extract_template_render_data(quote_text, config)
-        log_info(
-            "llm extraction finished",
-            uploadId=upload_id,
-            templateType=config.type,
-            tableRowCounts=table_row_counts(extracted),
-            elapsedMs=elapsed_ms(llm_start),
-        )
+        if has_confirmed_data:
+            extracted = extracted_data or {}
+            log_info(
+                "confirmed extracted data accepted",
+                uploadId=upload_id,
+                templateType=config.type,
+                tableRowCounts=table_row_counts(extracted),
+            )
+        else:
+            llm_start = time.perf_counter()
+            log_info(
+                "llm extraction start",
+                uploadId=upload_id,
+                templateType=config.type,
+                quoteTextLength=len(quote_text),
+                extraInfoLength=len((extra_info or "").strip()),
+            )
+            extracted = extract_template_render_data(quote_text, config, extra_info)
+            log_info(
+                "llm extraction finished",
+                uploadId=upload_id,
+                templateType=config.type,
+                tableRowCounts=table_row_counts(extracted),
+                elapsedMs=elapsed_ms(llm_start),
+            )
 
         render_data = merge_render_data(extracted, config)
         contract_id = new_id("contract")
 
         render_start = time.perf_counter()
         log_info("contract render start", uploadId=upload_id, contractId=contract_id, templateType=config.type)
-        contract_path = render_contract(render_data, config, contract_id)
+        contract_path = render_contract(render_data, config, contract_id, blank_missing=has_confirmed_data)
         log_info(
             "contract render finished",
             uploadId=upload_id,
@@ -463,6 +572,7 @@ def generate_contract(upload_id: str, template_type: str, quote_text: str | None
             "upload": upload,
             "templateType": config.type,
             "quoteTextLength": len(quote_text),
+            "extraInfoLength": len((extra_info or "").strip()),
             "extractedData": extracted,
             "renderData": render_data,
             "contractId": contract_id,
@@ -483,12 +593,16 @@ def generate_contract(upload_id: str, template_type: str, quote_text: str | None
 
 
 @app.get("/health")
-def health() -> dict[str, bool]:
+def health() -> dict:
     return {"ok": True}
 
 
 @app.post("/api/uploads")
-async def upload_file(request: Request, current_user: CurrentUser, file: UploadFile | None = File(None)) -> dict[str, Any]:
+async def upload_file(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    file: Optional[UploadFile] = File(None),
+) -> dict:
     start = time.perf_counter()
     client_host = request.client.host if request.client else None
     content_type = request.headers.get("content-type", "")
@@ -546,7 +660,7 @@ async def upload_file(request: Request, current_user: CurrentUser, file: UploadF
 
 
 @app.get("/api/uploads/{file_name}/download")
-def download_upload(file_name: str, current_user: CurrentUser) -> FileResponse:
+def download_upload(file_name: str, current_user: dict = Depends(get_current_user)) -> FileResponse:
     path = UPLOADS_DIR / Path(file_name).name
     if not path.exists():
         raise HTTPException(status_code=404, detail="上传文件不存在")
@@ -554,7 +668,11 @@ def download_upload(file_name: str, current_user: CurrentUser) -> FileResponse:
 
 
 @app.post("/api/uploads/{upload_id}/quote-text")
-async def parse_quote_text_api(upload_id: str, request: Request, current_user: CurrentUser) -> dict[str, Any]:
+async def parse_quote_text_api(
+    upload_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
     start = time.perf_counter()
     client_host = request.client.host if request.client else None
     template_type = "caigouhetong"
@@ -591,14 +709,76 @@ async def parse_quote_text_api(upload_id: str, request: Request, current_user: C
     return response
 
 
+@app.post("/api/uploads/{upload_id}/field-preview")
+async def preview_quote_fields_api(
+    upload_id: str,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    start = time.perf_counter()
+    client_host = request.client.host if request.client else None
+    payload = await request.json()
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="字段识别请求体格式不正确")
+
+    template_type = str(payload.get("templateType") or "caigouhetong")
+    quote_text_value = payload.get("quoteText")
+    extra_info_value = payload.get("extraInfo")
+    quote_text = quote_text_value.strip() if isinstance(quote_text_value, str) and quote_text_value.strip() else None
+    extra_info = extra_info_value.strip() if isinstance(extra_info_value, str) and extra_info_value.strip() else None
+
+    log_info(
+        "field preview request start",
+        clientHost=client_host,
+        uploadId=upload_id,
+        templateType=template_type,
+        quoteTextProvided=bool(quote_text),
+        extraInfoLength=len(extra_info or ""),
+        dingtalkUserId=current_user.get("userid"),
+    )
+    upload = load_upload(upload_id)
+    if not quote_text:
+        upload, quote_text = extract_quote_text(upload_id)
+    config = get_template_config(template_type)
+
+    llm_start = time.perf_counter()
+    extracted = extract_template_render_data(quote_text, config, extra_info)
+    field_summary = classify_extracted_fields(extracted, config)
+    log_info(
+        "field preview request finished",
+        clientHost=client_host,
+        uploadId=upload_id,
+        templateType=config.type,
+        quoteTextLength=len(quote_text),
+        extraInfoLength=len(extra_info or ""),
+        recognizedCount=len(field_summary["recognizedFields"]),
+        missingCount=len(field_summary["missingFields"]),
+        llmElapsedMs=elapsed_ms(llm_start),
+        elapsedMs=elapsed_ms(start),
+    )
+
+    return {
+        "uploadId": upload_id,
+        "originalName": upload.get("originalName"),
+        "templateType": config.type,
+        "templateName": config.display_name,
+        "quoteTextLength": len(quote_text),
+        "extraInfoLength": len(extra_info or ""),
+        "extractedData": extracted,
+        **field_summary,
+    }
+
+
 @app.post("/api/contracts/generate")
 def generate_contract_api(
     request: Request,
-    current_user: CurrentUser,
+    current_user: dict = Depends(get_current_user),
     uploadId: str = Form(...),
     templateType: str = Form("caigouhetong"),
-    quoteText: str | None = Form(None),
-) -> dict[str, Any]:
+    quoteText: Optional[str] = Form(None),
+    extraInfo: Optional[str] = Form(None),
+    extractedData: Optional[str] = Form(None),
+) -> dict:
     start = time.perf_counter()
     client_host = request.client.host if request.client else None
     log_info(
@@ -608,7 +788,16 @@ def generate_contract_api(
         templateType=templateType,
         dingtalkUserId=current_user.get("userid"),
     )
-    draft = generate_contract(uploadId, templateType, quoteText)
+    confirmed_extracted: dict[str, Any] | None = None
+    if extractedData:
+        try:
+            parsed_extracted = json.loads(extractedData)
+        except json.JSONDecodeError as exc:
+            raise HTTPException(status_code=400, detail="extractedData 不是合法 JSON") from exc
+        if not isinstance(parsed_extracted, dict):
+            raise HTTPException(status_code=400, detail="extractedData 必须是对象")
+        confirmed_extracted = parsed_extracted
+    draft = generate_contract(uploadId, templateType, quoteText, extraInfo, confirmed_extracted)
     response = {
         **contract_download_payload(draft, request),
         "templateType": draft["templateType"],
@@ -625,7 +814,7 @@ def generate_contract_api(
 
 
 @app.get("/api/contracts/{contract_id}/download")
-def download_contract(contract_id: str, current_user: CurrentUser) -> FileResponse:
+def download_contract(contract_id: str, current_user: dict = Depends(get_current_user)) -> FileResponse:
     path = CONTRACTS_DIR / f"{Path(contract_id).name}.docx"
     if not path.exists():
         raise HTTPException(status_code=404, detail="合同文件不存在")
@@ -662,6 +851,10 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
         template_type = forwarded.get("templateType") or state.get("templateType") or "caigouhetong"
         quote_text_value = forwarded.get("quoteText") or state.get("quoteText")
         quote_text = quote_text_value.strip() if isinstance(quote_text_value, str) and quote_text_value.strip() else None
+        extra_info_value = forwarded.get("extraInfo") or state.get("extraInfo")
+        extra_info = extra_info_value.strip() if isinstance(extra_info_value, str) and extra_info_value.strip() else None
+        extracted_data_value = forwarded.get("extractedData") or state.get("extractedData")
+        extracted_data = extracted_data_value if isinstance(extracted_data_value, dict) else None
         log_info(
             "agui run context resolved",
             threadId=thread_id,
@@ -669,6 +862,8 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
             uploadId=upload_id,
             templateType=template_type,
             confirmedQuoteText=bool(quote_text),
+            extraInfoLength=len(extra_info or ""),
+            confirmedExtractedData=bool(extracted_data),
         )
         if not upload_id:
             log_info("agui attachment lookup start", threadId=thread_id, runId=run_id)
@@ -696,6 +891,8 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
             yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "已确认报价单文本。\n"})
         else:
             yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "正在解析报价单...\n"})
+        if extracted_data:
+            yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "已确认字段识别结果。\n"})
         yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "正在生成合同...\n"})
         log_info(
             "agui contract generation dispatch",
@@ -704,8 +901,10 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
             uploadId=upload_id,
             templateType=template_type,
             confirmedQuoteText=bool(quote_text),
+            extraInfoLength=len(extra_info or ""),
+            confirmedExtractedData=bool(extracted_data),
         )
-        draft = generate_contract(upload_id, template_type, quote_text)
+        draft = generate_contract(upload_id, template_type, quote_text, extra_info, extracted_data)
         download_payload = contract_download_payload(draft, request, include_data_url=True)
         yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "合同已生成，请点击下方按钮下载。"})
         yield sse_event({"type": "CUSTOM", "name": "contract_generated", "value": download_payload})
@@ -760,7 +959,7 @@ async def agui_agent(request: Request) -> StreamingResponse:
 
 
 @app.get("/api/auth/status")
-def auth_status() -> dict[str, Any]:
+def auth_status() -> dict:
     return {
         "ok": True,
         "skipAuth": skip_login_auth(),
@@ -770,7 +969,7 @@ def auth_status() -> dict[str, Any]:
 
 
 @app.get("/api/auth/me")
-def auth_me(request: Request) -> dict[str, Any]:
+def auth_me(request: Request) -> dict:
     if skip_login_auth():
         return {
             "ok": True,
@@ -786,7 +985,7 @@ def auth_me(request: Request) -> dict[str, Any]:
 
 
 @app.post("/api/dingtalk/login")
-def dingtalk_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResponse:
+def dingtalk_login(request: Request, payload: dict = Body(...)) -> JSONResponse:
     code = payload.get("code")
     corp_id = (payload.get("corpId") or os.getenv("DINGTALK_CORP_ID") or "").strip()
     configured = dingtalk_configured()
@@ -805,7 +1004,7 @@ def dingtalk_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSO
 
     try:
         access_token = dingtalk_oapi.get_app_access_token()
-        info_by_code = dingtalk_oapi.get_userid_by_auth_code(access_token, str(code))
+        info_by_code = dingtalk_oapi.get_userid_by_login_code(access_token, str(code))
         userid = str(info_by_code.get("userid") or "").strip()
         if not userid:
             raise HTTPException(status_code=502, detail="钉钉未返回 userid")
@@ -828,7 +1027,7 @@ def dingtalk_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSO
             "title": str(detail.get("title") or ""),
             "job_number": str(detail.get("job_number") or ""),
             "email": str(detail.get("email") or ""),
-            "avatar": str(detail.get("avatar") or ""),
+            "avatar": str(detail.get("avatar") or info_by_code.get("avatar") or ""),
             "dept_ids": dept_ids,
             "dept_names": dept_names,
             "unionid": str(detail.get("unionid") or info_by_code.get("unionid") or ""),

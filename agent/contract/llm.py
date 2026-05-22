@@ -9,15 +9,16 @@ from openai import OpenAI
 from .config import TemplateConfig
 
 
-SYSTEM_PROMPT = """你是合同占位符字段匹配助手。你的任务是根据用户提供的报价单解析文本，理解采购内容与表格结构，再按「合同模板字段契约」输出 JSON。
+SYSTEM_PROMPT = """你是合同占位符字段匹配助手。你的任务是根据用户提供的报价单解析文本和用户补充信息，理解采购内容与表格结构，再按「合同模板字段契约」输出 JSON。
 规则：
 1. 只输出严格 JSON，不要 Markdown、解释或其它文本。
 2. 输出中的字段名必须与字段契约中的英文 key 完全一致；禁止输出契约中未声明的字段名。
 3. 标量字段在报价单中找不到依据时填 null；不要凭常识编造公司税号、银行账号等商务标识信息。
 4. 可以根据同义词、列名、上下文做合理匹配。
-5. 表格为数组：报价单中凡单独计价的一行各占一行；每行对象只包含契约声明的列，无法确定的列填 null。
-6. 不要合并多笔计价到一行；不要把页脚总价误填到某一明细行的 totalPrice。
-7. 表格示例行仅为结构示意，你必须按报价单实际行数输出多行。"""
+5. 用户补充信息用于补足报价单中缺失或不清晰的字段；当报价单文本和补充信息冲突时，优先使用用户补充信息。
+6. 表格为数组：报价单中凡单独计价的一行各占一行；每行对象只包含契约声明的列，无法确定的列填 null。
+7. 不要合并多笔计价到一行；不要把页脚总价误填到某一明细行的 totalPrice。
+8. 表格示例行仅为结构示意，你必须按报价单实际行数输出多行。"""
 
 
 def require_env(name: str) -> str:
@@ -66,7 +67,7 @@ def prune_to_shape(shape: Any, patch: Any) -> Any:
     return shape
 
 
-def extract_template_render_data(quote_text: str, config: TemplateConfig) -> dict[str, Any]:
+def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_info: str | None = None) -> dict[str, Any]:
     api_key = require_env("DASHSCOPE_API_KEY")
     model = require_env("DASHSCOPE_MODEL")
     base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1").strip()
@@ -74,6 +75,7 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig) -> dic
     output_shape = build_output_shape(config)
     user_payload = {
         "quoteText": quote_text,
+        "extraInfo": (extra_info or "").strip(),
         "templateFieldDefinitions": {
             "scalars": config.schema.get("scalars", []),
             "tables": config.schema.get("tables", {}),

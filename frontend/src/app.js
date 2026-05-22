@@ -3,9 +3,15 @@ const logEl = document.querySelector("#log");
 const downloadLink = document.querySelector("#downloadLink");
 const parseButton = document.querySelector("#parseButton");
 const generateButton = document.querySelector("#generateButton");
+const identifyFieldsButton = document.querySelector("#identifyFieldsButton");
 const quoteFile = document.querySelector("#quoteFile");
 const previewCard = document.querySelector("#previewCard");
+const fieldPreviewCard = document.querySelector("#fieldPreviewCard");
 const quoteTextPreview = document.querySelector("#quoteTextPreview");
+const extraInfoText = document.querySelector("#extraInfoText");
+const fieldPreviewSummary = document.querySelector("#fieldPreviewSummary");
+const recognizedFieldsList = document.querySelector("#recognizedFieldsList");
+const missingFieldsList = document.querySelector("#missingFieldsList");
 const templateType = document.querySelector("#templateType");
 const userBar = document.querySelector("#userBar");
 const userAvatar = document.querySelector("#userAvatar");
@@ -26,6 +32,7 @@ const clientIdFromConfig = (window.__DINGTALK_CLIENT_ID__ || "").trim();
 const corpIdFromConfig = (window.__DINGTALK_CORP_ID__ || "").trim();
 
 let parsedUpload = null;
+let fieldPreview = null;
 let authContext = { skipAuth: false, dingtalkConfigured: false, corpId: "" };
 /** 是否允许使用上传、解析、生成（免登成功或开发跳过鉴权） */
 let sessionReady = false;
@@ -95,11 +102,15 @@ function updateSelectedFile() {
 function updateActionAvailability() {
   const hasFile = Boolean(quoteFile.files?.[0]);
   const hasParsedText = Boolean(parsedUpload && quoteTextPreview.value.trim());
+  const hasFieldPreview = Boolean(fieldPreview?.extractedData);
   const controlsDisabled = busy || !sessionReady;
   quoteFile.disabled = controlsDisabled;
   templateType.disabled = controlsDisabled;
+  quoteTextPreview.disabled = controlsDisabled || !parsedUpload;
+  if (extraInfoText) extraInfoText.disabled = controlsDisabled || !parsedUpload;
   parseButton.disabled = busy || !sessionReady || !hasFile;
-  generateButton.disabled = busy || !sessionReady || !hasParsedText;
+  if (identifyFieldsButton) identifyFieldsButton.disabled = busy || !sessionReady || !hasParsedText;
+  generateButton.disabled = busy || !sessionReady || !hasFieldPreview;
   uploadDropzone?.classList.toggle("is-disabled", controlsDisabled);
 }
 
@@ -572,6 +583,23 @@ async function parseUploadedQuote(uploadId) {
   return response.json();
 }
 
+async function previewQuoteFields(uploadId, quoteText, extraInfo) {
+  const response = await fetchAuth(apiUrl(`/api/uploads/${encodeURIComponent(uploadId)}/field-preview`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      templateType: templateType.value,
+      quoteText,
+      extraInfo,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || body.error || "字段识别失败");
+  }
+  return response.json();
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -597,7 +625,7 @@ function parseSseBuffer(buffer) {
     .filter(Boolean);
 }
 
-async function generateContract(uploadId, quoteText) {
+async function generateContract(uploadId, quoteText, extraInfo, extractedData) {
   let userPreview = null;
   try {
     userPreview = JSON.parse(sessionStorage.getItem("hetong_user_preview") || "null");
@@ -622,6 +650,8 @@ async function generateContract(uploadId, quoteText) {
         uploadId,
         templateType: templateType.value,
         quoteText,
+        extraInfo,
+        extractedData,
         dingtalkUser: userPreview,
       },
     }),
@@ -650,10 +680,105 @@ async function generateContract(uploadId, quoteText) {
   }
 }
 
+function createFieldItem(label, value, tone = "normal") {
+  const item = document.createElement("div");
+  item.className = `field-result-item${tone === "missing" ? " is-missing" : ""}`;
+  const labelEl = document.createElement("span");
+  labelEl.className = "field-result-label";
+  labelEl.textContent = label;
+  item.append(labelEl);
+
+  if (value) {
+    const valueEl = document.createElement("span");
+    valueEl.className = "field-result-value";
+    valueEl.textContent = value;
+    item.append(valueEl);
+  }
+
+  return item;
+}
+
+function renderEmptyFieldList(target, text) {
+  if (!target) return;
+  target.textContent = "";
+  const empty = document.createElement("p");
+  empty.className = "empty-state";
+  empty.textContent = text;
+  target.append(empty);
+}
+
+function renderRecognizedFields(fields = []) {
+  if (!recognizedFieldsList) return;
+  recognizedFieldsList.textContent = "";
+  if (!fields.length) {
+    renderEmptyFieldList(recognizedFieldsList, "暂未识别到字段。");
+    return;
+  }
+
+  fields.forEach((field) => {
+    if (field.type === "table") {
+      const group = document.createElement("section");
+      group.className = "field-table-group";
+      const title = document.createElement("h4");
+      title.textContent = `${field.label || field.key}（${field.rowCount || 0} 行）`;
+      group.append(title);
+      (field.rows || []).forEach((row, index) => {
+        const rowEl = document.createElement("div");
+        rowEl.className = "field-table-row";
+        const rowTitle = document.createElement("strong");
+        rowTitle.textContent = `第 ${index + 1} 行`;
+        rowEl.append(rowTitle);
+        (row || []).forEach((cell) => {
+          rowEl.append(createFieldItem(cell.label || cell.key, cell.value || ""));
+        });
+        group.append(rowEl);
+      });
+      recognizedFieldsList.append(group);
+      return;
+    }
+
+    recognizedFieldsList.append(createFieldItem(field.label || field.key, field.value || ""));
+  });
+}
+
+function renderMissingFields(fields = []) {
+  if (!missingFieldsList) return;
+  missingFieldsList.textContent = "";
+  if (!fields.length) {
+    renderEmptyFieldList(missingFieldsList, "没有未识别字段。");
+    return;
+  }
+
+  fields.forEach((field) => {
+    missingFieldsList.append(createFieldItem(field.label || field.key, field.reason || "未识别", "missing"));
+  });
+}
+
+function renderFieldPreview(preview) {
+  const recognized = preview?.recognizedFields || [];
+  const missing = preview?.missingFields || [];
+  if (fieldPreviewSummary) {
+    fieldPreviewSummary.textContent = `已识别 ${recognized.length} 项，未识别 ${missing.length} 项。未识别字段会在合同中显示为待填写。`;
+  }
+  renderRecognizedFields(recognized);
+  renderMissingFields(missing);
+  if (fieldPreviewCard) fieldPreviewCard.hidden = false;
+}
+
+function resetFieldPreview() {
+  fieldPreview = null;
+  if (fieldPreviewCard) fieldPreviewCard.hidden = true;
+  renderEmptyFieldList(recognizedFieldsList, "等待字段识别。");
+  renderEmptyFieldList(missingFieldsList, "等待字段识别。");
+  updateActionAvailability();
+}
+
 function resetPreview() {
   parsedUpload = null;
+  resetFieldPreview();
   previewCard.hidden = true;
   quoteTextPreview.value = "";
+  if (extraInfoText) extraInfoText.value = "";
   downloadLink.hidden = true;
   downloadLink.removeAttribute("download");
   downloadLink.dataset.needsAuth = "";
@@ -677,6 +802,12 @@ templateType.addEventListener("change", () => {
 });
 
 quoteTextPreview.addEventListener("input", () => {
+  resetFieldPreview();
+  updateActionAvailability();
+});
+
+extraInfoText?.addEventListener("input", () => {
+  resetFieldPreview();
   updateActionAvailability();
 });
 
@@ -694,6 +825,7 @@ parseButton.addEventListener("click", async () => {
   logEl.textContent = "";
   downloadLink.hidden = true;
   previewCard.hidden = true;
+  resetFieldPreview();
   try {
     setStatus("正在上传报价单...");
     setProgress("upload", "active", "正在上传报价单文件。");
@@ -704,15 +836,48 @@ parseButton.addEventListener("click", async () => {
     const parsed = await parseUploadedQuote(upload.id);
     parsedUpload = upload;
     quoteTextPreview.value = parsed.quoteText || "";
+    if (extraInfoText) extraInfoText.value = "";
     previewCard.hidden = false;
     appendLog(`已解析：${parsed.textLength || 0} 字符\n`);
-    setStatus("请确认报价单解析文本。");
-    setProgress("review", "active", "解析完成，请检查文本后生成合同。");
+    setStatus("请确认报价单解析文本，并补充额外信息后识别字段。");
+    setProgress("review", "active", "解析完成，请补充信息并识别合同字段。");
   } catch (error) {
     const message = error instanceof Error ? error.message : "处理失败";
     setStatus(message, "error");
     appendLog(`\n处理失败：${message}`);
     setProgress("upload", "error", message);
+  } finally {
+    setBusy(false);
+  }
+});
+
+identifyFieldsButton?.addEventListener("click", async () => {
+  if (!parsedUpload) {
+    setStatus("请先上传并解析报价单。", "error");
+    return;
+  }
+  const quoteText = quoteTextPreview.value.trim();
+  if (!quoteText) {
+    setStatus("解析文本为空，请补充后再识别字段。", "error");
+    return;
+  }
+  setBusy(true);
+  downloadLink.hidden = true;
+  resetFieldPreview();
+  try {
+    const extraInfo = extraInfoText?.value.trim() || "";
+    setStatus("正在识别合同字段...");
+    setProgress("review", "active", "正在结合报价单文本和额外信息识别字段。");
+    fieldPreview = await previewQuoteFields(parsedUpload.id, quoteText, extraInfo);
+    renderFieldPreview(fieldPreview);
+    appendLog(`字段识别完成：已识别 ${fieldPreview.recognizedFields?.length || 0} 项，未识别 ${fieldPreview.missingFields?.length || 0} 项\n`);
+    setStatus("请确认字段识别结果。");
+    setProgress("review", "active", "字段识别完成，请确认后生成合同。");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "字段识别失败";
+    setStatus(message, "error");
+    appendLog(`\n字段识别失败：${message}`);
+    setProgress("review", "error", message);
   } finally {
     setBusy(false);
   }
@@ -728,13 +893,17 @@ generateButton.addEventListener("click", async () => {
     setStatus("解析文本为空，请补充后再生成合同。", "error");
     return;
   }
+  if (!fieldPreview?.extractedData) {
+    setStatus("请先识别并确认合同字段。", "error");
+    return;
+  }
   setBusy(true);
   downloadLink.hidden = true;
   logEl.textContent = "";
   try {
     setStatus("正在生成合同...");
     setProgress("generate", "active", "正在生成合同文件。");
-    await generateContract(parsedUpload.id, quoteText);
+    await generateContract(parsedUpload.id, quoteText, extraInfoText?.value.trim() || "", fieldPreview.extractedData);
     setStatus("合同已生成。", "success");
     setProgress("done", "active", "合同已生成，可以下载。");
   } catch (error) {

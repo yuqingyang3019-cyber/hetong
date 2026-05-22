@@ -323,6 +323,10 @@ textarea {
   white-space: pre-wrap;
 }
 
+.textarea-compact {
+  min-height: 120px;
+}
+
 .visually-hidden {
   clip: rect(0 0 0 0);
   border: 0;
@@ -521,6 +525,92 @@ button:disabled {
   color: var(--color-secondary);
   font-size: 0.875rem;
   line-height: 1.6;
+  margin: 0;
+}
+
+.field-result-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.field-result-panel {
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.field-result-panel.is-missing {
+  background: rgba(180, 83, 9, 0.07);
+  border-color: rgba(180, 83, 9, 0.2);
+}
+
+.field-result-panel h3,
+.field-table-group h4 {
+  color: var(--color-primary);
+  font-size: 0.95rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.field-list {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.field-result-item {
+  align-items: flex-start;
+  background: var(--color-card);
+  border: 1px solid rgba(15, 108, 189, 0.12);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.field-result-item.is-missing {
+  border-color: rgba(180, 83, 9, 0.22);
+}
+
+.field-result-label {
+  color: var(--color-primary);
+  font-size: 0.8125rem;
+  font-weight: 800;
+}
+
+.field-result-value {
+  color: var(--color-secondary);
+  font-size: 0.875rem;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.field-table-group {
+  background: rgba(15, 108, 189, 0.05);
+  border: 1px solid rgba(15, 108, 189, 0.12);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
+.field-table-row {
+  display: grid;
+  gap: 6px;
+}
+
+.field-table-row strong {
+  color: #475569;
+  font-size: 0.8125rem;
+}
+
+.empty-state {
+  color: #64748b;
+  font-size: 0.875rem;
   margin: 0;
 }
 

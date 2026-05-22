@@ -13,7 +13,7 @@
     <main class="page">
       <section class="hero">
         <h1>合同生成助手</h1>
-        <p>上传报价单 → 确认解析文本 → 生成合同</p>
+        <p>上传报价单 → 补充信息 → 确认字段 → 生成合同</p>
 
         <div id="userBar" class="hero-user-bar" hidden>
           <div class="user-bar-content">
@@ -76,13 +76,36 @@
         <div class="card-heading">
           <p class="eyebrow">报价单解析文本</p>
           <h2>确认后生成合同</h2>
-          <p class="hint">请检查下方文本，必要时可直接修正，再点击确认生成合同。</p>
+          <p class="hint">请检查下方文本，必要时可直接修正；如有报价单未包含的信息，可在额外信息中补充。</p>
         </div>
         <label class="field">
           <span class="field-label">解析内容</span>
           <textarea id="quoteTextPreview" rows="12"></textarea>
         </label>
-        <button id="generateButton" type="button" disabled>确认文本并生成合同</button>
+        <label class="field">
+          <span class="field-label">额外信息提供</span>
+          <textarea id="extraInfoText" class="textarea-compact" rows="5" placeholder="例如：付款比例、交货地点、联系人、开户行、税号、签约主体等报价单中没有的信息。"></textarea>
+        </label>
+        <button id="identifyFieldsButton" type="button" disabled>识别合同字段</button>
+      </section>
+
+      <section id="fieldPreviewCard" class="card field-preview-card" hidden>
+        <div class="card-heading">
+          <p class="eyebrow">字段识别结果</p>
+          <h2>确认识别字段</h2>
+          <p class="hint" id="fieldPreviewSummary">请确认下方字段识别结果，未识别字段会在合同中标记为待填写。</p>
+        </div>
+        <div class="field-result-grid">
+          <section class="field-result-panel">
+            <h3>已识别字段</h3>
+            <div id="recognizedFieldsList" class="field-list"></div>
+          </section>
+          <section class="field-result-panel is-missing">
+            <h3>未识别字段</h3>
+            <div id="missingFieldsList" class="field-list"></div>
+          </section>
+        </div>
+        <button id="generateButton" type="button" disabled>确认识别结果并生成合同</button>
       </section>
 
       <section class="card progress-card">
@@ -109,8 +132,8 @@
           <li class="step" data-step="review">
             <span class="step-dot" aria-hidden="true"></span>
             <span>
-              <strong>确认文本</strong>
-              <small>检查合同关键内容</small>
+              <strong>补充并识别</strong>
+              <small>确认合同关键字段</small>
             </span>
           </li>
           <li class="step" data-step="generate">

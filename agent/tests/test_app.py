@@ -1,10 +1,12 @@
 from pathlib import Path
 import base64
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 from fastapi.testclient import TestClient
 
-from agent.main import app
+from agent.contract.config import get_template_config
+from agent.contract.render import build_docxtpl_context
+from agent.main import app, generate_contract
 
 
 client = TestClient(app)
@@ -146,8 +148,124 @@ def test_agui_uses_confirmed_quote_text() -> None:
         )
 
     assert response.status_code == 200
-    generate_contract.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本")
+    generate_contract.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", None, None)
     assert "已确认报价单文本" in response.text
+
+
+def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
+    upload = client.post(
+        "/api/uploads",
+        json={
+            "originalName": "quote.txt",
+            "mimeType": "text/plain",
+            "size": len("报价单文本".encode("utf-8")),
+            "data": base64.b64encode("报价单文本".encode("utf-8")).decode("ascii"),
+        },
+    )
+    assert upload.status_code == 200
+    upload_id = upload.json()["id"]
+
+    extracted = {
+        "supplierName": "供应商A",
+        "buyerPhone": None,
+        "items": [{"index": "1", "name": "水泵", "quantity": "2", "unitPrice": "100"}],
+    }
+    with patch("agent.main.extract_template_render_data", return_value=extracted) as llm:
+        response = client.post(
+            f"/api/uploads/{upload_id}/field-preview",
+            json={
+                "templateType": "caigouhetong",
+                "quoteText": " 用户确认报价单文本 ",
+                "extraInfo": " 付款方式：验收后支付 ",
+            },
+        )
+
+    assert response.status_code == 200
+    llm.assert_called_once_with("用户确认报价单文本", ANY, "付款方式：验收后支付")
+    body = response.json()
+    assert body["extractedData"] == extracted
+    assert any(field["label"] == "乙方名称" and field["value"] == "供应商A" for field in body["recognizedFields"])
+    assert any(field["label"] == "甲方电话" for field in body["missingFields"])
+    assert body["tableRowCounts"] == {"items": 1}
+
+
+def test_generate_contract_reuses_confirmed_extracted_data() -> None:
+    upload = client.post(
+        "/api/uploads",
+        json={
+            "originalName": "quote.txt",
+            "mimeType": "text/plain",
+            "size": len("报价单文本".encode("utf-8")),
+            "data": base64.b64encode("报价单文本".encode("utf-8")).decode("ascii"),
+        },
+    )
+    assert upload.status_code == 200
+    upload_id = upload.json()["id"]
+    extracted = {"supplierName": "供应商A", "items": []}
+
+    with patch("agent.main.extract_template_render_data") as llm, patch(
+        "agent.main.render_contract",
+        return_value=Path("agent/storage/contracts/confirmed.docx"),
+    ) as render_contract_mock:
+        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted)
+
+    llm.assert_not_called()
+    render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True)
+    assert draft["extractedData"] == extracted
+    assert draft["extraInfoLength"] == len("补充信息")
+
+
+def test_confirmed_blank_fields_render_empty() -> None:
+    config = get_template_config("caigouhetong")
+    render_data = {"supplierName": "", "items": [{"index": "1", "name": ""}]}
+
+    pending_context = build_docxtpl_context(render_data, config)
+    confirmed_context = build_docxtpl_context(render_data, config, blank_missing=True)
+
+    assert pending_context["supplierName"] == "【待填写：乙方名称】"
+    assert confirmed_context["supplierName"] == ""
+    assert pending_context["items"][0]["name"] == "【待填写：货物名称】"
+    assert confirmed_context["items"][0]["name"] == ""
+
+
+def test_agui_passes_confirmed_extracted_data() -> None:
+    upload = client.post(
+        "/api/uploads",
+        json={
+            "originalName": "quote.txt",
+            "mimeType": "text/plain",
+            "size": len(b"raw quote"),
+            "data": base64.b64encode(b"raw quote").decode("ascii"),
+        },
+    )
+    assert upload.status_code == 200
+    upload_id = upload.json()["id"]
+    extracted = {"supplierName": "供应商A", "items": []}
+
+    with patch("agent.main.generate_contract") as generate_contract_mock:
+        generate_contract_mock.return_value = {"contractId": "contract_test", "templateType": "caigouhetong", "quoteTextLength": 4}
+        response = client.post(
+            "/ag-ui/agent",
+            json={
+                "threadId": "t1",
+                "runId": "r1",
+                "state": {},
+                "messages": [{"id": "m1", "role": "user", "content": "生成合同"}],
+                "tools": [],
+                "context": [],
+                "forwardedProps": {
+                    "uploadId": upload_id,
+                    "templateType": "caigouhetong",
+                    "quoteText": " 用户确认文本 ",
+                    "extraInfo": " 补充信息 ",
+                    "extractedData": extracted,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    generate_contract_mock.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", "补充信息", extracted)
+    assert "已确认字段识别结果" in response.text
 
 
 def test_templates_exist() -> None:
@@ -220,7 +338,7 @@ def test_dingtalk_login_sets_session_and_allows_upload(monkeypatch) -> None:
     isolated = TestClient(app)
     with patch.object(dingtalk_oapi, "get_app_access_token", return_value="tok"), patch.object(
         dingtalk_oapi,
-        "get_userid_by_auth_code",
+        "get_userid_by_login_code",
         return_value={"userid": "uid1", "name": "Nick", "unionid": "union-x"},
     ), patch.object(
         dingtalk_oapi,
@@ -252,3 +370,33 @@ def test_dingtalk_login_sets_session_and_allows_upload(monkeypatch) -> None:
     )
     assert upload.status_code == 200
     dingtalk_oapi.clear_token_cache()
+
+
+def test_dingtalk_login_code_uses_oauth_user_access_token(monkeypatch) -> None:
+    monkeypatch.setenv("DINGTALK_CLIENT_ID", "cid")
+    monkeypatch.setenv("DINGTALK_CLIENT_SECRET", "csecret")
+    monkeypatch.setenv("DINGTALK_CORP_ID", "corp")
+
+    from agent import dingtalk_oapi
+
+    with patch.object(
+        dingtalk_oapi,
+        "get_user_access_token_by_auth_code",
+        return_value={"accessToken": "user-token", "corpId": "corp"},
+    ) as user_token, patch.object(
+        dingtalk_oapi,
+        "get_current_user_by_user_access_token",
+        return_value={"unionId": "union-x", "nick": "Nick", "avatarUrl": "avatar.png"},
+    ) as current_user, patch.object(
+        dingtalk_oapi,
+        "get_userid_by_unionid",
+        return_value={"userid": "uid1", "contact_type": 0},
+    ) as by_unionid:
+        result = dingtalk_oapi.get_userid_by_login_code("app-token", "oauth-code")
+
+    user_token.assert_called_once_with("oauth-code")
+    current_user.assert_called_once_with("user-token")
+    by_unionid.assert_called_once_with("app-token", "union-x")
+    assert result["userid"] == "uid1"
+    assert result["unionid"] == "union-x"
+    assert result["authMode"] == "oauth2"
