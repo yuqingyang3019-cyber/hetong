@@ -42,6 +42,46 @@ h2 {
   margin: 0;
 }
 
+.user-bar .user-bar-content {
+  align-items: flex-start;
+  display: flex;
+  gap: 14px;
+}
+
+.user-avatar {
+  border: 1px solid #e5e8f0;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
+}
+
+.user-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.user-name {
+  font-size: 17px;
+  font-weight: 750;
+  margin: 0;
+}
+
+.user-detail {
+  color: #475467;
+  font-size: 14px;
+  margin: 0;
+}
+
+.user-detail.muted {
+  color: #98a2b3;
+  font-size: 13px;
+}
+
+.login-hint {
+  margin-top: 6px;
+}
+
 .card {
   background: #fff;
   border: 1px solid #e5e8f0;

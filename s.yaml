@@ -41,10 +41,15 @@ resources:
           ALIYUN_OCR_SCENE: Advanced
           ALIYUN_OCR_OUTPUT_TABLE: "true"
           ALIYUN_OCR_LINELESS_TABLE: "false"
-          DINGTALK_CLIENT_ID: ""
-          DINGTALK_CLIENT_SECRET: ""
-          DINGTALK_AGENT_ID: ""
-          DINGTALK_CORP_ID: ""
+          DINGTALK_APP_KEY: ${env("DINGTALK_APP_KEY")}
+          DINGTALK_APP_SECRET: ${env("DINGTALK_APP_SECRET")}
+          DINGTALK_CLIENT_ID: ${env("DINGTALK_APP_KEY")}
+          DINGTALK_CLIENT_SECRET: ${env("DINGTALK_APP_SECRET")}
+          DINGTALK_AGENT_ID: ${env("DINGTALK_AGENT_ID")}
+          DINGTALK_CORP_ID: ${env("DINGTALK_CORP_ID")}
+          APP_SESSION_SECRET: ${env("APP_SESSION_SECRET")}
+          AGENT_ALLOWED_ORIGINS: ${env("AGENT_ALLOWED_ORIGINS")}
+          AGENT_ALLOWED_ORIGIN_REGEX: ${env("AGENT_ALLOWED_ORIGIN_REGEX")}
         endpoints:
           - name: Default
             version: LATEST
@@ -72,6 +77,7 @@ resources:
       environmentVariables:
         PORT: "8000"
         AGENT_ENDPOINT: ${resources.agent.output.agent.endpoints.0.url}
+        DINGTALK_CORP_ID: ${env("DINGTALK_CORP_ID")}
       customDomain:
         protocol: HTTP
         route:

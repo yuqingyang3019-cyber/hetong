@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parent
 PORT = int(os.getenv("PORT", "8000"))
 AGENT_ENDPOINT = os.getenv("AGENT_ENDPOINT", "http://127.0.0.1:9010")
+DINGTALK_CORP_ID = (os.getenv("DINGTALK_CORP_ID") or "").strip()
 
 
 class H5Handler(SimpleHTTPRequestHandler):
@@ -32,7 +33,10 @@ class H5Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self) -> None:
         if urlparse(self.path).path == "/config.js":
-            body = f"window.__AGENT_ENDPOINT__ = {json.dumps(AGENT_ENDPOINT)};\n".encode("utf-8")
+            body = (
+                f"window.__AGENT_ENDPOINT__ = {json.dumps(AGENT_ENDPOINT)};\n"
+                f"window.__DINGTALK_CORP_ID__ = {json.dumps(DINGTALK_CORP_ID)};\n"
+            ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/javascript; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))

@@ -5,6 +5,7 @@ const { extname, join, normalize } = require("node:path");
 const root = __dirname;
 const port = Number(process.env.PORT || 9000);
 const agentEndpoint = process.env.AGENT_ENDPOINT || "http://127.0.0.1:9010";
+const dingtalkCorpId = (process.env.DINGTALK_CORP_ID || "").trim();
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -31,7 +32,13 @@ function filePathForUrl(url) {
 
 const server = http.createServer((req, res) => {
   if (req.url === "/config.js") {
-    send(res, 200, `window.__AGENT_ENDPOINT__ = ${JSON.stringify(agentEndpoint)};`, "application/javascript; charset=utf-8");
+    send(
+      res,
+      200,
+      `window.__AGENT_ENDPOINT__ = ${JSON.stringify(agentEndpoint)};\n` +
+        `window.__DINGTALK_CORP_ID__ = ${JSON.stringify(dingtalkCorpId)};\n`,
+      "application/javascript; charset=utf-8",
+    );
     return;
   }
 

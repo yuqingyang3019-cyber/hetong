@@ -6,6 +6,10 @@
     <title>合同生成助手</title>
     <link rel="stylesheet" href="/static/app.css" />
     <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.41/dingtalk.open.js"></script>
+    <script>
+      window.__AGENT_ENDPOINT__ = "";
+      window.__DINGTALK_CORP_ID__ = {{ dingtalk_corp_id_json }};
+    </script>
   </head>
   <body>
     <main class="page">
@@ -13,6 +17,19 @@
         <p class="eyebrow">钉钉 H5 微应用</p>
         <h1>合同生成助手</h1>
         <p>选择合同模板，上传报价单，先确认解析文本，再生成合同并返回下载链接。</p>
+      </section>
+
+      <section id="userBar" class="card user-bar" hidden>
+        <div class="user-bar-content">
+          <img id="userAvatar" class="user-avatar" alt="" width="48" height="48" hidden />
+          <div class="user-meta">
+            <p id="userName" class="user-name">—</p>
+            <p id="userDept" class="user-detail">部门：—</p>
+            <p id="userMobile" class="user-detail">手机：—</p>
+            <p id="userTitle" class="user-detail">职位：—</p>
+            <p id="loginHint" class="hint login-hint"></p>
+          </div>
+        </div>
       </section>
 
       <section class="card">
@@ -30,7 +47,7 @@
           <input id="quoteFile" type="file" accept=".pdf,.xls,.xlsx,.txt" />
         </label>
 
-        <button id="parseButton" type="button">上传并解析报价单</button>
+        <button id="parseButton" type="button" disabled>上传并解析报价单</button>
         <p id="status" class="status">等待上传报价单。</p>
       </section>
 
@@ -44,7 +61,7 @@
           解析内容
           <textarea id="quoteTextPreview" rows="12"></textarea>
         </label>
-        <button id="generateButton" type="button">确认文本并生成合同</button>
+        <button id="generateButton" type="button" disabled>确认文本并生成合同</button>
       </section>
 
       <section class="card log-card">

@@ -16,6 +16,19 @@
         <p>选择合同模板，上传报价单，先确认解析文本，再生成合同并返回下载链接。</p>
       </section>
 
+      <section id="userBar" class="card user-bar" hidden>
+        <div class="user-bar-content">
+          <img id="userAvatar" class="user-avatar" alt="" width="48" height="48" hidden />
+          <div class="user-meta">
+            <p id="userName" class="user-name">—</p>
+            <p id="userDept" class="user-detail">部门：—</p>
+            <p id="userMobile" class="user-detail">手机：—</p>
+            <p id="userTitle" class="user-detail">职位：—</p>
+            <p id="loginHint" class="hint login-hint"></p>
+          </div>
+        </div>
+      </section>
+
       <section class="card">
         <label>
           合同模板
@@ -34,7 +47,7 @@
           <input id="quoteFile" type="file" accept=".pdf,.xls,.xlsx,.txt" />
         </label>
 
-        <button id="parseButton" type="button">上传并解析报价单</button>
+        <button id="parseButton" type="button" disabled>上传并解析报价单</button>
         <p id="status" class="status">等待上传报价单。</p>
       </section>
 
@@ -48,7 +61,7 @@
           解析内容
           <textarea id="quoteTextPreview" rows="12"></textarea>
         </label>
-        <button id="generateButton" type="button">确认文本并生成合同</button>
+        <button id="generateButton" type="button" disabled>确认文本并生成合同</button>
       </section>
 
       <section class="card log-card">

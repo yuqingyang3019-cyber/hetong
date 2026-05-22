@@ -154,3 +154,102 @@ def test_agui_uses_confirmed_quote_text() -> None:
 def test_templates_exist() -> None:
     assert Path("agent/contract/templates/zhanweifu/caigouhetong.docx").exists()
     assert Path("agent/contract/templates/zhanweifu/caigouhetong.placeholders.json").exists()
+
+
+def test_auth_status_skip_when_no_session_secret() -> None:
+    isolated = TestClient(app)
+    response = isolated.get("/api/auth/status")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["skipAuth"] is True
+
+
+def test_auth_me_skip_mode() -> None:
+    isolated = TestClient(app)
+    response = isolated.get("/api/auth/me")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["skipAuth"] is True
+    assert body["loggedIn"] is True
+
+
+def test_upload_requires_login_when_enforced(monkeypatch) -> None:
+    monkeypatch.setenv("HETONG_SKIP_AUTH", "false")
+    monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
+    isolated = TestClient(app)
+    response = isolated.post(
+        "/api/uploads",
+        json={
+            "originalName": "quote.txt",
+            "mimeType": "text/plain",
+            "size": len(b"x"),
+            "data": base64.b64encode(b"x").decode("ascii"),
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_agui_requires_login_when_enforced(monkeypatch) -> None:
+    monkeypatch.setenv("HETONG_SKIP_AUTH", "false")
+    monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
+    isolated = TestClient(app)
+    response = isolated.post(
+        "/ag-ui/agent",
+        json={
+            "threadId": "t1",
+            "runId": "r1",
+            "state": {},
+            "messages": [{"id": "m1", "role": "user", "content": "x"}],
+            "tools": [],
+            "context": [],
+            "forwardedProps": {},
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_dingtalk_login_sets_session_and_allows_upload(monkeypatch) -> None:
+    monkeypatch.setenv("HETONG_SKIP_AUTH", "false")
+    monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
+    monkeypatch.setenv("DINGTALK_APP_KEY", "ak")
+    monkeypatch.setenv("DINGTALK_APP_SECRET", "sk")
+
+    from agent import dingtalk_oapi
+
+    dingtalk_oapi.clear_token_cache()
+    isolated = TestClient(app)
+    with patch.object(dingtalk_oapi, "get_app_access_token", return_value="tok"), patch.object(
+        dingtalk_oapi,
+        "get_userid_by_auth_code",
+        return_value={"userid": "uid1", "name": "Nick", "unionid": "union-x"},
+    ), patch.object(
+        dingtalk_oapi,
+        "get_user_detail",
+        return_value={
+            "userid": "uid1",
+            "name": "张三",
+            "mobile": "13800000000",
+            "title": "工程师",
+            "dept_id_list": [10],
+        },
+    ), patch.object(dingtalk_oapi, "get_department_name", return_value="研发部"):
+        login = isolated.post("/api/dingtalk/login", json={"code": "tmpcode", "corpId": "corp-x"})
+
+    assert login.status_code == 200
+    login_body = login.json()
+    assert login_body["ok"] is True
+    assert login_body["user"]["name"] == "张三"
+    assert isolated.cookies.get("hetong_session")
+
+    upload = isolated.post(
+        "/api/uploads",
+        json={
+            "originalName": "quote.txt",
+            "mimeType": "text/plain",
+            "size": len(b"hello quote"),
+            "data": base64.b64encode(b"hello quote").decode("ascii"),
+        },
+    )
+    assert upload.status_code == 200
+    dingtalk_oapi.clear_token_cache()

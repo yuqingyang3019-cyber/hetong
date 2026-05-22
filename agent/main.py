@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import json
 import logging
 import mimetypes
@@ -9,11 +11,12 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any, AsyncGenerator
+from typing import Annotated, Any, AsyncGenerator
 from urllib.parse import urlsplit
 
 import requests
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -45,10 +48,131 @@ except ImportError:
     from contract.llm import extract_template_render_data
     from contract.render import merge_render_data, render_contract
 
+try:
+    from . import dingtalk_oapi
+except ImportError:
+    import dingtalk_oapi  # type: ignore[no-redef]
+
 
 app = FastAPI(title="合同生成 Agent")
+
+_allowed_origins = [o.strip() for o in (os.getenv("AGENT_ALLOWED_ORIGINS") or "").split(",") if o.strip()]
+_origin_regex = (os.getenv("AGENT_ALLOWED_ORIGIN_REGEX") or "").strip()
+if _allowed_origins or _origin_regex:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins if _allowed_origins else [],
+        allow_origin_regex=_origin_regex or None,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+        expose_headers=["*"],
+    )
+
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+
+SESSION_COOKIE_NAME = "hetong_session"
+SESSION_TTL_SEC = int(os.getenv("SESSION_TTL_SEC", str(7 * 24 * 3600)))
+
+
+def _b64url_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64url_decode(s: str) -> bytes:
+    pad = 4 - len(s) % 4
+    if pad != 4:
+        s += "=" * pad
+    return base64.urlsafe_b64decode(s.encode("ascii"))
+
+
+def skip_login_auth() -> bool:
+    if os.getenv("HETONG_SKIP_AUTH", "").lower() in {"1", "true", "yes"}:
+        return True
+    if not (os.getenv("APP_SESSION_SECRET") or "").strip():
+        return True
+    return False
+
+
+def session_signing_secret() -> str:
+    return (os.getenv("APP_SESSION_SECRET") or "").strip()
+
+
+def sign_session_payload(payload: dict[str, Any]) -> str:
+    secret = session_signing_secret()
+    if not secret:
+        raise RuntimeError("未配置 APP_SESSION_SECRET，无法签发登录态")
+    body = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    body_b64 = _b64url_encode(body)
+    sig = hmac.new(secret.encode("utf-8"), body_b64.encode("ascii"), hashlib.sha256).hexdigest()
+    return f"{body_b64}.{sig}"
+
+
+def verify_session_cookie(raw: str) -> dict[str, Any] | None:
+    secret = session_signing_secret()
+    if not secret or "." not in raw:
+        return None
+    body_b64, sig = raw.rsplit(".", 1)
+    expected = hmac.new(secret.encode("utf-8"), body_b64.encode("ascii"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        return None
+    try:
+        payload = json.loads(_b64url_decode(body_b64))
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    try:
+        exp = float(payload.get("exp") or 0)
+    except (TypeError, ValueError):
+        return None
+    if time.time() > exp:
+        return None
+    return payload
+
+
+def is_request_https(request: Request) -> bool:
+    xf = (request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
+    if xf == "https":
+        return True
+    return request.url.scheme == "https"
+
+
+def get_current_user(request: Request) -> dict[str, Any]:
+    if skip_login_auth():
+        return {"userid": "dev_skip", "name": "未鉴权开发模式", "skipAuth": True}
+    raw = request.cookies.get(SESSION_COOKIE_NAME)
+    if not raw:
+        raise HTTPException(status_code=401, detail="未登录或登录已过期，请在钉钉内重新打开应用")
+    payload = verify_session_cookie(raw)
+    if not payload:
+        raise HTTPException(status_code=401, detail="登录态无效，请重新登录")
+    return payload
+
+
+CurrentUser = Annotated[dict[str, Any], Depends(get_current_user)]
+
+
+def public_user_from_session(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "userid": payload.get("userid"),
+        "name": payload.get("name"),
+        "nick": payload.get("nick") or None,
+        "mobile": payload.get("mobile"),
+        "title": payload.get("title"),
+        "jobNumber": payload.get("job_number"),
+        "email": payload.get("email"),
+        "avatar": payload.get("avatar"),
+        "deptIds": payload.get("dept_ids"),
+        "deptNames": payload.get("dept_names"),
+        "unionid": payload.get("unionid"),
+    }
+
+
+def dingtalk_configured() -> bool:
+    key, secret = dingtalk_oapi.get_app_credentials()
+    return bool(key and secret)
 
 agentrun_logger = logging.getLogger("agentrun")
 if not agentrun_logger.handlers:
@@ -376,16 +500,24 @@ def h5(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "h5.html",
-        {"templates": template_options()},
+        {
+            "templates": template_options(),
+            "dingtalk_corp_id_json": json.dumps(os.getenv("DINGTALK_CORP_ID") or ""),
+        },
     )
 
 
 @app.post("/api/uploads")
-async def upload_file(request: Request, file: UploadFile | None = File(None)) -> dict[str, Any]:
+async def upload_file(request: Request, current_user: CurrentUser, file: UploadFile | None = File(None)) -> dict[str, Any]:
     start = time.perf_counter()
     client_host = request.client.host if request.client else None
     content_type = request.headers.get("content-type", "")
-    log_info("upload request start", clientHost=client_host, contentType=content_type)
+    log_info(
+        "upload request start",
+        clientHost=client_host,
+        contentType=content_type,
+        dingtalkUserId=current_user.get("userid"),
+    )
     try:
         content, original_name, mime_type, declared_size, uploadMode = await read_upload_payload(request, file)
         log_info(
@@ -434,7 +566,7 @@ async def upload_file(request: Request, file: UploadFile | None = File(None)) ->
 
 
 @app.get("/api/uploads/{file_name}/download")
-def download_upload(file_name: str) -> FileResponse:
+def download_upload(file_name: str, current_user: CurrentUser) -> FileResponse:
     path = UPLOADS_DIR / Path(file_name).name
     if not path.exists():
         raise HTTPException(status_code=404, detail="上传文件不存在")
@@ -442,7 +574,7 @@ def download_upload(file_name: str) -> FileResponse:
 
 
 @app.post("/api/uploads/{upload_id}/quote-text")
-async def parse_quote_text_api(upload_id: str, request: Request) -> dict[str, Any]:
+async def parse_quote_text_api(upload_id: str, request: Request, current_user: CurrentUser) -> dict[str, Any]:
     start = time.perf_counter()
     client_host = request.client.host if request.client else None
     template_type = "caigouhetong"
@@ -450,7 +582,13 @@ async def parse_quote_text_api(upload_id: str, request: Request) -> dict[str, An
         payload = await request.json()
         if isinstance(payload, dict) and payload.get("templateType"):
             template_type = str(payload["templateType"])
-    log_info("quote text api request start", clientHost=client_host, uploadId=upload_id, templateType=template_type)
+    log_info(
+        "quote text api request start",
+        clientHost=client_host,
+        uploadId=upload_id,
+        templateType=template_type,
+        dingtalkUserId=current_user.get("userid"),
+    )
     upload, quote_text = extract_quote_text(upload_id)
     config = get_template_config(template_type)
     response = {
@@ -476,13 +614,20 @@ async def parse_quote_text_api(upload_id: str, request: Request) -> dict[str, An
 @app.post("/api/contracts/generate")
 def generate_contract_api(
     request: Request,
+    current_user: CurrentUser,
     uploadId: str = Form(...),
     templateType: str = Form("caigouhetong"),
     quoteText: str | None = Form(None),
 ) -> dict[str, Any]:
     start = time.perf_counter()
     client_host = request.client.host if request.client else None
-    log_info("contract api request start", clientHost=client_host, uploadId=uploadId, templateType=templateType)
+    log_info(
+        "contract api request start",
+        clientHost=client_host,
+        uploadId=uploadId,
+        templateType=templateType,
+        dingtalkUserId=current_user.get("userid"),
+    )
     draft = generate_contract(uploadId, templateType, quoteText)
     response = {
         **contract_download_payload(draft, request),
@@ -500,20 +645,25 @@ def generate_contract_api(
 
 
 @app.get("/api/contracts/{contract_id}/download")
-def download_contract(contract_id: str) -> FileResponse:
+def download_contract(contract_id: str, current_user: CurrentUser) -> FileResponse:
     path = CONTRACTS_DIR / f"{Path(contract_id).name}.docx"
     if not path.exists():
         raise HTTPException(status_code=404, detail="合同文件不存在")
     return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=path.name)
 
 
-async def agui_stream(input_data: dict[str, Any], request: Request) -> AsyncGenerator[bytes, None]:
+async def agui_stream(input_data: dict[str, Any], request: Request, current_user: dict[str, Any]) -> AsyncGenerator[bytes, None]:
     start = time.perf_counter()
     thread_id = input_data.get("threadId") or new_id("thread")
     run_id = input_data.get("runId") or new_id("run")
     message_id = new_id("msg")
     run_summary = summarize_agui_input(input_data)
-    run_summary.update({"threadId": thread_id, "runId": run_id, "messageId": message_id})
+    run_summary.update({
+        "threadId": thread_id,
+        "runId": run_id,
+        "messageId": message_id,
+        "dingtalkUserId": current_user.get("userid"),
+    })
     log_info("agui run start", **run_summary)
     yield sse_event({"type": "RUN_STARTED", "threadId": thread_id, "runId": run_id})
     yield sse_event({"type": "TEXT_MESSAGE_START", "messageId": message_id, "role": "assistant"})
@@ -614,58 +764,144 @@ async def agui_agent(request: Request) -> StreamingResponse:
     except Exception as exc:
         log_exception("agui request json parse failed", exc, clientHost=client_host, elapsedMs=elapsed_ms(start))
         raise
-    log_info("agui request received", clientHost=client_host, elapsedMs=elapsed_ms(start), **summarize_agui_input(input_data))
-    return StreamingResponse(agui_stream(input_data, request), media_type="text/event-stream")
+    forwarded = input_data.get("forwardedProps") if isinstance(input_data.get("forwardedProps"), dict) else {}
+    if forwarded.get("healthCheck"):
+        current_user: dict[str, Any] = {"userid": "health_check", "name": "HealthCheck", "skipAuth": True}
+    else:
+        current_user = get_current_user(request)
+    log_info(
+        "agui request received",
+        clientHost=client_host,
+        dingtalkUserId=current_user.get("userid"),
+        elapsedMs=elapsed_ms(start),
+        **summarize_agui_input(input_data),
+    )
+    return StreamingResponse(agui_stream(input_data, request, current_user), media_type="text/event-stream")
+
+
+@app.get("/api/auth/status")
+def auth_status() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "skipAuth": skip_login_auth(),
+        "dingtalkConfigured": dingtalk_configured(),
+        "corpId": (os.getenv("DINGTALK_CORP_ID") or "").strip() or None,
+    }
+
+
+@app.get("/api/auth/me")
+def auth_me(request: Request) -> dict[str, Any]:
+    if skip_login_auth():
+        return {
+            "ok": True,
+            "skipAuth": True,
+            "loggedIn": True,
+            "user": {"userid": "dev_skip", "name": "开发模式（未鉴权）"},
+        }
+    raw = request.cookies.get(SESSION_COOKIE_NAME)
+    payload = verify_session_cookie(raw) if raw else None
+    if not payload:
+        return {"ok": True, "skipAuth": False, "loggedIn": False, "user": None}
+    return {"ok": True, "skipAuth": False, "loggedIn": True, "user": public_user_from_session(payload)}
 
 
 @app.post("/api/dingtalk/login")
-def dingtalk_login(payload: dict[str, Any]) -> JSONResponse:
+def dingtalk_login(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResponse:
     code = payload.get("code")
-    client_id = os.getenv("DINGTALK_CLIENT_ID", "").strip()
-    client_secret = os.getenv("DINGTALK_CLIENT_SECRET", "").strip()
-    configured = bool(client_id and client_secret)
-    if not code or not configured:
+    corp_id = (payload.get("corpId") or os.getenv("DINGTALK_CORP_ID") or "").strip()
+    configured = dingtalk_configured()
+
+    if not configured:
         return JSONResponse({
             "ok": True,
-            "configured": configured,
+            "configured": False,
             "codeReceived": bool(code),
-            "corpId": os.getenv("DINGTALK_CORP_ID"),
+            "corpId": corp_id or None,
+            "message": "未配置钉钉 AppKey/AppSecret，已跳过服务端免登",
         })
 
-    token_response = requests.post(
-        "https://api.dingtalk.com/v1.0/oauth2/userAccessToken",
-        json={
-            "clientId": client_id,
-            "clientSecret": client_secret,
-            "code": code,
-            "grantType": "authorization_code",
-        },
-        timeout=15,
-    )
-    token_response.raise_for_status()
-    token_body = token_response.json()
-    access_token = token_body.get("accessToken")
-    if not access_token:
-        raise HTTPException(status_code=502, detail="钉钉未返回用户 accessToken")
+    if not code:
+        raise HTTPException(status_code=400, detail="缺少免登授权码 code")
 
-    user_response = requests.get(
-        "https://api.dingtalk.com/v1.0/contact/users/me",
-        headers={"x-acs-dingtalk-access-token": access_token},
-        timeout=15,
-    )
-    user_response.raise_for_status()
-    user = user_response.json()
-    return JSONResponse({
-        "ok": True,
-        "configured": True,
-        "corpId": token_body.get("corpId") or os.getenv("DINGTALK_CORP_ID"),
-        "user": {
-            "unionId": user.get("unionId"),
-            "openId": user.get("openId"),
-            "nick": user.get("nick"),
-            "avatarUrl": user.get("avatarUrl"),
-        },
-    })
+    try:
+        access_token = dingtalk_oapi.get_app_access_token()
+        info_by_code = dingtalk_oapi.get_userid_by_auth_code(access_token, str(code))
+        userid = str(info_by_code.get("userid") or "").strip()
+        if not userid:
+            raise HTTPException(status_code=502, detail="钉钉未返回 userid")
+        nick_from_code = info_by_code.get("name")
+        detail = dingtalk_oapi.get_user_detail(access_token, userid)
+        dept_ids = dingtalk_oapi.parse_dept_id_list(detail.get("dept_id_list"))
+        dept_names: list[str] = []
+        for dept_id in dept_ids:
+            dept_name = dingtalk_oapi.get_department_name(access_token, dept_id)
+            if dept_name:
+                dept_names.append(dept_name)
+
+        exp = time.time() + SESSION_TTL_SEC
+        session_payload: dict[str, Any] = {
+            "exp": exp,
+            "userid": userid,
+            "name": (detail.get("name") or nick_from_code or userid),
+            "nick": (detail.get("nick") or nick_from_code or ""),
+            "mobile": str(detail.get("mobile") or ""),
+            "title": str(detail.get("title") or ""),
+            "job_number": str(detail.get("job_number") or ""),
+            "email": str(detail.get("email") or ""),
+            "avatar": str(detail.get("avatar") or ""),
+            "dept_ids": dept_ids,
+            "dept_names": dept_names,
+            "unionid": str(detail.get("unionid") or info_by_code.get("unionid") or ""),
+        }
+        merged_public = dingtalk_oapi.enrich_user_profile(
+            {
+                "userid": userid,
+                "name": session_payload["name"],
+                "nick": session_payload["nick"] or None,
+                "mobile": session_payload["mobile"] or None,
+                "title": session_payload["title"] or None,
+                "jobNumber": session_payload["job_number"] or None,
+                "email": session_payload["email"] or None,
+                "avatar": session_payload["avatar"] or None,
+                "deptIds": dept_ids,
+                "deptNames": dept_names,
+                "unionid": session_payload["unionid"] or None,
+            }
+        )
+
+        body: dict[str, Any] = {
+            "ok": True,
+            "configured": True,
+            "corpId": corp_id or None,
+            "sessionExpiresAt": int(exp * 1000),
+            "user": {k: v for k, v in merged_public.items() if v is not None},
+        }
+
+        response = JSONResponse(body)
+        if not skip_login_auth():
+            try:
+                cookie_value = sign_session_payload(session_payload)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            secure = is_request_https(request)
+            response.set_cookie(
+                key=SESSION_COOKIE_NAME,
+                value=cookie_value,
+                max_age=SESSION_TTL_SEC,
+                httponly=True,
+                secure=secure,
+                samesite="none" if secure else "lax",
+                path="/",
+            )
+        return response
+    except HTTPException:
+        raise
+    except RuntimeError as exc:
+        log_warning("dingtalk login failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except requests.RequestException as exc:
+        log_warning("dingtalk login http failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=f"调用钉钉接口失败：{exc}") from exc
 
 
 if __name__ == "__main__":
