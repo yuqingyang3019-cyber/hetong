@@ -16,10 +16,9 @@ def test_health() -> None:
     assert response.json() == {"ok": True}
 
 
-def test_h5_page_loads() -> None:
+def test_h5_page_is_not_served_by_agent() -> None:
     response = client.get("/h5")
-    assert response.status_code == 200
-    assert "合同生成助手" in response.text
+    assert response.status_code == 404
 
 
 def test_upload_and_download_txt() -> None:

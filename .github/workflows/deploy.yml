@@ -140,7 +140,10 @@ jobs:
         if: steps.get-url.outputs.h5_url != ''
         run: |
           H5_URL="${{ steps.get-url.outputs.h5_url }}"
-          curl --fail-with-body --connect-timeout 10 --max-time 60 "$H5_URL" | grep "合同生成助手"
+          PAGE="$(curl --fail-with-body --connect-timeout 10 --max-time 60 "$H5_URL")"
+          echo "$PAGE" | grep "合同生成助手"
+          echo "$PAGE" | grep "上传报价单 → 确认解析文本 → 生成合同"
+          echo "$PAGE" | grep "accessModal"
 
       - name: AGUI protocol check
         if: steps.get-url.outputs.endpoint_url != ''

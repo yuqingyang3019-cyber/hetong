@@ -17,9 +17,7 @@ from urllib.parse import urlsplit
 import requests
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 try:
     from .contract.config import (
@@ -29,7 +27,6 @@ try:
         ensure_storage,
         get_template_config,
         safe_file_name,
-        template_options,
     )
     from .contract.extract import extract_text_from_file
     from .contract.llm import extract_template_render_data
@@ -42,7 +39,6 @@ except ImportError:
         ensure_storage,
         get_template_config,
         safe_file_name,
-        template_options,
     )
     from contract.extract import extract_text_from_file
     from contract.llm import extract_template_render_data
@@ -68,9 +64,6 @@ if _allowed_origins or _origin_regex:
         allow_headers=["*"],
         expose_headers=["*"],
     )
-
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
-app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 SESSION_COOKIE_NAME = "hetong_session"
 SESSION_TTL_SEC = int(os.getenv("SESSION_TTL_SEC", str(7 * 24 * 3600)))
@@ -492,19 +485,6 @@ def generate_contract(upload_id: str, template_type: str, quote_text: str | None
 @app.get("/health")
 def health() -> dict[str, bool]:
     return {"ok": True}
-
-
-@app.get("/", response_class=HTMLResponse)
-@app.get("/h5", response_class=HTMLResponse)
-def h5(request: Request) -> HTMLResponse:
-    return templates.TemplateResponse(
-        request,
-        "h5.html",
-        {
-            "templates": template_options(),
-            "dingtalk_corp_id_json": json.dumps(os.getenv("DINGTALK_CORP_ID") or ""),
-        },
-    )
 
 
 @app.post("/api/uploads")

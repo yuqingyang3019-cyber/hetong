@@ -4,8 +4,6 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#f8fafc" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <title>合同生成助手</title>
     <link rel="stylesheet" href="/app.css" />
     <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.41/dingtalk.open.js"></script>
@@ -14,27 +12,36 @@
   <body>
     <main class="page">
       <section class="hero">
-        <p class="eyebrow">钉钉 H5 微应用</p>
         <h1>合同生成助手</h1>
-        <p>选择合同模板，上传报价单，先确认解析文本，再生成合同并返回下载链接。</p>
-      </section>
+        <p>上传报价单 → 确认解析文本 → 生成合同</p>
 
-      <section id="userBar" class="card user-bar" hidden>
-        <div class="user-bar-content">
-          <img id="userAvatar" class="user-avatar" alt="用户头像" width="48" height="48" hidden />
-          <div class="user-meta">
-            <p id="userName" class="user-name">—</p>
-            <p id="userDept" class="user-detail">部门：—</p>
-            <p id="userMobile" class="user-detail">手机：—</p>
-            <p id="userTitle" class="user-detail">职位：—</p>
-            <p id="loginHint" class="hint login-hint"></p>
+        <div id="userBar" class="hero-user-bar" hidden>
+          <div class="user-bar-content">
+            <img id="userAvatar" class="user-avatar" alt="用户头像" width="36" height="36" hidden />
+            <div class="user-meta">
+              <div class="user-summary">
+                <p id="userName" class="user-name">—</p>
+                <p id="loginHint" class="hint login-hint"></p>
+              </div>
+              <div class="user-detail-list">
+                <p id="userDept" class="user-detail">部门：—</p>
+                <p id="userMobile" class="user-detail">手机：—</p>
+                <p id="userTitle" class="user-detail">职位：—</p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <section class="card">
-        <label>
-          合同模板
+      <section class="card form-card">
+        <div class="card-heading">
+          <p class="eyebrow">第 1 步</p>
+          <h2>上传报价单</h2>
+          <p class="hint">先选择合同模板，再上传报价单文件。解析完成后会进入文本确认环节。</p>
+        </div>
+
+        <label class="field">
+          <span class="field-label">合同模板</span>
           <select id="templateType">
             <option value="caigouhetong">采购合同（通用设备）</option>
             <option value="nonStandardNoInstall">设备采购合同（不含安装）</option>
@@ -45,34 +52,97 @@
           </select>
         </label>
 
-        <label>
-          报价单文件
-          <input id="quoteFile" type="file" accept=".pdf,.xls,.xlsx,.txt" />
+        <label class="field file-field" for="quoteFile">
+          <span class="field-label">报价单文件</span>
+          <span class="upload-dropzone" id="uploadDropzone">
+            <span class="upload-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img" focusable="false">
+                <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
+              </svg>
+            </span>
+            <span class="upload-copy">
+              <span id="fileNameText" class="upload-title">点击选择报价单文件</span>
+              <span id="fileMetaText" class="upload-meta">支持 PDF、Excel、TXT 格式</span>
+            </span>
+          </span>
+          <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.txt" />
         </label>
 
         <button id="parseButton" type="button" disabled>上传并解析报价单</button>
-        <p id="status" class="status" aria-live="polite">等待上传报价单。</p>
+        <p id="status" class="status" aria-live="polite">正在准备免登环境…</p>
       </section>
 
-      <section id="previewCard" class="card" hidden>
-        <div>
+      <section id="previewCard" class="card preview-card" hidden>
+        <div class="card-heading">
           <p class="eyebrow">报价单解析文本</p>
           <h2>确认后生成合同</h2>
           <p class="hint">请检查下方文本，必要时可直接修正，再点击确认生成合同。</p>
         </div>
-        <label>
-          解析内容
+        <label class="field">
+          <span class="field-label">解析内容</span>
           <textarea id="quoteTextPreview" rows="12"></textarea>
         </label>
         <button id="generateButton" type="button" disabled>确认文本并生成合同</button>
       </section>
 
-      <section class="card log-card">
-        <h2>处理进度</h2>
-        <pre id="log"></pre>
+      <section class="card progress-card">
+        <div class="card-heading">
+          <p class="eyebrow">处理进度</p>
+          <h2>流程状态</h2>
+          <p class="hint" id="progressHint">系统会在每一步完成后自动更新状态。</p>
+        </div>
+        <ol class="step-list" id="progressSteps">
+          <li class="step is-active" data-step="auth">
+            <span class="step-dot" aria-hidden="true"></span>
+            <span>
+              <strong>钉钉免登</strong>
+              <small>确认当前用户身份</small>
+            </span>
+          </li>
+          <li class="step" data-step="upload">
+            <span class="step-dot" aria-hidden="true"></span>
+            <span>
+              <strong>上传并解析</strong>
+              <small>读取报价单内容</small>
+            </span>
+          </li>
+          <li class="step" data-step="review">
+            <span class="step-dot" aria-hidden="true"></span>
+            <span>
+              <strong>确认文本</strong>
+              <small>检查合同关键内容</small>
+            </span>
+          </li>
+          <li class="step" data-step="generate">
+            <span class="step-dot" aria-hidden="true"></span>
+            <span>
+              <strong>生成合同</strong>
+              <small>输出可下载文件</small>
+            </span>
+          </li>
+        </ol>
+        <details class="log-details">
+          <summary>查看详细日志</summary>
+          <pre id="log"></pre>
+        </details>
         <a id="downloadLink" class="download" href="#" hidden>下载合同</a>
       </section>
     </main>
+
+    <div id="accessModal" class="modal-backdrop" role="presentation" hidden>
+      <section class="access-modal" role="dialog" aria-modal="true" aria-labelledby="accessModalTitle">
+        <div class="modal-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" role="img" focusable="false">
+            <path d="M12 8v5m0 3h.01M10.3 4.7 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.7a2 2 0 0 0-3.4 0Z" />
+          </svg>
+        </div>
+        <div>
+          <p class="eyebrow">访问受限</p>
+          <h2 id="accessModalTitle">请在钉钉客户端内打开</h2>
+          <p id="accessModalMessage" class="hint">合同生成助手仅支持从钉钉微应用访问，网页环境无法完成免登。</p>
+        </div>
+      </section>
+    </div>
 
     <script src="/app.js"></script>
   </body>

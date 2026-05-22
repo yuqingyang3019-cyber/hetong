@@ -14,6 +14,13 @@ const userDeptEl = document.querySelector("#userDept");
 const userMobileEl = document.querySelector("#userMobile");
 const userTitleEl = document.querySelector("#userTitle");
 const loginHintEl = document.querySelector("#loginHint");
+const uploadDropzone = document.querySelector("#uploadDropzone");
+const fileNameText = document.querySelector("#fileNameText");
+const fileMetaText = document.querySelector("#fileMetaText");
+const progressHint = document.querySelector("#progressHint");
+const progressSteps = Array.from(document.querySelectorAll("[data-step]"));
+const accessModal = document.querySelector("#accessModal");
+const accessModalMessage = document.querySelector("#accessModalMessage");
 
 const agentEndpoint = (window.__AGENT_ENDPOINT__ || "").replace(/\/$/, "");
 const corpIdFromConfig = (window.__DINGTALK_CORP_ID__ || "").trim();
@@ -22,6 +29,7 @@ let parsedUpload = null;
 let authContext = { skipAuth: false, dingtalkConfigured: false, corpId: "" };
 /** 是否允许使用上传、解析、生成（免登成功或开发跳过鉴权） */
 let sessionReady = false;
+let busy = false;
 
 function apiUrl(path) {
   return `${agentEndpoint}${path}`;
@@ -41,14 +49,103 @@ function appendLog(text) {
   logEl.scrollTop = logEl.scrollHeight;
 }
 
+function setStatus(message, tone = "info") {
+  statusEl.textContent = message;
+  statusEl.classList.toggle("is-error", tone === "error");
+  statusEl.classList.toggle("is-success", tone === "success");
+}
+
+function formatFileSize(size) {
+  if (!Number.isFinite(size) || size <= 0) return "0 KB";
+  if (size < 1024 * 1024) return `${Math.ceil(size / 1024)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function updateSelectedFile() {
+  const file = quoteFile.files?.[0];
+  uploadDropzone?.classList.toggle("has-file", Boolean(file));
+  if (!file) {
+    if (fileNameText) fileNameText.textContent = "点击选择报价单文件";
+    if (fileMetaText) fileMetaText.textContent = "支持 PDF、Excel、TXT 格式";
+    return;
+  }
+  if (fileNameText) fileNameText.textContent = file.name || "已选择报价单";
+  if (fileMetaText) fileMetaText.textContent = `${formatFileSize(file.size)} · 已选择，点击可更换`;
+}
+
+function updateActionAvailability() {
+  const hasFile = Boolean(quoteFile.files?.[0]);
+  const hasParsedText = Boolean(parsedUpload && quoteTextPreview.value.trim());
+  const controlsDisabled = busy || !sessionReady;
+  quoteFile.disabled = controlsDisabled;
+  templateType.disabled = controlsDisabled;
+  parseButton.disabled = busy || !sessionReady || !hasFile;
+  generateButton.disabled = busy || !sessionReady || !hasParsedText;
+  uploadDropzone?.classList.toggle("is-disabled", controlsDisabled);
+}
+
 function setBusy(disabled) {
-  parseButton.disabled = disabled;
-  generateButton.disabled = disabled;
+  busy = disabled;
+  updateActionAvailability();
 }
 
 function setInteractionEnabled(enabled) {
-  parseButton.disabled = !enabled;
-  generateButton.disabled = !enabled;
+  sessionReady = enabled;
+  updateActionAvailability();
+}
+
+function getDingTalkPlatform() {
+  return String(window.dd?.env?.platform || "").toLowerCase();
+}
+
+function isDingTalkClient() {
+  const userAgent = window.navigator.userAgent || "";
+  const platform = getDingTalkPlatform();
+
+  if (!window.dd?.requestAuthCode) return false;
+  if (platform === "notindingtalk") return false;
+  if (platform) return true;
+  return /dingtalk/i.test(userAgent);
+}
+
+function showAccessModal(message) {
+  if (!accessModal) return;
+  if (accessModalMessage) accessModalMessage.textContent = message;
+  accessModal.hidden = false;
+}
+
+function blockNonDingTalkAccess(message = "请在钉钉客户端内打开合同生成助手。") {
+  sessionReady = false;
+  setInteractionEnabled(false);
+  hideUserBar();
+  setStatus("当前环境不可用", "error");
+  showAccessModal("合同生成助手仅支持从钉钉微应用访问。请返回钉钉客户端后重新打开应用。");
+  setProgress("auth", "error", "当前访问环境不是钉钉客户端，已禁止上传和生成。");
+  if (loginHintEl) loginHintEl.textContent = message;
+}
+
+function setProgress(currentStep, state = "active", message = "") {
+  const order = ["auth", "upload", "review", "generate"];
+  const activeIndex = order.indexOf(currentStep);
+
+  progressSteps.forEach((step) => {
+    const stepIndex = order.indexOf(step.dataset.step);
+    step.classList.remove("is-active", "is-complete", "is-error");
+
+    if (currentStep === "done") {
+      step.classList.add("is-complete");
+      return;
+    }
+    if (stepIndex >= 0 && stepIndex < activeIndex) {
+      step.classList.add("is-complete");
+      return;
+    }
+    if (step.dataset.step === currentStep) {
+      step.classList.add(state === "error" ? "is-error" : "is-active");
+    }
+  });
+
+  if (progressHint && message) progressHint.textContent = message;
 }
 
 function showUserBar(user, hint) {
@@ -162,30 +259,95 @@ async function refreshAuthMe() {
   return response.json();
 }
 
+function waitForDingTalkReady(timeoutMs = 8000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("钉钉 JSAPI 准备超时，请在钉钉客户端内重新打开"));
+    }, timeoutMs);
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve();
+    };
+
+    try {
+      if (window.dd?.ready) {
+        window.dd.ready(finish);
+      } else {
+        finish();
+      }
+    } catch (error) {
+      window.clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error("钉钉 JSAPI 初始化失败"));
+    }
+  });
+}
+
+function requestDingTalkAuthCode(corpId, timeoutMs = 12000) {
+  return new Promise((resolve, reject) => {
+    if (!isDingTalkClient()) {
+      reject(new Error("请在钉钉客户端内打开合同生成助手"));
+      return;
+    }
+
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(new Error("获取免登授权码超时，请重新打开应用"));
+    }, timeoutMs);
+
+    const finish = (callback) => (value) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      callback(value);
+    };
+
+    try {
+      window.dd.requestAuthCode({
+        corpId,
+        onSuccess: finish(resolve),
+        onFail: finish((err) => reject(new Error(err?.errorMessage || err?.message || "免登失败"))),
+      });
+    } catch (error) {
+      window.clearTimeout(timer);
+      reject(error instanceof Error ? error : new Error("免登失败"));
+    }
+  });
+}
+
 async function initAuth() {
   sessionReady = false;
-  if (!agentEndpoint) {
-    setInteractionEnabled(false);
-    statusEl.textContent = "缺少 Agent endpoint 配置。";
+  setProgress("auth", "active", "正在确认钉钉免登状态。");
+
+  if (!isDingTalkClient()) {
+    blockNonDingTalkAccess();
     return;
   }
 
   const statusResponse = await fetchAuth(apiUrl("/api/auth/status"));
   if (!statusResponse.ok) {
     setInteractionEnabled(false);
-    statusEl.textContent = "无法获取鉴权状态。";
+    setStatus("无法获取鉴权状态。", "error");
+    setProgress("auth", "error", "无法获取鉴权状态，请稍后重试。");
     return;
   }
   authContext = await statusResponse.json();
 
   if (authContext.skipAuth) {
-    sessionReady = true;
     setInteractionEnabled(true);
     showUserBar(
       { name: "开发模式", deptNames: [], mobile: "", title: "" },
       "后端未启用登录鉴权（未配置 APP_SESSION_SECRET 或已开启跳过）。",
     );
-    statusEl.textContent = "等待上传报价单。";
+    setStatus("请选择报价单文件。");
+    setProgress("upload", "active", "免登已就绪，请上传报价单。");
     return;
   }
 
@@ -193,14 +355,14 @@ async function initAuth() {
     sessionReady = false;
     setInteractionEnabled(false);
     hideUserBar();
-    statusEl.textContent = "服务端未配置钉钉应用，无法免登。";
+    setStatus("服务端未配置钉钉应用，无法免登。", "error");
+    setProgress("auth", "error", "服务端未配置钉钉应用，无法免登。");
     if (loginHintEl) loginHintEl.textContent = "请联系管理员配置 DINGTALK_APP_KEY / DINGTALK_APP_SECRET。";
     return;
   }
 
   const me = await refreshAuthMe();
   if (me?.loggedIn && me.user) {
-    sessionReady = true;
     try {
       sessionStorage.setItem("hetong_user_preview", JSON.stringify(me.user));
     } catch {
@@ -208,14 +370,15 @@ async function initAuth() {
     }
     setInteractionEnabled(true);
     showUserBar(me.user, "已通过钉钉免登。");
-    statusEl.textContent = "等待上传报价单。";
+    setStatus("请选择报价单文件。");
+    setProgress("upload", "active", "免登已就绪，请上传报价单。");
     return;
   }
 
   sessionReady = false;
   setInteractionEnabled(false);
   hideUserBar();
-  statusEl.textContent = "正在钉钉内免登…";
+  setStatus("正在钉钉内免登…");
   if (loginHintEl) loginHintEl.textContent = "正在获取免登授权码…";
 
   const corpId =
@@ -224,39 +387,20 @@ async function initAuth() {
     authContext.corpId ||
     "";
 
-  if (!window.dd) {
-    sessionReady = false;
-    statusEl.textContent = "请在钉钉客户端内打开本应用以完成免登。";
-    if (loginHintEl) loginHintEl.textContent = "当前环境未注入钉钉 JSAPI。";
+  if (!isDingTalkClient()) {
+    blockNonDingTalkAccess();
     return;
   }
 
   if (!corpId) {
     sessionReady = false;
-    statusEl.textContent = "缺少 corpId：请在微应用首页 URL 附带 corpId= 或在服务端配置 DINGTALK_CORP_ID。";
+    setStatus("缺少 corpId：请在微应用首页 URL 附带 corpId= 或在服务端配置 DINGTALK_CORP_ID。", "error");
+    setProgress("auth", "error", "缺少 corpId，无法发起钉钉免登。");
     if (loginHintEl) loginHintEl.textContent = "config.js 可注入 __DINGTALK_CORP_ID__。";
     return;
   }
 
-  await new Promise((resolve) => {
-    if (window.dd.ready) {
-      window.dd.ready(resolve);
-    } else {
-      resolve();
-    }
-  });
-
-  await new Promise((resolve, reject) => {
-    try {
-      window.dd.requestAuthCode({
-        corpId,
-        onSuccess: resolve,
-        onFail: (err) => reject(new Error(err?.errorMessage || err?.message || "免登失败")),
-      });
-    } catch (error) {
-      reject(error instanceof Error ? error : new Error("免登失败"));
-    }
-  }).then(async (result) => {
+  await waitForDingTalkReady().then(() => requestDingTalkAuthCode(corpId)).then(async (result) => {
     const code = result && result.code;
     if (!code) {
       throw new Error("未获取到免登授权码");
@@ -281,14 +425,15 @@ async function initAuth() {
       }
       showUserBar(body.user, "已通过钉钉免登。");
     }
-    sessionReady = true;
     setInteractionEnabled(true);
-    statusEl.textContent = "等待上传报价单。";
+    setStatus("请选择报价单文件。");
+    setProgress("upload", "active", "免登已就绪，请上传报价单。");
     if (loginHintEl) loginHintEl.textContent = "";
   }).catch((error) => {
     sessionReady = false;
     const message = error instanceof Error ? error.message : "免登失败";
-    statusEl.textContent = `免登失败：${message}`;
+    setStatus(`免登失败：${message}`, "error");
+    setProgress("auth", "error", `免登失败：${message}`);
     if (loginHintEl) loginHintEl.textContent = message;
     setInteractionEnabled(false);
   });
@@ -413,31 +558,35 @@ function resetPreview() {
   downloadLink.dataset.needsAuth = "";
   downloadLink.dataset.downloadPath = "";
   downloadLink.onclick = null;
+  updateActionAvailability();
 }
 
 quoteFile.addEventListener("change", () => {
   resetPreview();
-  statusEl.textContent = "等待上传报价单。";
+  updateSelectedFile();
+  setStatus(quoteFile.files?.[0] ? "文件已选择，可以上传解析。" : "请选择报价单文件。");
   logEl.textContent = "";
+  setProgress("upload", "active", quoteFile.files?.[0] ? "文件已选择，点击上传并解析。" : "请选择报价单文件。");
 });
 
 templateType.addEventListener("change", () => {
   resetPreview();
-  statusEl.textContent = "模板已切换，请重新解析报价单。";
+  setStatus("模板已切换，请重新解析报价单。");
+  setProgress("upload", "active", "模板已切换，请重新上传或解析报价单。");
+});
+
+quoteTextPreview.addEventListener("input", () => {
+  updateActionAvailability();
 });
 
 parseButton.addEventListener("click", async () => {
   const file = quoteFile.files?.[0];
-  if (!agentEndpoint) {
-    statusEl.textContent = "缺少 Agent endpoint 配置。";
-    return;
-  }
   if (!file) {
-    statusEl.textContent = "请先选择报价单文件。";
+    setStatus("请先选择报价单文件。", "error");
     return;
   }
   if (file.size === 0) {
-    statusEl.textContent = "报价单文件为空，请重新选择文件。";
+    setStatus("报价单文件为空，请重新选择文件。", "error");
     return;
   }
   setBusy(true);
@@ -445,51 +594,58 @@ parseButton.addEventListener("click", async () => {
   downloadLink.hidden = true;
   previewCard.hidden = true;
   try {
-    statusEl.textContent = "正在上传报价单...";
+    setStatus("正在上传报价单...");
+    setProgress("upload", "active", "正在上传报价单文件。");
     const upload = await uploadQuote(file);
     appendLog(`已上传：${upload.originalName}\n`);
-    statusEl.textContent = "正在解析报价单...";
+    setStatus("正在解析报价单...");
+    setProgress("upload", "active", "正在解析报价单内容。");
     const parsed = await parseUploadedQuote(upload.id);
     parsedUpload = upload;
     quoteTextPreview.value = parsed.quoteText || "";
     previewCard.hidden = false;
     appendLog(`已解析：${parsed.textLength || 0} 字符\n`);
-    statusEl.textContent = "请确认报价单解析文本。";
+    setStatus("请确认报价单解析文本。");
+    setProgress("review", "active", "解析完成，请检查文本后生成合同。");
   } catch (error) {
     const message = error instanceof Error ? error.message : "处理失败";
-    statusEl.textContent = message;
+    setStatus(message, "error");
     appendLog(`\n处理失败：${message}`);
+    setProgress("upload", "error", message);
   } finally {
-    parseButton.disabled = !sessionReady;
-    generateButton.disabled = !sessionReady;
+    setBusy(false);
   }
 });
 
 generateButton.addEventListener("click", async () => {
   if (!parsedUpload) {
-    statusEl.textContent = "请先上传并解析报价单。";
+    setStatus("请先上传并解析报价单。", "error");
     return;
   }
   const quoteText = quoteTextPreview.value.trim();
   if (!quoteText) {
-    statusEl.textContent = "解析文本为空，请补充后再生成合同。";
+    setStatus("解析文本为空，请补充后再生成合同。", "error");
     return;
   }
   setBusy(true);
   downloadLink.hidden = true;
   logEl.textContent = "";
   try {
-    statusEl.textContent = "正在生成合同...";
+    setStatus("正在生成合同...");
+    setProgress("generate", "active", "正在生成合同文件。");
     await generateContract(parsedUpload.id, quoteText);
-    statusEl.textContent = "合同已生成。";
+    setStatus("合同已生成。", "success");
+    setProgress("done", "active", "合同已生成，可以下载。");
   } catch (error) {
     const message = error instanceof Error ? error.message : "处理失败";
-    statusEl.textContent = message;
+    setStatus(message, "error");
     appendLog(`\n处理失败：${message}`);
+    setProgress("generate", "error", message);
   } finally {
-    parseButton.disabled = !sessionReady;
-    generateButton.disabled = !sessionReady;
+    setBusy(false);
   }
 });
 
+updateSelectedFile();
+updateActionAvailability();
 void initAuth();
