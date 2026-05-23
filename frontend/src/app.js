@@ -128,6 +128,13 @@ function configState(value) {
   return value ? "已配置" : "缺失";
 }
 
+function maskDiagnosticValue(value, prefix = 4, suffix = 4) {
+  const text = String(value || "");
+  if (!text) return "未配置";
+  if (text.length <= prefix + suffix) return "***";
+  return `${text.slice(0, prefix)}***${text.slice(-suffix)}`;
+}
+
 function setStatus(message, tone = "info") {
   statusEl.textContent = message;
   statusEl.classList.toggle("is-error", tone === "error");
@@ -202,7 +209,7 @@ function isDingTalkClient() {
   const userAgent = window.navigator.userAgent || "";
   const platform = getDingTalkPlatform();
 
-  if (!window.dd?.requestAuthCode) return false;
+  if (!window.dd?.runtime?.permission?.requestAuthCode) return false;
   if (platform === "notindingtalk") return false;
   if (platform) return true;
   return /dingtalk/i.test(userAgent);
@@ -339,17 +346,11 @@ function waitForDingTalkReady(timeoutMs = 8000) {
   });
 }
 
-function requestDingTalkAuthCode(corpId, clientId, timeoutMs = 12000) {
+function requestDingTalkAuthCode(corpId, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
-    appendStageLog("获取钉钉免登码", "开始调用 dd.requestAuthCode");
+    appendStageLog("获取钉钉免登码", "开始调用 dd.runtime.permission.requestAuthCode");
     if (!isDingTalkClient()) {
-      const error = new Error("获取钉钉免登码失败：请在钉钉客户端内打开合同生成助手");
-      appendStageLog("获取钉钉免登码失败", error.message);
-      reject(error);
-      return;
-    }
-    if (!clientId) {
-      const error = new Error("获取钉钉免登码失败：缺少钉钉 Client ID，请联系管理员检查 DINGTALK_CLIENT_ID 配置");
+      const error = new Error("获取钉钉免登码失败：当前环境不支持 dd.runtime.permission.requestAuthCode，请在钉钉客户端内打开合同生成助手");
       appendStageLog("获取钉钉免登码失败", error.message);
       reject(error);
       return;
@@ -372,11 +373,14 @@ function requestDingTalkAuthCode(corpId, clientId, timeoutMs = 12000) {
     };
 
     try {
-      window.dd.requestAuthCode({
+      window.dd.runtime.permission.requestAuthCode({
         corpId,
-        clientId,
         onSuccess: finish((value) => {
-          appendStageLog("获取钉钉免登码", value?.code ? "成功获取 code" : "成功回调但未返回 code");
+          const code = value?.code || "";
+          appendStageLog(
+            "获取钉钉免登码",
+            code ? `成功获取 code length=${code.length} code=${maskDiagnosticValue(code, 6, 6)}` : "成功回调但未返回 code",
+          );
           resolve(value);
         }),
         onFail: finish((err) => {
@@ -496,9 +500,15 @@ async function initAuth() {
     return;
   }
 
-  await waitForDingTalkReady().then(() => requestDingTalkAuthCode(corpId, clientId)).then(async (result) => {
+  appendStageLog(
+    "免登诊断",
+    `origin=${window.location.origin} corpId=${corpId} clientId=${clientId} clientSecret=${authContext.clientSecretHint || "未知"} jsapi=dd.runtime.permission.requestAuthCode`,
+  );
+
+  await waitForDingTalkReady().then(() => requestDingTalkAuthCode(corpId)).then(async (result) => {
     const code = result && result.code;
     if (!code) throw new Error("获取钉钉免登码失败：未获取到免登授权码");
+    appendStageLog("免登码诊断", `length=${code.length} code=${maskDiagnosticValue(code, 6, 6)}`);
     appendStageLog("提交免登码", "请求 /bff/auth/dingtalk-login");
     let loginResponse;
     try {

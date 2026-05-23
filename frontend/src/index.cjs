@@ -56,6 +56,13 @@ function makeError(code, message, detail) {
   return payload;
 }
 
+function maskDiagnosticValue(value, prefix = 4, suffix = 4) {
+  const text = String(value || "");
+  if (!text) return "未配置";
+  if (text.length <= prefix + suffix) return "***";
+  return `${text.slice(0, prefix)}***${text.slice(-suffix)}`;
+}
+
 function base64url(input) {
   return Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
@@ -282,6 +289,8 @@ async function handleBff(req, res, pathname) {
       ok: true,
       corpId: dingtalkCorpId || null,
       clientId: dingtalkClientId || null,
+      clientSecretConfigured: Boolean(dingtalkClientSecret),
+      clientSecretHint: maskDiagnosticValue(dingtalkClientSecret),
       agentBaseUrl: agentEndpoint.replace(/\/$/, ""),
       agentTokenTtlSeconds,
       dingtalkConfigured: dingtalkConfigured(),
@@ -317,6 +326,18 @@ async function handleBff(req, res, pathname) {
         sendJson(res, 400, makeError("INVALID_ARGUMENT", "缺少 corpId"));
         return;
       }
+      console.log(
+        "[bff-auth] dingtalk-login",
+        JSON.stringify({
+          origin: req.headers.origin || "",
+          host: req.headers.host || "",
+          corpId,
+          clientId: dingtalkClientId,
+          clientSecret: maskDiagnosticValue(dingtalkClientSecret),
+          codeLength: code.length,
+          code: maskDiagnosticValue(code, 6, 6),
+        }),
+      );
       const sessionPayload = await exchangeDingtalkCode(code, corpId);
       sessionPayload.typ = "h5";
       sessionPayload.exp = Date.now() / 1000 + h5SessionTtlSeconds;
