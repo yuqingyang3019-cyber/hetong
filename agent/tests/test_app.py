@@ -1,5 +1,6 @@
 from pathlib import Path
 import base64
+import os
 from unittest.mock import ANY, Mock, patch
 
 import pytest
@@ -9,6 +10,8 @@ from agent.contract.config import DRAFTS_DIR, UPLOADS_DIR, get_template_config
 from agent.contract.render import build_docxtpl_context
 from agent.main import app, contract_download_payload, generate_contract, sign_session_payload
 
+
+os.environ.setdefault("APP_SESSION_SECRET", "test-session-secret-123456789012")
 
 client = TestClient(app)
 
@@ -38,6 +41,7 @@ def test_h5_page_is_not_served_by_agent() -> None:
 def test_upload_and_download_txt() -> None:
     response = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         files={"file": ("quote.txt", b"hello quote", "text/plain")},
     )
     assert response.status_code == 200
@@ -49,6 +53,7 @@ def test_upload_and_download_txt() -> None:
 def test_upload_json_base64_and_download_txt() -> None:
     response = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.txt",
             "mimeType": "text/plain",
@@ -65,6 +70,7 @@ def test_upload_json_base64_and_download_txt() -> None:
 def test_parse_uploaded_quote_text() -> None:
     upload = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.txt",
             "mimeType": "text/plain",
@@ -77,6 +83,7 @@ def test_parse_uploaded_quote_text() -> None:
 
     response = client.post(
         f"/api/uploads/{upload_body['id']}/quote-text",
+        headers=agent_auth_header(),
         json={"templateType": "caigouhetong"},
     )
 
@@ -92,6 +99,7 @@ def test_parse_uploaded_quote_text() -> None:
 def test_parse_uploaded_image_uses_ocr() -> None:
     upload = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.png",
             "mimeType": "image/png",
@@ -105,6 +113,7 @@ def test_parse_uploaded_image_uses_ocr() -> None:
     with patch("agent.contract.extract.extract_image_text", return_value="OCR 报价单文本"):
         response = client.post(
             f"/api/uploads/{upload_body['id']}/quote-text",
+            headers=agent_auth_header(),
             json={"templateType": "caigouhetong"},
         )
 
@@ -117,6 +126,7 @@ def test_parse_uploaded_image_uses_ocr() -> None:
 def test_upload_rejects_empty_file() -> None:
     response = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "empty.pdf",
             "mimeType": "application/pdf",
@@ -149,6 +159,7 @@ def test_agui_health_check() -> None:
 def test_agui_uses_confirmed_quote_text() -> None:
     upload = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.txt",
             "mimeType": "text/plain",
@@ -163,6 +174,7 @@ def test_agui_uses_confirmed_quote_text() -> None:
         generate_contract.return_value = {"contractId": "contract_test", "templateType": "caigouhetong", "quoteTextLength": 4}
         response = client.post(
             "/ag-ui/agent",
+            headers=agent_auth_header(),
             json={
                 "threadId": "t1",
                 "runId": "r1",
@@ -186,6 +198,7 @@ def test_agui_uses_confirmed_quote_text() -> None:
 def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
     upload = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.txt",
             "mimeType": "text/plain",
@@ -204,6 +217,7 @@ def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
     with patch("agent.main.extract_template_render_data", return_value=extracted) as llm:
         response = client.post(
             f"/api/uploads/{upload_id}/field-preview",
+            headers=agent_auth_header(),
             json={
                 "templateType": "caigouhetong",
                 "quoteText": " 用户确认报价单文本 ",
@@ -223,6 +237,7 @@ def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
 def test_generate_contract_reuses_confirmed_extracted_data() -> None:
     upload = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.txt",
             "mimeType": "text/plain",
@@ -253,6 +268,7 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
 def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None:
     upload = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.txt",
             "mimeType": "text/plain",
@@ -317,6 +333,7 @@ def test_dingdrive_download_proxy_streams_file() -> None:
     ) as download_info, patch("agent.main.requests.get", return_value=upstream) as get:
         response = client.post(
             "/api/dingdrive/download",
+            headers=agent_auth_header(),
             json={"spaceId": "space1", "fileId": "file1", "fileName": "20260523_供应商A.docx"},
         )
 
@@ -331,6 +348,7 @@ def test_dingdrive_download_proxy_streams_file() -> None:
 def test_generate_contract_keeps_process_files_when_dingdrive_fails() -> None:
     upload = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.txt",
             "mimeType": "text/plain",
@@ -376,6 +394,7 @@ def test_confirmed_blank_fields_render_empty() -> None:
 def test_agui_passes_confirmed_extracted_data() -> None:
     upload = client.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.txt",
             "mimeType": "text/plain",
@@ -391,6 +410,7 @@ def test_agui_passes_confirmed_extracted_data() -> None:
         generate_contract_mock.return_value = {"contractId": "contract_test", "templateType": "caigouhetong", "quoteTextLength": 4}
         response = client.post(
             "/ag-ui/agent",
+            headers=agent_auth_header(),
             json={
                 "threadId": "t1",
                 "runId": "r1",
