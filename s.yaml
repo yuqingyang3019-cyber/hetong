@@ -60,8 +60,10 @@ resources:
       region: ${vars.region}
       functionName: ${vars.agent_name}_h5_web
       description: 合同生成助手 H5 前端
-      runtime: custom
+      runtime: custom.debian10
       code: ./frontend/dist
+      layers:
+        - acs:fc:${vars.region}:official:layers/Nodejs20/versions/1
       customRuntimeConfig:
         command:
           - /bin/bash
@@ -75,6 +77,7 @@ resources:
       internetAccess: true
       environmentVariables:
         PORT: "8000"
+        PATH: /opt/nodejs20/bin:/usr/local/bin:/usr/bin:/bin
         AGENT_ENDPOINT: ${resources.agent.output.agent.endpoints.0.url}
         DINGTALK_CLIENT_ID: ${env("DINGTALK_CLIENT_ID")}
         DINGTALK_CLIENT_SECRET: ${env("DINGTALK_CLIENT_SECRET")}
