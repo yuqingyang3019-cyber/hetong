@@ -5,15 +5,14 @@ cd "$(dirname "$0")"
 export PORT="${PORT:-8000}"
 export PYTHONPATH="$(pwd)/python:${PYTHONPATH:-}"
 
-if python3 -c "from alibabacloud_dingtalk.oauth2_1_0.client import Client" >/dev/null 2>&1; then
-  exec python3 server.py
+if [ ! -d "$(pwd)/python" ]; then
+  echo "frontend/python 依赖目录不存在，请确认 CI 已执行 Vendor H5 Python dependencies" >&2
+  exit 2
 fi
 
-TARGET_DIR="/tmp/hetong-h5-python"
-if [ ! -x "$TARGET_DIR/bin/python" ] || ! "$TARGET_DIR/bin/python" -c "from alibabacloud_dingtalk.oauth2_1_0.client import Client" >/dev/null 2>&1; then
-  rm -rf "$TARGET_DIR"
-  python3 -m venv "$TARGET_DIR"
-  "$TARGET_DIR/bin/python" -m pip install --no-cache-dir -r requirements.txt
+if ! python3 -c "from alibabacloud_dingtalk.oauth2_1_0.client import Client" >/dev/null 2>&1; then
+  echo "H5 Python 依赖不完整：缺少 alibabacloud_dingtalk.oauth2_1_0.client，请检查 frontend/dist/python 打包结果" >&2
+  exit 2
 fi
 
-exec "$TARGET_DIR/bin/python" server.py
+exec python3 server.py
