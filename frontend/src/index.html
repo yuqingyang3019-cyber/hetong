@@ -74,17 +74,18 @@
 
       <section id="previewCard" class="card preview-card" hidden>
         <div class="card-heading">
-          <p class="eyebrow">报价单解析文本</p>
-          <h2>确认后生成合同</h2>
-          <p class="hint">请检查下方文本，必要时可直接修正；如有报价单未包含的信息，可在额外信息中补充。</p>
+          <p class="eyebrow">第 2 步</p>
+          <h2>确认解析文本并补充信息</h2>
+          <p class="hint">请检查下方报价单解析文本，必要时可直接修正；额外信息会和解析文本一起交给 LLM 识别合同字段。</p>
         </div>
         <label class="field">
           <span class="field-label">解析内容</span>
           <textarea id="quoteTextPreview" rows="12"></textarea>
         </label>
         <label class="field">
-          <span class="field-label">额外信息提供</span>
+          <span class="field-label">额外信息提供 <small>可选</small></span>
           <textarea id="extraInfoText" class="textarea-compact" rows="5" placeholder="例如：付款比例、交货地点、联系人、开户行、税号、签约主体等报价单中没有的信息。"></textarea>
+          <span class="field-help">识别字段时会同时读取“解析内容”和“额外信息”，补充信息优先用于填补缺失字段。</span>
         </label>
         <button id="identifyFieldsButton" type="button" disabled>识别合同字段</button>
       </section>
@@ -96,7 +97,7 @@
           <p class="hint" id="fieldPreviewSummary">请确认下方字段识别结果，未识别字段会在合同中标记为待填写。</p>
         </div>
         <div class="field-result-grid">
-          <section class="field-result-panel">
+          <section class="field-result-panel is-recognized">
             <h3>已识别字段</h3>
             <div id="recognizedFieldsList" class="field-list"></div>
           </section>

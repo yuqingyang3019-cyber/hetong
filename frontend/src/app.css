@@ -265,6 +265,17 @@ label,
   justify-content: space-between;
 }
 
+.field-label small,
+.field-help {
+  color: #64748b;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.field-help {
+  line-height: 1.55;
+}
+
 select,
 input,
 textarea,
@@ -528,6 +539,24 @@ button:disabled {
   margin: 0;
 }
 
+.field-preview-summary {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.field-preview-summary.all-recognized {
+  background: rgba(5, 150, 105, 0.09);
+  border-color: rgba(5, 150, 105, 0.22);
+  color: #047857;
+}
+
+.field-preview-summary.has-missing {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.22);
+  color: #991b1b;
+}
+
 .field-result-grid {
   display: grid;
   gap: var(--space-3);
@@ -542,9 +571,14 @@ button:disabled {
   padding: var(--space-3);
 }
 
+.field-result-panel.is-recognized {
+  background: rgba(5, 150, 105, 0.07);
+  border-color: rgba(5, 150, 105, 0.2);
+}
+
 .field-result-panel.is-missing {
-  background: rgba(180, 83, 9, 0.07);
-  border-color: rgba(180, 83, 9, 0.2);
+  background: rgba(220, 38, 38, 0.07);
+  border-color: rgba(220, 38, 38, 0.2);
 }
 
 .field-result-panel h3,
@@ -572,8 +606,21 @@ button:disabled {
   padding: 9px 10px;
 }
 
+.field-result-item.is-recognized {
+  border-color: rgba(5, 150, 105, 0.26);
+}
+
+.field-result-item.is-recognized .field-result-label {
+  color: #047857;
+}
+
 .field-result-item.is-missing {
-  border-color: rgba(180, 83, 9, 0.22);
+  border-color: rgba(220, 38, 38, 0.26);
+}
+
+.field-result-item.is-missing .field-result-label,
+.field-result-item.is-missing .field-result-value {
+  color: #991b1b;
 }
 
 .field-result-label {
@@ -590,8 +637,8 @@ button:disabled {
 }
 
 .field-table-group {
-  background: rgba(15, 108, 189, 0.05);
-  border: 1px solid rgba(15, 108, 189, 0.12);
+  background: rgba(5, 150, 105, 0.06);
+  border: 1px solid rgba(5, 150, 105, 0.16);
   border-radius: var(--radius-sm);
   display: grid;
   gap: var(--space-2);

@@ -680,7 +680,11 @@ async function generateContract(uploadId, quoteText, extraInfo, extractedData) {
 
 function createFieldItem(label, value, tone = "normal") {
   const item = document.createElement("div");
-  item.className = `field-result-item${tone === "missing" ? " is-missing" : ""}`;
+  item.className = [
+    "field-result-item",
+    tone === "recognized" ? "is-recognized" : "",
+    tone === "missing" ? "is-missing" : "",
+  ].filter(Boolean).join(" ");
   const labelEl = document.createElement("span");
   labelEl.className = "field-result-label";
   labelEl.textContent = label;
@@ -727,7 +731,7 @@ function renderRecognizedFields(fields = []) {
         rowTitle.textContent = `第 ${index + 1} 行`;
         rowEl.append(rowTitle);
         (row || []).forEach((cell) => {
-          rowEl.append(createFieldItem(cell.label || cell.key, cell.value || ""));
+          rowEl.append(createFieldItem(cell.label || cell.key, cell.value || "", "recognized"));
         });
         group.append(rowEl);
       });
@@ -735,7 +739,7 @@ function renderRecognizedFields(fields = []) {
       return;
     }
 
-    recognizedFieldsList.append(createFieldItem(field.label || field.key, field.value || ""));
+    recognizedFieldsList.append(createFieldItem(field.label || field.key, field.value || "", "recognized"));
   });
 }
 
@@ -756,7 +760,10 @@ function renderFieldPreview(preview) {
   const recognized = preview?.recognizedFields || [];
   const missing = preview?.missingFields || [];
   if (fieldPreviewSummary) {
-    fieldPreviewSummary.textContent = `已识别 ${recognized.length} 项，未识别 ${missing.length} 项。未识别字段会在合同中显示为待填写。`;
+    fieldPreviewSummary.className = `hint field-preview-summary${missing.length ? " has-missing" : " all-recognized"}`;
+    fieldPreviewSummary.textContent = missing.length
+      ? `已识别 ${recognized.length} 项，仍有 ${missing.length} 项未识别。请查看红色提示，未识别字段会在合同中显示为待填写。`
+      : `已识别 ${recognized.length} 项，没有未识别字段。请确认绿色字段结果后生成合同。`;
   }
   renderRecognizedFields(recognized);
   renderMissingFields(missing);
@@ -766,6 +773,10 @@ function renderFieldPreview(preview) {
 function resetFieldPreview() {
   fieldPreview = null;
   if (fieldPreviewCard) fieldPreviewCard.hidden = true;
+  if (fieldPreviewSummary) {
+    fieldPreviewSummary.className = "hint field-preview-summary";
+    fieldPreviewSummary.textContent = "请确认下方字段识别结果，未识别字段会在合同中标记为待填写。";
+  }
   renderEmptyFieldList(recognizedFieldsList, "等待字段识别。");
   renderEmptyFieldList(missingFieldsList, "等待字段识别。");
   updateActionAvailability();
@@ -836,6 +847,7 @@ parseButton.addEventListener("click", async () => {
     quoteTextPreview.value = parsed.quoteText || "";
     if (extraInfoText) extraInfoText.value = "";
     previewCard.hidden = false;
+    previewCard.scrollIntoView({ behavior: "smooth", block: "start" });
     appendLog(`已解析：${parsed.textLength || 0} 字符\n`);
     setStatus("请确认报价单解析文本，并补充额外信息后识别字段。");
     setProgress("review", "active", "解析完成，请补充信息并识别合同字段。");
@@ -869,7 +881,12 @@ identifyFieldsButton?.addEventListener("click", async () => {
     fieldPreview = await previewQuoteFields(parsedUpload.id, quoteText, extraInfo);
     renderFieldPreview(fieldPreview);
     appendLog(`字段识别完成：已识别 ${fieldPreview.recognizedFields?.length || 0} 项，未识别 ${fieldPreview.missingFields?.length || 0} 项\n`);
-    setStatus("请确认字段识别结果。");
+    setStatus(
+      (fieldPreview.missingFields?.length || 0) > 0
+        ? "字段识别完成，请查看红色未识别提示。"
+        : "字段识别完成，未发现缺失字段。",
+      (fieldPreview.missingFields?.length || 0) > 0 ? "info" : "success",
+    );
     setProgress("review", "active", "字段识别完成，请确认后生成合同。");
   } catch (error) {
     const message = error instanceof Error ? error.message : "字段识别失败";
