@@ -670,6 +670,12 @@ button:disabled {
   border-left-color: var(--color-destructive);
 }
 
+.contract-preview-field.is-auto-filled {
+  background: rgba(15, 108, 189, 0.07);
+  border-color: rgba(15, 108, 189, 0.2);
+  border-left-color: var(--color-accent);
+}
+
 .contract-field-label {
   color: #64748b;
   font-size: 0.8125rem;
@@ -686,6 +692,18 @@ button:disabled {
 
 .contract-preview-field.is-missing .contract-field-value {
   color: #991b1b;
+}
+
+.contract-field-badge {
+  align-self: start;
+  background: rgba(15, 108, 189, 0.1);
+  border: 1px solid rgba(15, 108, 189, 0.18);
+  border-radius: 999px;
+  color: #0f548c;
+  font-size: 0.75rem;
+  font-weight: 800;
+  justify-self: start;
+  padding: 2px 8px;
 }
 
 .contract-preview-table-wrap {

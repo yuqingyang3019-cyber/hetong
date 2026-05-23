@@ -37,6 +37,7 @@ const templateSchemaFiles = Object.freeze({
   professionalSubcontract: "professional-subcontract",
   laborSubcontract: "labor-subcontract",
 });
+const autoDateFieldKeys = Object.freeze(["signYear", "signMonth", "signDay", "signatureYear", "signatureMonth", "signatureDay"]);
 const templateSchemaCache = new Map();
 
 let parsedUpload = null;
@@ -728,6 +729,42 @@ function formatFieldValue(value) {
   return String(value);
 }
 
+function currentShanghaiDateParts() {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+  const getPart = (type) => parts.find((part) => part.type === type)?.value || "";
+  return {
+    year: getPart("year"),
+    month: getPart("month"),
+    day: getPart("day"),
+  };
+}
+
+function autoDateValueForKey(key, dateParts) {
+  if (key === "signYear" || key === "signatureYear") return dateParts.year;
+  if (key === "signMonth" || key === "signatureMonth") return dateParts.month;
+  if (key === "signDay" || key === "signatureDay") return dateParts.day;
+  return null;
+}
+
+function applyAutoDateDefaults(extractedData) {
+  if (!extractedData || typeof extractedData !== "object") return new Set();
+  const dateParts = currentShanghaiDateParts();
+  const autoFilledKeys = new Set();
+  autoDateFieldKeys.forEach((key) => {
+    if (!isBlankField(extractedData[key])) return;
+    const value = autoDateValueForKey(key, dateParts);
+    if (!value) return;
+    extractedData[key] = value;
+    autoFilledKeys.add(key);
+  });
+  return autoFilledKeys;
+}
+
 function markPreviewStat(stats, value) {
   if (isBlankField(value)) stats.missing += 1;
   else stats.recognized += 1;
@@ -742,18 +779,23 @@ function createGhostParagraph(index) {
   return paragraph;
 }
 
-function createContractField(label, value, stats, prefix = "") {
+function createContractField(label, value, stats, prefix = "", options = {}) {
   const missing = isBlankField(value);
   markPreviewStat(stats, value);
-  const field = createEl("div", `contract-preview-field ${missing ? "is-missing" : "is-recognized"}`);
+  const field = createEl("div", [
+    "contract-preview-field",
+    missing ? "is-missing" : "is-recognized",
+    options.autoFilled ? "is-auto-filled" : "",
+  ].filter(Boolean).join(" "));
   field.append(
     createEl("span", "contract-field-label", `${prefix}${label}`),
     createEl("span", "contract-field-value", formatFieldValue(value)),
   );
+  if (options.autoFilled) field.append(createEl("span", "contract-field-badge", "系统自动填充"));
   return field;
 }
 
-function renderScalarPreview(paper, schema, extractedData, stats) {
+function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys) {
   const scalars = Array.isArray(schema?.scalars) ? schema.scalars : [];
   if (!scalars.length) return;
 
@@ -763,7 +805,13 @@ function renderScalarPreview(paper, schema, extractedData, stats) {
 
   scalars.forEach((field, index) => {
     if (index > 0 && index % 8 === 0) body.append(createGhostParagraph(index));
-    body.append(createContractField(field.label || field.key, getByDotPath(extractedData, field.key), stats, `${index + 1}. `));
+    body.append(createContractField(
+      field.label || field.key,
+      getByDotPath(extractedData, field.key),
+      stats,
+      `${index + 1}. `,
+      { autoFilled: autoFilledKeys?.has(field.key) },
+    ));
   });
 
   section.append(body);
@@ -818,6 +866,7 @@ function renderTablePreview(paper, schema, extractedData, stats) {
 async function renderFieldPreview(preview) {
   const schema = await loadTemplateSchema(templateType.value);
   const extractedData = preview?.extractedData && typeof preview.extractedData === "object" ? preview.extractedData : {};
+  const autoFilledKeys = applyAutoDateDefaults(extractedData);
   const stats = { recognized: 0, missing: 0 };
 
   if (contractPreviewEl) {
@@ -830,7 +879,7 @@ async function renderFieldPreview(preview) {
       createEl("p", "contract-preview-muted", "以下内容按模板字段顺序生成，灰色文本为合同正文位置示意。"),
     );
     paper.append(title, createGhostParagraph(0));
-    renderScalarPreview(paper, schema, extractedData, stats);
+    renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys);
     renderTablePreview(paper, schema, extractedData, stats);
     paper.append(createGhostParagraph(1));
     contractPreviewEl.append(paper);
