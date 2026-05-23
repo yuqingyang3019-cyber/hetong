@@ -12,6 +12,7 @@ __pycache__/
 !.env.example
 
 # Generated app artifacts
+frontend/node_modules/
 agent/.venv/
 agent/python/
 agent/storage/uploads/*
