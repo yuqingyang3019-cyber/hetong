@@ -7,12 +7,16 @@ import os
 import base64
 import hashlib
 import hmac
+import sys
+import threading
 import time
 from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 from socketserver import ThreadingTCPServer
+from typing import Any
+from urllib import error as urlerror
 from urllib import request as urlrequest
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlencode, unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
@@ -26,6 +30,12 @@ AGENT_TOKEN_TTL_SEC = int(os.getenv("AGENT_TOKEN_TTL_SEC", "1800"))
 H5_SESSION_TTL_SEC = int(os.getenv("H5_SESSION_TTL_SEC", str(7 * 24 * 3600)))
 H5_SESSION_COOKIE_NAME = "hetong_h5_session"
 BFF_PREFIX = "/bff/auth"
+DINGTALK_GETUSERINFO_URL = "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo"
+DINGTALK_USER_GET_URL = "https://oapi.dingtalk.com/topapi/v2/user/get"
+_DINGTALK_TOKEN_CACHE: dict[str, tuple[str, float]] = {}
+_DINGTALK_TOKEN_LOCK = threading.Lock()
+
+
 def b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
@@ -141,50 +151,194 @@ def dingtalk_configured() -> bool:
     return bool(DINGTALK_CLIENT_ID and DINGTALK_CLIENT_SECRET and DINGTALK_CORP_ID)
 
 
-def dingtalk_post_json(url: str, payload: dict, headers: dict[str, str] | None = None) -> dict:
+def get_value(data: Any, *names: str) -> Any:
+    if isinstance(data, dict):
+        for name in names:
+            if name in data:
+                return data[name]
+    for name in names:
+        if hasattr(data, name):
+            return getattr(data, name)
+    return None
+
+
+def to_plain_data(value: Any) -> Any:
+    if hasattr(value, "to_map"):
+        return value.to_map()
+    if hasattr(value, "__dict__"):
+        return {key: to_plain_data(item) for key, item in vars(value).items() if not key.startswith("_")}
+    if isinstance(value, dict):
+        return {key: to_plain_data(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [to_plain_data(item) for item in value]
+    return value
+
+
+def dingtalk_errcode_ok(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return int(value) == 0
+    if isinstance(value, str):
+        return value == "0" or value.lower() == "ok"
+    return False
+
+
+def summarize_dingtalk_response(body: Any) -> str:
+    if isinstance(body, dict):
+        code = body.get("code") or body.get("errcode")
+        message = body.get("message") or body.get("errmsg")
+        request_id = body.get("request_id") or body.get("requestId")
+        parts = []
+        if code is not None:
+            parts.append(f"code={code}")
+        if message:
+            parts.append(f"message={message}")
+        if request_id:
+            parts.append(f"request_id={request_id}")
+        return " ".join(parts) or "响应缺少错误信息"
+    return str(body)[:300] if body is not None else "响应为空"
+
+
+def format_sdk_error(exc: Exception) -> str:
+    code = getattr(exc, "code", None)
+    message = getattr(exc, "message", None) or str(exc)
+    request_id = getattr(exc, "request_id", None) or getattr(exc, "requestId", None)
+    parts = []
+    if code:
+        parts.append(f"code={code}")
+    if message:
+        parts.append(f"message={message}")
+    if request_id:
+        parts.append(f"request_id={request_id}")
+    return " ".join(parts) or exc.__class__.__name__
+
+
+def parse_dept_id_list(raw: Any) -> list[int]:
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        values: list[int] = []
+        for item in raw:
+            try:
+                values.append(int(item))
+            except (TypeError, ValueError):
+                continue
+        return values
+    if isinstance(raw, str):
+        raw = raw.strip()
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return parse_dept_id_list(parsed)
+        try:
+            return [int(raw)]
+        except ValueError:
+            return []
+    try:
+        return [int(raw)]
+    except (TypeError, ValueError):
+        return []
+
+
+def make_oauth_client() -> tuple[Any, Any]:
+    try:
+        from alibabacloud_dingtalk.oauth2_1_0.client import Client as DingtalkOAuth2Client
+        from alibabacloud_dingtalk.oauth2_1_0 import models as oauth_models
+        from alibabacloud_tea_openapi import models as open_api_models
+    except ImportError as exc:
+        raise RuntimeError("未安装 alibabacloud_dingtalk，无法调用钉钉 OAuth2 新版 SDK") from exc
+
+    config = open_api_models.Config()
+    config.protocol = "https"
+    config.region_id = "central"
+    return DingtalkOAuth2Client(config), oauth_models
+
+
+def get_dingtalk_access_token(corp_id: str) -> str:
+    cache_key = corp_id
+    now = time.time()
+    with _DINGTALK_TOKEN_LOCK:
+        cached = _DINGTALK_TOKEN_CACHE.get(cache_key)
+        if cached and now < cached[1] - 120:
+            return cached[0]
+
+    client, oauth_models = make_oauth_client()
+    token_request = oauth_models.GetTokenRequest(
+        client_id=DINGTALK_CLIENT_ID,
+        client_secret=DINGTALK_CLIENT_SECRET,
+        grant_type="client_credentials",
+    )
+    try:
+        response = client.get_token(corp_id, token_request)
+    except Exception as exc:
+        raise RuntimeError(f"获取钉钉应用 access_token 失败：{format_sdk_error(exc)}") from exc
+
+    body = to_plain_data(get_value(response, "body") or response)
+    access_token = get_value(body, "access_token", "accessToken")
+    if not isinstance(access_token, str) or not access_token:
+        raise RuntimeError(f"钉钉 OAuth2 新版 SDK 未返回 access_token：{summarize_dingtalk_response(body)}")
+
+    try:
+        expires_in = int(get_value(body, "expires_in", "expiresIn") or 7200)
+    except (TypeError, ValueError):
+        expires_in = 7200
+    with _DINGTALK_TOKEN_LOCK:
+        _DINGTALK_TOKEN_CACHE[cache_key] = (access_token, now + max(60, expires_in))
+    return access_token
+
+
+def dingtalk_post_json(url: str, payload: dict, operation: str) -> dict:
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request_headers = {"Content-Type": "application/json"}
-    if headers:
-        request_headers.update(headers)
-    req = urlrequest.Request(url, data=data, headers=request_headers, method="POST")
-    with urlrequest.urlopen(req, timeout=15) as resp:
-        body = resp.read()
-    parsed = json.loads(body.decode("utf-8") or "{}")
+    req = urlrequest.Request(url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urlrequest.urlopen(req, timeout=15) as resp:
+            body = resp.read()
+    except urlerror.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed_error = json.loads(raw or "{}")
+        except json.JSONDecodeError:
+            parsed_error = raw[:300]
+        raise RuntimeError(f"{operation} 失败：HTTP {exc.code} {summarize_dingtalk_response(parsed_error)}") from exc
+    except urlerror.URLError as exc:
+        raise RuntimeError(f"{operation} 网络请求失败：{exc.reason}") from exc
+
+    try:
+        parsed = json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"{operation} 响应不是合法 JSON") from exc
     if not isinstance(parsed, dict):
-        raise RuntimeError("钉钉 SDK 响应不是对象")
+        raise RuntimeError(f"{operation} 响应不是对象")
+    if "errcode" in parsed and not dingtalk_errcode_ok(parsed.get("errcode")):
+        raise RuntimeError(f"{operation} 失败：{summarize_dingtalk_response(parsed)}")
     return parsed
+
+
+def dingtalk_topapi_post(url: str, access_token: str, payload: dict, operation: str) -> dict:
+    return dingtalk_post_json(f"{url}?{urlencode({'access_token': access_token})}", payload, operation)
 
 
 def exchange_dingtalk_code(code: str, corp_id: str) -> dict:
     if not dingtalk_configured():
         raise RuntimeError("未配置钉钉新版服务端 SDK 凭证")
 
-    token_body = dingtalk_post_json(
-        f"https://api.dingtalk.com/v1.0/oauth2/{corp_id}/token",
-        {
-            "client_id": DINGTALK_CLIENT_ID,
-            "client_secret": DINGTALK_CLIENT_SECRET,
-            "grant_type": "client_credentials",
-        },
-    )
-    access_token = token_body.get("access_token")
-    if not isinstance(access_token, str) or not access_token:
-        raise RuntimeError("钉钉新版服务端 SDK 未返回 access_token")
-
-    user_body = dingtalk_post_json(
-        "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo",
-        {"code": code},
-        headers={"x-acs-dingtalk-access-token": access_token},
-    )
+    access_token = get_dingtalk_access_token(corp_id)
+    user_body = dingtalk_topapi_post(DINGTALK_GETUSERINFO_URL, access_token, {"code": code}, "通过免登码获取钉钉用户信息")
     result = user_body.get("result") if isinstance(user_body.get("result"), dict) else {}
     userid = str(result.get("userid") or "").strip()
     if not userid:
-        raise RuntimeError("钉钉免登未返回 userid")
+        raise RuntimeError(f"钉钉免登未返回 userid：{summarize_dingtalk_response(user_body)}")
 
-    detail_body = dingtalk_post_json(
-        "https://oapi.dingtalk.com/topapi/v2/user/get",
+    detail_body = dingtalk_topapi_post(
+        DINGTALK_USER_GET_URL,
+        access_token,
         {"userid": userid, "language": "zh_CN"},
-        headers={"x-acs-dingtalk-access-token": access_token},
+        "获取钉钉用户详情",
     )
     detail = detail_body.get("result") if isinstance(detail_body.get("result"), dict) else {}
     return {
@@ -196,7 +350,7 @@ def exchange_dingtalk_code(code: str, corp_id: str) -> dict:
         "job_number": str(detail.get("job_number") or ""),
         "email": str(detail.get("email") or ""),
         "avatar": str(detail.get("avatar") or result.get("avatar") or ""),
-        "dept_ids": detail.get("dept_id_list") if isinstance(detail.get("dept_id_list"), list) else [],
+        "dept_ids": parse_dept_id_list(detail.get("dept_id_list")),
         "dept_names": [],
         "unionid": str(detail.get("unionid") or result.get("unionid") or ""),
     }
@@ -315,6 +469,7 @@ class H5Handler(SimpleHTTPRequestHandler):
         except ValueError as exc:
             self.send_json(400, make_error("INVALID_ARGUMENT", str(exc)))
         except RuntimeError as exc:
+            print(f"[bff.auth] dingtalk login failed: {exc}", file=sys.stderr, flush=True)
             self.send_json(502, make_error("DINGTALK_AUTH_FAILED", "钉钉免登失败", str(exc)))
 
     def set_h5_cookie(self, token: str, max_age: int) -> str:

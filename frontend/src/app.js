@@ -513,7 +513,8 @@ async function initAuth() {
     }
     const body = await loginResponse.json().catch(() => ({}));
     if (!loginResponse.ok) {
-      throw new Error(`提交免登码到 BFF 失败：${body.message || body.detail || `HTTP ${loginResponse.status}`}`);
+      const reason = body.detail || body.message || `HTTP ${loginResponse.status}`;
+      throw new Error(`提交免登码到 BFF 失败：${reason}`);
     }
     agentAuth = {
       baseUrl: body.agentBaseUrl || authContext.agentBaseUrl || "",
