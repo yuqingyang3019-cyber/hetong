@@ -16,8 +16,8 @@ V1 接口按职责拆分为三类：
 
 | 类型 | 域名 | 调用方 | 职责 |
 | --- | --- | --- | --- |
-| 钉钉 JSAPI | 钉钉客户端内置 | 前端 H5 | 获取免登授权码、打开钉盘合同预览 |
-| BFF 鉴权接口 | 前端 H5 域名 | 前端 H5 | 提供公开配置、完成免登、维护 H5 会话、签发 AgentRun 短期访问凭证 |
+| 钉钉客户端 JSAPI SDK | 钉钉客户端内置 | 前端 H5 | 获取免登授权码、打开钉盘合同预览 |
+| BFF 鉴权接口 | 前端 H5 域名 | 前端 H5 | 提供公开配置、使用钉钉官方新版服务端 SDK 完成免登、维护 H5 会话、签发 AgentRun 短期访问凭证 |
 | AgentRun 业务接口 | AgentRun 域名 | 前端 H5 | 处理报价单上传、解析、字段识别、合同生成和钉盘上传 |
 
 前端与 BFF 同域，使用 Cookie 维护 H5 登录态；前端与 AgentRun 跨域，使用 `Authorization: Bearer <agentAccessToken>` 访问业务接口。
@@ -70,11 +70,11 @@ Content-Type: application/json
 | `DINGDRIVE_UPLOAD_FAILED` | 502 | 钉盘上传失败 |
 | `INTERNAL_ERROR` | 500 | 未分类服务端错误 |
 
-## 4. 钉钉 JSAPI 能力
+## 4. 钉钉客户端 JSAPI SDK 能力
 
 ### 4.1 获取免登授权码
 
-前端在钉钉客户端内调用钉钉 JSAPI 获取免登授权码。
+前端在钉钉客户端内调用钉钉客户端 JSAPI SDK 获取免登授权码。
 
 输入：
 
@@ -93,7 +93,7 @@ Content-Type: application/json
 
 ### 4.2 预览钉盘合同
 
-合同生成完成后，AgentRun 返回钉盘预览信息。前端优先使用钉钉客户端文件预览能力打开合同；若当前客户端能力不可用，可降级打开 `openUrl`。
+合同生成完成后，AgentRun 返回钉盘预览信息。前端优先使用钉钉客户端 JSAPI SDK 的文件预览能力打开合同；若当前客户端能力不可用，可降级打开 `openUrl`。
 
 输入：
 
@@ -159,7 +159,7 @@ GET /bff/auth/me
 POST /bff/auth/dingtalk-login
 ```
 
-用途：BFF 接收前端通过 JSAPI 获取的免登 `code`，服务端调用钉钉 OAPI 换取用户身份，写入 H5 会话，并返回 AgentRun 短期访问凭证。
+用途：BFF 接收前端通过钉钉客户端 JSAPI SDK 获取的免登 `code`，服务端使用钉钉官方新版服务端 SDK 换取用户身份，写入 H5 会话，并返回 AgentRun 短期访问凭证。
 
 请求：
 
@@ -332,7 +332,7 @@ Authorization: Bearer <agentAccessToken>
 Accept: text/event-stream
 ```
 
-用途：前端提交用户确认后的字段数据，AgentRun 生成合同、上传钉盘，并通过 SSE 返回过程事件。
+用途：前端提交用户确认后的字段数据，AgentRun 生成合同、使用钉盘官方新版 SDK 上传钉盘，并通过 SSE 返回过程事件。
 
 请求关键字段：
 
@@ -395,9 +395,17 @@ data: {"type":"RUN_FINISHED"}
 
 - `extractedData` 必须来自用户确认后的字段预览结果。
 - AgentRun 上传钉盘后只返回预览入口和必要文件元数据。
-- 前端使用钉钉 JSAPI 打开预览，不默认调用代理下载接口。
+- 前端使用钉钉客户端 JSAPI SDK 打开预览，不默认调用代理下载接口。
 
-## 7. 废弃或降级接口
+## 7. SDK 使用约束
+
+- 前端只使用钉钉客户端 JSAPI SDK 获取免登授权码和打开钉盘文件预览。
+- BFF 必须使用钉钉官方新版服务端 SDK 完成免登 code 换取、用户身份查询和必要的通讯录信息查询。
+- AgentRun 必须使用钉盘官方新版 SDK 上传合同、获取钉盘文件元数据和预览入口。
+- 新增实现不得继续引入旧版 OAPI/Storage API 手写 HTTP 调用；确需保留旧实现时，只能作为迁移期兼容路径，并必须在当前实现差距中标注。
+- SDK 抛出的异常必须转换为本文档定义的稳定错误码，不允许将 SDK 原始错误直接透传给前端。
+
+## 8. 废弃或降级接口
 
 以下接口不作为目标主路径：
 
@@ -408,11 +416,11 @@ data: {"type":"RUN_FINISHED"}
 | `POST /api/contracts/generate` | 调试/备用 | H5 主路径使用 AG-UI SSE 生成合同 |
 | BFF 代理 `/api`、`/ag-ui` | 过渡兼容 | 目标设计为前端带短期凭证直连 AgentRun 业务接口 |
 
-## 8. 当前实现差距
+## 9. 当前实现差距
 
 | 项目 | 目标接口设计 | 当前实现 | 待办 |
 | --- | --- | --- | --- |
-| 鉴权职责 | BFF 完成免登并签发 AgentRun 短期凭证 | AgentRun 仍处理 `/api/dingtalk/login` 和 Cookie 会话 | 将免登服务端逻辑迁移到 BFF，AgentRun 改为 Bearer 鉴权 |
+| 鉴权职责 | BFF 使用钉钉官方新版服务端 SDK 完成免登并签发 AgentRun 短期凭证 | AgentRun 仍处理 `/api/dingtalk/login` 和 Cookie 会话 | 将免登服务端逻辑迁移到 BFF，AgentRun 改为 Bearer 鉴权 |
 | 业务请求路径 | 前端直连 AgentRun | 当前前端通过同源 BFF 代理 `/api`、`/ag-ui` | 前端保存 `agentBaseUrl` 并直连业务接口 |
-| 合同交付 | 返回钉盘预览链接，前端 JSAPI 打开预览 | 当前支持代理下载或普通链接打开 | 明确钉盘预览 URL/SDK 参数，前端接入预览能力 |
+| 合同交付 | AgentRun 使用钉盘官方新版 SDK 返回钉盘预览链接，前端 JSAPI SDK 打开预览 | 当前支持代理下载或普通链接打开 | 明确钉盘预览 URL/SDK 参数，前端接入预览能力 |
 | 图片 OCR | AgentRun 解析图片报价单 | 当前抽取模块仍未接入图片 OCR | 接入阿里云 OCR 并补充接口测试 |
