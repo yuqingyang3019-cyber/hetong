@@ -419,7 +419,6 @@ def test_templates_exist() -> None:
 
 
 def test_upload_requires_login_when_enforced(monkeypatch) -> None:
-    monkeypatch.setenv("HETONG_SKIP_AUTH", "false")
     monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
     isolated = TestClient(app)
     response = isolated.post(
@@ -435,7 +434,6 @@ def test_upload_requires_login_when_enforced(monkeypatch) -> None:
 
 
 def test_agui_requires_login_when_enforced(monkeypatch) -> None:
-    monkeypatch.setenv("HETONG_SKIP_AUTH", "false")
     monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
     isolated = TestClient(app)
     response = isolated.post(
@@ -454,7 +452,6 @@ def test_agui_requires_login_when_enforced(monkeypatch) -> None:
 
 
 def test_agent_bearer_token_allows_upload_when_enforced(monkeypatch) -> None:
-    monkeypatch.setenv("HETONG_SKIP_AUTH", "false")
     monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
     isolated = TestClient(app)
 

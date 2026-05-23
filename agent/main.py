@@ -105,14 +105,6 @@ def _b64url_decode(s: str) -> bytes:
     return base64.urlsafe_b64decode(s.encode("ascii"))
 
 
-def skip_login_auth() -> bool:
-    if os.getenv("HETONG_SKIP_AUTH", "").lower() in {"1", "true", "yes"}:
-        return True
-    if not (os.getenv("APP_SESSION_SECRET") or "").strip():
-        return True
-    return False
-
-
 def session_signing_secret() -> str:
     return (os.getenv("APP_SESSION_SECRET") or "").strip()
 
@@ -153,8 +145,8 @@ def verify_signed_payload(raw: str, expected_type: str | None = None) -> dict[st
 
 
 def get_current_user(request: Request) -> dict[str, Any]:
-    if skip_login_auth():
-        return {"userid": "dev_skip", "name": "未鉴权开发模式", "skipAuth": True}
+    if not session_signing_secret():
+        raise HTTPException(status_code=500, detail={"code": "AUTH_CONFIG_MISSING", "message": "未配置 APP_SESSION_SECRET，无法校验访问凭证"})
     auth = request.headers.get("authorization") or ""
     scheme, _, token = auth.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
@@ -1042,7 +1034,7 @@ async def agui_agent(request: Request) -> StreamingResponse:
         raise
     forwarded = input_data.get("forwardedProps") if isinstance(input_data.get("forwardedProps"), dict) else {}
     if forwarded.get("healthCheck"):
-        current_user: dict[str, Any] = {"userid": "health_check", "name": "HealthCheck", "skipAuth": True}
+        current_user: dict[str, Any] = {"userid": "health_check", "name": "HealthCheck", "systemCheck": True}
     else:
         current_user = get_current_user(request)
     log_info(
