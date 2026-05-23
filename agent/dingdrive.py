@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import os
 from pathlib import Path
 from typing import Any
@@ -14,10 +13,12 @@ except ImportError:
 
 
 DEFAULT_CONFLICT_STRATEGY = "AUTO_RENAME"
+DEFAULT_DRIVE_SPACE_ID = "28905814322"
+DEFAULT_DRIVE_PARENT_ID = "7rdQPGYqjpJYrMZG10XH58akx1Z5NzL2"
 
 
-def _required_env(name: str) -> str:
-    value = (os.getenv(name) or "").strip()
+def _config_value(name: str, default: str = "") -> str:
+    value = (os.getenv(name) or default).strip()
     if not value:
         raise RuntimeError(f"未配置 {name}，无法上传合同到钉盘")
     return value
@@ -46,14 +47,6 @@ def _union_id(current_user: dict[str, Any] | None) -> str:
     if not value:
         raise RuntimeError("当前用户缺少 unionId，无法上传合同到钉盘")
     return value
-
-
-def _md5_hex(path: Path) -> str:
-    digest = hashlib.md5()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _storage_client() -> Any:
@@ -126,8 +119,8 @@ def _upload_with_header_signature(path: Path, upload_info: Any) -> None:
 
 def upload_contract_to_dingdrive(path: Path, file_name: str, current_user: dict[str, Any] | None) -> dict[str, Any]:
     """Upload a generated contract to the configured DingTalk team folder."""
-    parent_dentry_uuid = _required_env("DINGTALK_DRIVE_PARENT_ID")
-    configured_space_id = _required_env("DINGTALK_DRIVE_SPACE_ID")
+    parent_dentry_uuid = _config_value("DINGTALK_DRIVE_PARENT_ID", DEFAULT_DRIVE_PARENT_ID)
+    configured_space_id = _config_value("DINGTALK_DRIVE_SPACE_ID", DEFAULT_DRIVE_SPACE_ID)
     union_id = _union_id(current_user)
     size = path.stat().st_size
     token = dingtalk_oapi.get_app_access_token()
