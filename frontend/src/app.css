@@ -557,6 +557,183 @@ button:disabled {
   color: #991b1b;
 }
 
+.contract-preview-shell {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.contract-preview-paper {
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.03) 1px, transparent 1px),
+    linear-gradient(#ffffff, #ffffff);
+  background-size: 24px 100%, 100% 100%;
+  border: 1px solid rgba(148, 163, 184, 0.36);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 20px 52px rgba(15, 23, 42, 0.12);
+  color: #1e293b;
+  display: grid;
+  gap: var(--space-4);
+  margin: 0 auto;
+  max-width: 920px;
+  min-width: 0;
+  padding: var(--space-4);
+  width: 100%;
+}
+
+.contract-preview-header {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.32);
+  display: grid;
+  gap: 6px;
+  padding-bottom: var(--space-3);
+  text-align: center;
+}
+
+.contract-preview-header h3 {
+  color: var(--color-primary);
+  font-size: clamp(1.25rem, 3vw, 1.75rem);
+  letter-spacing: 0.08em;
+  margin: 0;
+}
+
+.contract-preview-kicker,
+.contract-preview-muted {
+  color: #64748b;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.contract-preview-kicker {
+  color: var(--color-accent);
+  letter-spacing: 0.16em;
+}
+
+.contract-preview-ghost {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  opacity: 0.56;
+}
+
+.ghost-line {
+  background: linear-gradient(90deg, rgba(148, 163, 184, 0.28), rgba(226, 232, 240, 0.2));
+  border-radius: 999px;
+  display: block;
+  height: 10px;
+}
+
+.ghost-line.is-wide {
+  width: 100%;
+}
+
+.ghost-line.is-mid {
+  width: 74%;
+}
+
+.ghost-line.is-short {
+  width: 48%;
+}
+
+.contract-preview-section {
+  border-top: 1px dashed rgba(148, 163, 184, 0.5);
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+}
+
+.contract-preview-section h4 {
+  color: var(--color-primary);
+  font-size: 1rem;
+  margin: 0;
+}
+
+.contract-preview-flow {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.contract-preview-field {
+  align-items: start;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-left: 4px solid rgba(5, 150, 105, 0.72);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+}
+
+.contract-preview-field.is-missing {
+  background: rgba(254, 242, 242, 0.72);
+  border-color: rgba(220, 38, 38, 0.22);
+  border-left-color: var(--color-destructive);
+}
+
+.contract-field-label {
+  color: #64748b;
+  font-size: 0.8125rem;
+  font-weight: 800;
+}
+
+.contract-field-value {
+  color: #047857;
+  font-size: 0.9375rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.contract-preview-field.is-missing .contract-field-value {
+  color: #991b1b;
+}
+
+.contract-preview-table-wrap {
+  overflow: auto;
+}
+
+.contract-preview-table {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  border-collapse: collapse;
+  min-width: 720px;
+  width: 100%;
+}
+
+.contract-preview-table th,
+.contract-preview-table td {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  font-size: 0.8125rem;
+  padding: 9px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.contract-preview-table th {
+  background: rgba(15, 108, 189, 0.08);
+  color: #334155;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.contract-preview-table td.is-recognized {
+  color: #047857;
+  font-weight: 700;
+}
+
+.contract-preview-table td.is-missing,
+.contract-preview-table-empty.is-missing {
+  color: #991b1b;
+  font-weight: 800;
+}
+
+.contract-preview-table-empty {
+  background: rgba(254, 242, 242, 0.76);
+  border: 1px dashed rgba(220, 38, 38, 0.28);
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+}
+
 .field-result-grid {
   display: grid;
   gap: var(--space-3);
@@ -863,6 +1040,27 @@ pre {
 
   .field-preview-card {
     gap: var(--space-3);
+  }
+
+  .contract-preview-shell {
+    justify-items: center;
+  }
+
+  .contract-preview-paper {
+    max-width: 980px;
+    padding: 44px 52px;
+  }
+
+  .contract-preview-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .contract-preview-ghost {
+    grid-column: 1 / -1;
+  }
+
+  .contract-preview-field {
+    grid-template-columns: minmax(120px, 0.45fr) minmax(0, 1fr);
   }
 
   .field-result-grid {

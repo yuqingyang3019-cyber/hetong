@@ -10,8 +10,7 @@ const fieldPreviewCard = document.querySelector("#fieldPreviewCard");
 const quoteTextPreview = document.querySelector("#quoteTextPreview");
 const extraInfoText = document.querySelector("#extraInfoText");
 const fieldPreviewSummary = document.querySelector("#fieldPreviewSummary");
-const recognizedFieldsList = document.querySelector("#recognizedFieldsList");
-const missingFieldsList = document.querySelector("#missingFieldsList");
+const contractPreviewEl = document.querySelector("#contractPreview");
 const templateType = document.querySelector("#templateType");
 const userBar = document.querySelector("#userBar");
 const userAvatar = document.querySelector("#userAvatar");
@@ -30,6 +29,15 @@ const accessModalMessage = document.querySelector("#accessModalMessage");
 
 const clientIdFromConfig = (window.__DINGTALK_CLIENT_ID__ || "").trim();
 const corpIdFromConfig = (window.__DINGTALK_CORP_ID__ || "").trim();
+const templateSchemaFiles = Object.freeze({
+  caigouhetong: "caigouhetong",
+  nonStandardNoInstall: "non-standard-no-install",
+  nonStandardWithInstall: "non-standard-with-install",
+  annualFramework: "annual-framework",
+  professionalSubcontract: "professional-subcontract",
+  laborSubcontract: "labor-subcontract",
+});
+const templateSchemaCache = new Map();
 
 let parsedUpload = null;
 let fieldPreview = null;
@@ -678,95 +686,162 @@ async function generateContract(uploadId, quoteText, extraInfo, extractedData) {
   }
 }
 
-function createFieldItem(label, value, tone = "normal") {
-  const item = document.createElement("div");
-  item.className = [
-    "field-result-item",
-    tone === "recognized" ? "is-recognized" : "",
-    tone === "missing" ? "is-missing" : "",
-  ].filter(Boolean).join(" ");
-  const labelEl = document.createElement("span");
-  labelEl.className = "field-result-label";
-  labelEl.textContent = label;
-  item.append(labelEl);
-
-  if (value) {
-    const valueEl = document.createElement("span");
-    valueEl.className = "field-result-value";
-    valueEl.textContent = value;
-    item.append(valueEl);
-  }
-
-  return item;
+function createEl(tagName, className, text) {
+  const el = document.createElement(tagName);
+  if (className) el.className = className;
+  if (text != null) el.textContent = text;
+  return el;
 }
 
-function renderEmptyFieldList(target, text) {
-  if (!target) return;
-  target.textContent = "";
-  const empty = document.createElement("p");
-  empty.className = "empty-state";
-  empty.textContent = text;
-  target.append(empty);
+async function loadTemplateSchema(templateValue) {
+  const schemaName = templateSchemaFiles[templateValue] || templateSchemaFiles.caigouhetong;
+  if (templateSchemaCache.has(schemaName)) return templateSchemaCache.get(schemaName);
+
+  const response = await fetch(`/template-schemas/${schemaName}.placeholders.json`, { cache: "no-cache" });
+  if (!response.ok) {
+    throw new Error(`读取模板字段契约失败：HTTP ${response.status}`);
+  }
+  const schema = await response.json();
+  templateSchemaCache.set(schemaName, schema);
+  return schema;
 }
 
-function renderRecognizedFields(fields = []) {
-  if (!recognizedFieldsList) return;
-  recognizedFieldsList.textContent = "";
-  if (!fields.length) {
-    renderEmptyFieldList(recognizedFieldsList, "暂未识别到字段。");
-    return;
-  }
+function getByDotPath(data, key) {
+  if (!data || typeof data !== "object") return null;
+  if (Object.prototype.hasOwnProperty.call(data, key)) return data[key];
+  return key.split(".").reduce((current, part) => (
+    current && typeof current === "object" ? current[part] : undefined
+  ), data);
+}
 
-  fields.forEach((field) => {
-    if (field.type === "table") {
-      const group = document.createElement("section");
-      group.className = "field-table-group";
-      const title = document.createElement("h4");
-      title.textContent = `${field.label || field.key}（${field.rowCount || 0} 行）`;
-      group.append(title);
-      (field.rows || []).forEach((row, index) => {
-        const rowEl = document.createElement("div");
-        rowEl.className = "field-table-row";
-        const rowTitle = document.createElement("strong");
-        rowTitle.textContent = `第 ${index + 1} 行`;
-        rowEl.append(rowTitle);
-        (row || []).forEach((cell) => {
-          rowEl.append(createFieldItem(cell.label || cell.key, cell.value || "", "recognized"));
-        });
-        group.append(rowEl);
-      });
-      recognizedFieldsList.append(group);
+function isBlankField(value) {
+  if (value == null) return true;
+  if (typeof value === "string") return !value.trim();
+  if (Array.isArray(value)) return value.length === 0;
+  if (typeof value === "object") return Object.values(value).every(isBlankField);
+  return false;
+}
+
+function formatFieldValue(value) {
+  if (isBlankField(value)) return "待填写";
+  if (Array.isArray(value) || typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function markPreviewStat(stats, value) {
+  if (isBlankField(value)) stats.missing += 1;
+  else stats.recognized += 1;
+}
+
+function createGhostParagraph(index) {
+  const paragraph = createEl("p", "contract-preview-ghost");
+  paragraph.append(
+    createEl("span", "ghost-line is-wide"),
+    createEl("span", index % 2 ? "ghost-line is-mid" : "ghost-line is-short"),
+  );
+  return paragraph;
+}
+
+function createContractField(label, value, stats, prefix = "") {
+  const missing = isBlankField(value);
+  markPreviewStat(stats, value);
+  const field = createEl("div", `contract-preview-field ${missing ? "is-missing" : "is-recognized"}`);
+  field.append(
+    createEl("span", "contract-field-label", `${prefix}${label}`),
+    createEl("span", "contract-field-value", formatFieldValue(value)),
+  );
+  return field;
+}
+
+function renderScalarPreview(paper, schema, extractedData, stats) {
+  const scalars = Array.isArray(schema?.scalars) ? schema.scalars : [];
+  if (!scalars.length) return;
+
+  const section = createEl("section", "contract-preview-section");
+  section.append(createEl("h4", "", "合同条款字段"));
+  const body = createEl("div", "contract-preview-flow");
+
+  scalars.forEach((field, index) => {
+    if (index > 0 && index % 8 === 0) body.append(createGhostParagraph(index));
+    body.append(createContractField(field.label || field.key, getByDotPath(extractedData, field.key), stats, `${index + 1}. `));
+  });
+
+  section.append(body);
+  paper.append(section);
+}
+
+function renderTablePreview(paper, schema, extractedData, stats) {
+  const tableEntries = Object.entries(schema?.tables || {});
+  if (!tableEntries.length) return;
+
+  tableEntries.forEach(([tableName, tableDef], tableIndex) => {
+    const columns = Array.isArray(tableDef?.columns) ? tableDef.columns : [];
+    const rowsValue = extractedData?.[tableName];
+    const rows = Array.isArray(rowsValue) ? rowsValue : [];
+    const section = createEl("section", "contract-preview-section");
+    section.append(createEl("h4", "", `${tableIndex + 1}. ${tableDef?.label || tableName}`));
+
+    if (!rows.length) {
+      stats.missing += 1;
+      const empty = createEl("div", "contract-preview-table-empty is-missing", "待填写：未识别到明细行");
+      section.append(empty);
+      paper.append(section);
       return;
     }
 
-    recognizedFieldsList.append(createFieldItem(field.label || field.key, field.value || "", "recognized"));
+    const tableWrap = createEl("div", "contract-preview-table-wrap");
+    const table = createEl("table", "contract-preview-table");
+    const thead = createEl("thead");
+    const headRow = createEl("tr");
+    columns.forEach((column) => headRow.append(createEl("th", "", column.label || column.key)));
+    thead.append(headRow);
+    table.append(thead);
+
+    const tbody = createEl("tbody");
+    rows.forEach((row) => {
+      const bodyRow = createEl("tr");
+      columns.forEach((column) => {
+        const value = row && typeof row === "object" ? row[column.key] : null;
+        markPreviewStat(stats, value);
+        const cell = createEl("td", isBlankField(value) ? "is-missing" : "is-recognized", formatFieldValue(value));
+        bodyRow.append(cell);
+      });
+      tbody.append(bodyRow);
+    });
+    table.append(tbody);
+    tableWrap.append(table);
+    section.append(tableWrap);
+    paper.append(section);
   });
 }
 
-function renderMissingFields(fields = []) {
-  if (!missingFieldsList) return;
-  missingFieldsList.textContent = "";
-  if (!fields.length) {
-    renderEmptyFieldList(missingFieldsList, "没有未识别字段。");
-    return;
+async function renderFieldPreview(preview) {
+  const schema = await loadTemplateSchema(templateType.value);
+  const extractedData = preview?.extractedData && typeof preview.extractedData === "object" ? preview.extractedData : {};
+  const stats = { recognized: 0, missing: 0 };
+
+  if (contractPreviewEl) {
+    contractPreviewEl.textContent = "";
+    const paper = createEl("article", "contract-preview-paper");
+    const title = createEl("header", "contract-preview-header");
+    title.append(
+      createEl("p", "contract-preview-kicker", "合同字段确认稿"),
+      createEl("h3", "", templateType.selectedOptions?.[0]?.textContent || schema?.template?.id || "合同模板"),
+      createEl("p", "contract-preview-muted", "以下内容按模板字段顺序生成，灰色文本为合同正文位置示意。"),
+    );
+    paper.append(title, createGhostParagraph(0));
+    renderScalarPreview(paper, schema, extractedData, stats);
+    renderTablePreview(paper, schema, extractedData, stats);
+    paper.append(createGhostParagraph(1));
+    contractPreviewEl.append(paper);
   }
 
-  fields.forEach((field) => {
-    missingFieldsList.append(createFieldItem(field.label || field.key, field.reason || "未识别", "missing"));
-  });
-}
-
-function renderFieldPreview(preview) {
-  const recognized = preview?.recognizedFields || [];
-  const missing = preview?.missingFields || [];
   if (fieldPreviewSummary) {
-    fieldPreviewSummary.className = `hint field-preview-summary${missing.length ? " has-missing" : " all-recognized"}`;
-    fieldPreviewSummary.textContent = missing.length
-      ? `已识别 ${recognized.length} 项，仍有 ${missing.length} 项未识别。请查看红色提示，未识别字段会在合同中显示为待填写。`
-      : `已识别 ${recognized.length} 项，没有未识别字段。请确认绿色字段结果后生成合同。`;
+    fieldPreviewSummary.className = `hint field-preview-summary${stats.missing ? " has-missing" : " all-recognized"}`;
+    fieldPreviewSummary.textContent = stats.missing
+      ? `按合同顺序展示：已识别 ${stats.recognized} 项，仍有 ${stats.missing} 项待填写。红色字段会在合同中保留待填写提示。`
+      : `按合同顺序展示：已识别 ${stats.recognized} 项，没有待填写字段。请确认预览后生成合同。`;
   }
-  renderRecognizedFields(recognized);
-  renderMissingFields(missing);
   if (fieldPreviewCard) fieldPreviewCard.hidden = false;
 }
 
@@ -775,10 +850,12 @@ function resetFieldPreview() {
   if (fieldPreviewCard) fieldPreviewCard.hidden = true;
   if (fieldPreviewSummary) {
     fieldPreviewSummary.className = "hint field-preview-summary";
-    fieldPreviewSummary.textContent = "请确认下方字段识别结果，未识别字段会在合同中标记为待填写。";
+    fieldPreviewSummary.textContent = "请按合同字段顺序确认识别结果，红色字段会在合同中显示为待填写。";
   }
-  renderEmptyFieldList(recognizedFieldsList, "等待字段识别。");
-  renderEmptyFieldList(missingFieldsList, "等待字段识别。");
+  if (contractPreviewEl) {
+    contractPreviewEl.textContent = "";
+    contractPreviewEl.append(createEl("p", "empty-state", "等待字段识别。"));
+  }
   updateActionAvailability();
 }
 
@@ -879,7 +956,7 @@ identifyFieldsButton?.addEventListener("click", async () => {
     setStatus("正在识别合同字段...");
     setProgress("review", "active", "正在结合报价单文本和额外信息识别字段。");
     fieldPreview = await previewQuoteFields(parsedUpload.id, quoteText, extraInfo);
-    renderFieldPreview(fieldPreview);
+    await renderFieldPreview(fieldPreview);
     appendLog(`字段识别完成：已识别 ${fieldPreview.recognizedFields?.length || 0} 项，未识别 ${fieldPreview.missingFields?.length || 0} 项\n`);
     setStatus(
       (fieldPreview.missingFields?.length || 0) > 0

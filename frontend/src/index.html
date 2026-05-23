@@ -93,19 +93,10 @@
       <section id="fieldPreviewCard" class="card field-preview-card" hidden>
         <div class="card-heading">
           <p class="eyebrow">字段识别结果</p>
-          <h2>确认识别字段</h2>
-          <p class="hint" id="fieldPreviewSummary">请确认下方字段识别结果，未识别字段会在合同中标记为待填写。</p>
+          <h2>合同式字段预览</h2>
+          <p class="hint" id="fieldPreviewSummary">请按合同字段顺序确认识别结果，红色字段会在合同中显示为待填写。</p>
         </div>
-        <div class="field-result-grid">
-          <section class="field-result-panel is-recognized">
-            <h3>已识别字段</h3>
-            <div id="recognizedFieldsList" class="field-list"></div>
-          </section>
-          <section class="field-result-panel is-missing">
-            <h3>未识别字段</h3>
-            <div id="missingFieldsList" class="field-list"></div>
-          </section>
-        </div>
+        <div id="contractPreview" class="contract-preview-shell"></div>
         <button id="generateButton" type="button" disabled>确认识别结果并生成合同</button>
       </section>
 
