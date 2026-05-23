@@ -7,7 +7,7 @@ from fastapi.testclient import TestClient
 
 from agent.contract.config import DRAFTS_DIR, UPLOADS_DIR, get_template_config
 from agent.contract.render import build_docxtpl_context
-from agent.main import app, generate_contract
+from agent.main import app, contract_download_payload, generate_contract
 
 
 client = TestClient(app)
@@ -254,6 +254,51 @@ def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None
     assert not (UPLOADS_DIR / f"{upload_id}.json").exists()
     assert not rendered_path.exists()
     assert not (DRAFTS_DIR / f"{draft['contractId']}.json").exists()
+
+
+def test_contract_download_payload_returns_dingdrive_post_download() -> None:
+    draft = {
+        "contractId": "contract_test",
+        "fileName": "20260523_供应商A.docx",
+        "dingDrive": {
+            "spaceId": "space1",
+            "fileId": "file1",
+            "fileName": "20260523_供应商A.docx",
+            "filePath": "/采购合同测试/20260523_供应商A.docx",
+        },
+    }
+
+    payload = contract_download_payload(draft, Mock())
+
+    assert payload["downloadPath"] == "/api/dingdrive/download"
+    assert payload["downloadMethod"] == "POST"
+    assert payload["downloadPayload"] == {
+        "spaceId": "space1",
+        "fileId": "file1",
+        "fileName": "20260523_供应商A.docx",
+    }
+
+
+def test_dingdrive_download_proxy_streams_file() -> None:
+    upstream = Mock()
+    upstream.iter_content.return_value = [b"docx-content"]
+    upstream.raise_for_status.return_value = None
+
+    with patch(
+        "agent.main.get_contract_download_info",
+        return_value={"resourceUrls": ["https://download.example/file"], "headers": {"x-test": "1"}},
+    ) as download_info, patch("agent.main.requests.get", return_value=upstream) as get:
+        response = client.post(
+            "/api/dingdrive/download",
+            json={"spaceId": "space1", "fileId": "file1", "fileName": "20260523_供应商A.docx"},
+        )
+
+    assert response.status_code == 200
+    assert response.content == b"docx-content"
+    assert "filename*=UTF-8''20260523_" in response.headers["content-disposition"]
+    download_info.assert_called_once()
+    get.assert_called_once_with("https://download.example/file", headers={"x-test": "1"}, stream=True, timeout=120)
+    upstream.close.assert_called_once()
 
 
 def test_generate_contract_keeps_process_files_when_dingdrive_fails() -> None:

@@ -282,6 +282,28 @@ async function downloadContractBlob(path, fileName = "contract.docx") {
   URL.revokeObjectURL(url);
 }
 
+async function downloadContractByPost(path, payload, fileName = "contract.docx") {
+  const response = await fetchAuth(apiUrl(path), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload || {}),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || body.error || "下载失败");
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = fileName || "contract.docx";
+  a.rel = "noopener";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 async function refreshAuthMe() {
   const response = await fetchAuth(apiUrl("/api/auth/me"));
   if (!response.ok) return null;
@@ -970,7 +992,12 @@ function createTaskDownloadNode(task) {
     button.addEventListener("click", async (event) => {
       event.stopPropagation();
       try {
-        await downloadContractBlob(payload.downloadPath, payload.fileName || `${payload.contractId || "contract"}.docx`);
+        const fileName = payload.fileName || payload.downloadPayload?.fileName || `${payload.contractId || "contract"}.docx`;
+        if (payload.downloadMethod === "POST") {
+          await downloadContractByPost(payload.downloadPath, payload.downloadPayload || {}, fileName);
+        } else {
+          await downloadContractBlob(payload.downloadPath, fileName);
+        }
       } catch (error) {
         appendTaskLog(task, `下载失败：${formatError(error)}\n`);
       }

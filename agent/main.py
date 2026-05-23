@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import requests
 from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -48,10 +48,11 @@ except ImportError:
 
 try:
     from . import dingtalk_oapi
-    from .dingdrive import upload_contract_to_dingdrive
+    from .dingdrive import get_contract_download_info, upload_contract_to_dingdrive
     from .storage_cleanup import remove_contract_files, remove_upload
 except ImportError:
     import dingtalk_oapi  # type: ignore[no-redef]
+    from dingdrive import get_contract_download_info  # type: ignore[no-redef]
     from dingdrive import upload_contract_to_dingdrive  # type: ignore[no-redef]
     from storage_cleanup import remove_contract_files, remove_upload  # type: ignore[no-redef]
 
@@ -248,12 +249,25 @@ def contract_download_payload(draft: dict[str, Any], request: Request, include_d
     contract_id = draft["contractId"]
     ding_drive = draft.get("dingDrive") if isinstance(draft.get("dingDrive"), dict) else None
     if ding_drive:
+        file_name = ding_drive.get("fileName") or draft.get("fileName") or f"{contract_id}.docx"
+        space_id = ding_drive.get("spaceId")
+        file_id = ding_drive.get("fileId")
         payload = {
             "contractId": contract_id,
-            "fileName": ding_drive.get("fileName") or draft.get("fileName") or f"{contract_id}.docx",
+            "fileName": file_name,
             "dingDrive": ding_drive,
             "downloadUrl": ding_drive.get("downloadUrl") or ding_drive.get("openUrl") or "",
         }
+        if space_id and file_id:
+            payload.update({
+                "downloadPath": "/api/dingdrive/download",
+                "downloadMethod": "POST",
+                "downloadPayload": {
+                    "spaceId": space_id,
+                    "fileId": file_id,
+                    "fileName": file_name,
+                },
+            })
         if ding_drive.get("downloadUrl"):
             payload["downloadUrl"] = ding_drive["downloadUrl"]
         if ding_drive.get("openUrl"):
@@ -868,6 +882,47 @@ def download_contract(contract_id: str, current_user: dict = Depends(get_current
     if not path.exists():
         raise HTTPException(status_code=404, detail="合同文件不存在")
     return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=path.name)
+
+
+@app.post("/api/dingdrive/download")
+def download_dingdrive_contract(payload: dict = Body(...), current_user: dict = Depends(get_current_user)) -> StreamingResponse:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="下载请求体格式不正确")
+    space_id = str(payload.get("spaceId") or "").strip()
+    file_id = str(payload.get("fileId") or "").strip()
+    file_name = safe_file_name(str(payload.get("fileName") or "contract.docx").strip() or "contract.docx")
+    if not space_id or not file_id:
+        raise HTTPException(status_code=400, detail="缺少钉盘 spaceId 或 fileId")
+
+    try:
+        download_info = get_contract_download_info(space_id, file_id, current_user)
+        resource_urls = download_info.get("resourceUrls") if isinstance(download_info, dict) else None
+        headers = download_info.get("headers") if isinstance(download_info, dict) else None
+        if not resource_urls:
+            raise HTTPException(status_code=502, detail="钉盘未返回下载地址")
+        response = requests.get(resource_urls[0], headers=headers or {}, stream=True, timeout=120)
+        response.raise_for_status()
+    except HTTPException:
+        raise
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"下载钉盘文件失败：{exc}") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    def iter_content() -> Any:
+        try:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            response.close()
+
+    encoded_name = quote(file_name)
+    return StreamingResponse(
+        iter_content(),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"},
+    )
 
 
 async def agui_stream(input_data: dict[str, Any], request: Request, current_user: dict[str, Any]) -> AsyncGenerator[bytes, None]:
