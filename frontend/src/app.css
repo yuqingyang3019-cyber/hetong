@@ -589,6 +589,32 @@ button:disabled {
   margin: 0;
 }
 
+.field-result-panel h3 {
+  align-items: center;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.field-result-panel h3::after {
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 3px 8px;
+}
+
+.field-result-panel.is-recognized h3::after {
+  background: rgba(5, 150, 105, 0.12);
+  color: #047857;
+  content: "绿色通过";
+}
+
+.field-result-panel.is-missing h3::after {
+  background: rgba(220, 38, 38, 0.12);
+  color: #991b1b;
+  content: "红色待补";
+}
+
 .field-list {
   display: grid;
   gap: var(--space-2);
@@ -819,6 +845,88 @@ pre {
 
   .step-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 960px) {
+  .page {
+    max-width: min(1180px, calc(100vw - 64px));
+    padding-bottom: var(--space-5);
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .hero {
+    display: grid;
+    gap: var(--space-3);
+  }
+
+  .field-preview-card {
+    gap: var(--space-3);
+  }
+
+  .field-result-grid {
+    align-items: start;
+    grid-template-columns: minmax(0, 2fr) minmax(300px, 0.95fr);
+  }
+
+  .field-result-panel {
+    align-content: start;
+    min-height: min(66vh, 680px);
+  }
+
+  .field-result-panel h3 {
+    border-bottom: 1px solid currentColor;
+    padding-bottom: var(--space-2);
+  }
+
+  .field-result-panel.is-recognized h3 {
+    color: #047857;
+  }
+
+  .field-result-panel.is-missing h3 {
+    color: #991b1b;
+  }
+
+  .field-list {
+    max-height: min(58vh, 620px);
+    overflow: auto;
+    padding-right: 4px;
+    scrollbar-gutter: stable;
+  }
+
+  .field-result-panel.is-recognized .field-list {
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  }
+
+  .field-result-panel.is-missing .field-list {
+    grid-template-columns: 1fr;
+  }
+
+  .field-result-item {
+    gap: 6px;
+    padding: 10px 12px;
+  }
+
+  .field-result-panel.is-recognized .field-result-item:not(.is-missing) {
+    grid-template-columns: minmax(92px, 0.45fr) minmax(0, 1fr);
+  }
+
+  .field-table-group {
+    grid-column: 1 / -1;
+    padding: var(--space-3);
+  }
+
+  .field-table-row {
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(5, 150, 105, 0.14);
+    border-radius: var(--radius-sm);
+    grid-template-columns: minmax(56px, max-content) repeat(auto-fit, minmax(180px, 1fr));
+    padding: var(--space-2);
+  }
+
+  .field-table-row strong {
+    align-self: center;
   }
 }
 
