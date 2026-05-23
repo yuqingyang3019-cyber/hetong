@@ -1,8 +1,8 @@
-const http = require("node:http");
-const https = require("node:https");
-const { createReadStream, existsSync, statSync } = require("node:fs");
-const { extname, join, normalize } = require("node:path");
-const crypto = require("node:crypto");
+const http = require("http");
+const https = require("https");
+const { createReadStream, existsSync, statSync } = require("fs");
+const { extname, join, normalize } = require("path");
+const crypto = require("crypto");
 const dingtalkOauth = require("@alicloud/dingtalk/oauth2_1_0");
 const OpenApi = require("@alicloud/openapi-client");
 
