@@ -78,7 +78,10 @@ resources:
         PORT: "8000"
         AGENT_ENDPOINT: ${resources.agent.output.agent.endpoints.0.url}
         DINGTALK_CLIENT_ID: ${env("DINGTALK_CLIENT_ID")}
+        DINGTALK_CLIENT_SECRET: ${env("DINGTALK_CLIENT_SECRET")}
         DINGTALK_CORP_ID: ${env("DINGTALK_CORP_ID")}
+        APP_SESSION_SECRET: ${env("APP_SESSION_SECRET")}
+        AGENT_TOKEN_TTL_SEC: "1800"
       customDomain:
         protocol: HTTP
         route:

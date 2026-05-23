@@ -191,12 +191,16 @@ def upload_contract_to_dingdrive(path: Path, file_name: str, current_user: dict[
     file_id = _get_value(dentry, "id", "fileId", "file_id")
     file_path = _get_value(dentry, "path", "filePath", "file_path")
     space_id = _get_value(dentry, "spaceId", "space_id") or configured_space_id
+    preview_url = _get_value(dentry, "previewUrl", "preview_url", "openUrl", "open_url", "url")
+    open_url = _get_value(dentry, "openUrl", "open_url", "previewUrl", "preview_url", "url")
     return {
         "spaceId": space_id,
         "parentId": parent_dentry_uuid,
         "fileId": file_id,
         "fileName": _get_value(dentry, "name", "fileName", "file_name") or file_name,
         "filePath": file_path,
+        "previewUrl": preview_url,
+        "openUrl": open_url,
         "raw": dentry,
     }
 

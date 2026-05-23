@@ -30,7 +30,7 @@ try:
         get_template_config,
         safe_file_name,
     )
-    from .contract.extract import extract_text_from_file
+    from .contract.extract import extract_text_from_file, parser_metadata_for_file
     from .contract.llm import extract_template_render_data
     from .contract.render import merge_render_data, render_contract
 except ImportError:
@@ -42,16 +42,14 @@ except ImportError:
         get_template_config,
         safe_file_name,
     )
-    from contract.extract import extract_text_from_file
+    from contract.extract import extract_text_from_file, parser_metadata_for_file
     from contract.llm import extract_template_render_data
     from contract.render import merge_render_data, render_contract
 
 try:
-    from . import dingtalk_oapi
     from .dingdrive import get_contract_download_info, upload_contract_to_dingdrive
     from .storage_cleanup import remove_contract_files, remove_upload
 except ImportError:
-    import dingtalk_oapi  # type: ignore[no-redef]
     from dingdrive import get_contract_download_info  # type: ignore[no-redef]
     from dingdrive import upload_contract_to_dingdrive  # type: ignore[no-redef]
     from storage_cleanup import remove_contract_files, remove_upload  # type: ignore[no-redef]
@@ -72,8 +70,28 @@ if _allowed_origins or _origin_regex:
         expose_headers=["*"],
     )
 
-SESSION_COOKIE_NAME = "hetong_session"
-SESSION_TTL_SEC = int(os.getenv("SESSION_TTL_SEC", str(7 * 24 * 3600)))
+
+def error_payload(code: str, message: str, detail: Any = None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"ok": False, "code": code, "message": message}
+    if detail is not None and detail != message:
+        payload["detail"] = detail
+    return payload
+
+
+@app.exception_handler(HTTPException)
+async def json_http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    detail = exc.detail
+    if isinstance(detail, dict):
+        code = str(detail.get("code") or "HTTP_ERROR")
+        message = str(detail.get("message") or detail.get("detail") or "请求失败")
+        extra = detail.get("detail")
+    else:
+        code = "HTTP_ERROR"
+        message = str(detail or "请求失败")
+        extra = None
+    return JSONResponse(error_payload(code, message, extra), status_code=exc.status_code, headers=exc.headers)
+
+AGENT_TOKEN_TYPE = "agent"
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -109,7 +127,7 @@ def sign_session_payload(payload: dict[str, Any]) -> str:
     return f"{body_b64}.{sig}"
 
 
-def verify_session_cookie(raw: str) -> dict[str, Any] | None:
+def verify_signed_payload(raw: str, expected_type: str | None = None) -> dict[str, Any] | None:
     secret = session_signing_secret()
     if not secret or "." not in raw:
         return None
@@ -123,6 +141,8 @@ def verify_session_cookie(raw: str) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict):
         return None
+    if expected_type and payload.get("typ") != expected_type:
+        return None
     try:
         exp = float(payload.get("exp") or 0)
     except (TypeError, ValueError):
@@ -132,44 +152,18 @@ def verify_session_cookie(raw: str) -> dict[str, Any] | None:
     return payload
 
 
-def is_request_https(request: Request) -> bool:
-    xf = (request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
-    if xf == "https":
-        return True
-    return request.url.scheme == "https"
-
-
 def get_current_user(request: Request) -> dict[str, Any]:
     if skip_login_auth():
         return {"userid": "dev_skip", "name": "未鉴权开发模式", "skipAuth": True}
-    raw = request.cookies.get(SESSION_COOKIE_NAME)
-    if not raw:
-        raise HTTPException(status_code=401, detail="未登录或登录已过期，请在钉钉内重新打开应用")
-    payload = verify_session_cookie(raw)
+    auth = request.headers.get("authorization") or ""
+    scheme, _, token = auth.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(status_code=401, detail={"code": "AUTH_REQUIRED", "message": "缺少 AgentRun 访问凭证"})
+    payload = verify_signed_payload(token.strip(), AGENT_TOKEN_TYPE)
     if not payload:
-        raise HTTPException(status_code=401, detail="登录态无效，请重新登录")
+        raise HTTPException(status_code=401, detail={"code": "AGENT_TOKEN_EXPIRED", "message": "AgentRun 访问凭证无效或已过期"})
     return payload
 
-
-def public_user_from_session(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "userid": payload.get("userid"),
-        "name": payload.get("name"),
-        "nick": payload.get("nick") or None,
-        "mobile": payload.get("mobile"),
-        "title": payload.get("title"),
-        "jobNumber": payload.get("job_number"),
-        "email": payload.get("email"),
-        "avatar": payload.get("avatar"),
-        "deptIds": payload.get("dept_ids"),
-        "deptNames": payload.get("dept_names"),
-        "unionid": payload.get("unionid"),
-    }
-
-
-def dingtalk_configured() -> bool:
-    key, secret = dingtalk_oapi.get_app_credentials()
-    return bool(key and secret)
 
 agentrun_logger = logging.getLogger("agentrun")
 if not agentrun_logger.handlers:
@@ -245,33 +239,28 @@ def content_type_for_file(path: Path) -> str:
     return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
 
 
-def contract_download_payload(draft: dict[str, Any], request: Request, include_data_url: bool = False) -> dict[str, Any]:
+def contract_download_payload(draft: dict[str, Any], request: Request) -> dict[str, Any]:
     contract_id = draft["contractId"]
     ding_drive = draft.get("dingDrive") if isinstance(draft.get("dingDrive"), dict) else None
     if ding_drive:
         file_name = ding_drive.get("fileName") or draft.get("fileName") or f"{contract_id}.docx"
-        space_id = ding_drive.get("spaceId")
-        file_id = ding_drive.get("fileId")
+        preview_url = str(ding_drive.get("previewUrl") or ding_drive.get("openUrl") or "").strip()
+        open_url = str(ding_drive.get("openUrl") or ding_drive.get("previewUrl") or "").strip()
         payload = {
             "contractId": contract_id,
             "fileName": file_name,
             "dingDrive": ding_drive,
-            "downloadUrl": ding_drive.get("downloadUrl") or ding_drive.get("openUrl") or "",
+            "preview": {
+                "type": "dingtalk_drive",
+                "previewUrl": preview_url,
+                "openUrl": open_url,
+                "downloadProvidedByPreview": True,
+            },
         }
-        if space_id and file_id:
-            payload.update({
-                "downloadPath": "/api/dingdrive/download",
-                "downloadMethod": "POST",
-                "downloadPayload": {
-                    "spaceId": space_id,
-                    "fileId": file_id,
-                    "fileName": file_name,
-                },
-            })
-        if ding_drive.get("downloadUrl"):
-            payload["downloadUrl"] = ding_drive["downloadUrl"]
-        if ding_drive.get("openUrl"):
-            payload["openUrl"] = ding_drive["openUrl"]
+        if open_url:
+            payload["openUrl"] = open_url
+        if preview_url:
+            payload["previewUrl"] = preview_url
         if ding_drive.get("filePath"):
             payload["filePath"] = ding_drive["filePath"]
         return payload
@@ -279,17 +268,14 @@ def contract_download_payload(draft: dict[str, Any], request: Request, include_d
     download_path = contract_download_path(contract_id)
     payload = {
         "contractId": contract_id,
-        "downloadUrl": absolute_url(request, download_path),
-        "downloadPath": download_path,
+        "preview": {
+            "type": "local_contract",
+            "previewUrl": "",
+            "openUrl": absolute_url(request, download_path),
+            "downloadProvidedByPreview": False,
+        },
+        "openUrl": absolute_url(request, download_path),
     }
-    contract_path = Path(str(draft.get("contractPath") or ""))
-    if include_data_url and contract_path.exists():
-        content_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        encoded = base64.b64encode(contract_path.read_bytes()).decode("ascii")
-        payload.update({
-            "fileName": contract_path.name,
-            "downloadDataUrl": f"data:{content_type};base64,{encoded}",
-        })
     return payload
 
 
@@ -514,18 +500,21 @@ def extract_agui_attachment(input_data: dict[str, Any]) -> dict[str, Any] | None
     return None
 
 
-def extract_quote_text(upload_id: str) -> tuple[dict[str, Any], str]:
+def extract_quote_text(upload_id: str) -> tuple[dict[str, Any], str, dict[str, Any]]:
     upload = load_upload(upload_id)
     extract_start = time.perf_counter()
     quote_text = extract_text_from_file(Path(upload["path"]), upload.get("mimeType", ""))
+    parser = parser_metadata_for_file(Path(upload["path"]), upload.get("mimeType", ""))
     log_info(
         "quote text extracted",
         uploadId=upload_id,
         fileName=upload.get("fileName"),
+        parser=parser.get("type"),
+        ocrUsed=parser.get("ocrUsed"),
         quoteTextLength=len(quote_text),
         elapsedMs=elapsed_ms(extract_start),
     )
-    return upload, quote_text
+    return upload, quote_text, parser
 
 
 def generate_contract(
@@ -569,7 +558,7 @@ def generate_contract(
                 quoteTextLength=len(quote_text),
             )
         else:
-            upload, quote_text = extract_quote_text(upload_id)
+            upload, quote_text, _parser = extract_quote_text(upload_id)
 
         if has_confirmed_data:
             extracted = extracted_data or {}
@@ -714,7 +703,7 @@ async def upload_file(
             uploadMode=uploadMode,
             elapsedMs=elapsed_ms(start),
         )
-        return {**record, "downloadUrl": upload_download_path(record["fileName"])}
+        return {"ok": True, **record}
     except HTTPException:
         raise
     except Exception as exc:
@@ -750,9 +739,10 @@ async def parse_quote_text_api(
         templateType=template_type,
         dingtalkUserId=current_user.get("userid"),
     )
-    upload, quote_text = extract_quote_text(upload_id)
+    upload, quote_text, parser = extract_quote_text(upload_id)
     config = get_template_config(template_type)
     response = {
+        "ok": True,
         "uploadId": upload_id,
         "originalName": upload.get("originalName"),
         "fileName": upload.get("fileName"),
@@ -760,6 +750,7 @@ async def parse_quote_text_api(
         "templateType": config.type,
         "quoteText": quote_text,
         "textLength": len(quote_text),
+        "parser": parser,
     }
     log_info(
         "quote text api request finished",
@@ -801,7 +792,7 @@ async def preview_quote_fields_api(
     )
     upload = load_upload(upload_id)
     if not quote_text:
-        upload, quote_text = extract_quote_text(upload_id)
+        upload, quote_text, _parser = extract_quote_text(upload_id)
     config = get_template_config(template_type)
 
     llm_start = time.perf_counter()
@@ -821,6 +812,7 @@ async def preview_quote_fields_api(
     )
 
     return {
+        "ok": True,
         "uploadId": upload_id,
         "originalName": upload.get("originalName"),
         "templateType": config.type,
@@ -1009,7 +1001,7 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
             confirmedExtractedData=bool(extracted_data),
         )
         draft = await asyncio.to_thread(generate_contract, upload_id, template_type, quote_text, extra_info, extracted_data, current_user)
-        download_payload = contract_download_payload(draft, request, include_data_url=False)
+        download_payload = contract_download_payload(draft, request)
         yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "合同已生成并已存入钉盘。"})
         yield sse_event({"type": "CUSTOM", "name": "contract_generated", "value": download_payload})
         yield sse_event({"type": "TEXT_MESSAGE_END", "messageId": message_id})
@@ -1019,8 +1011,7 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
             "runId": run_id,
             "result": {
                 "contractId": download_payload["contractId"],
-                "downloadUrl": download_payload["downloadUrl"],
-                "downloadPath": download_payload.get("downloadPath"),
+                "preview": download_payload.get("preview"),
                 "openUrl": download_payload.get("openUrl"),
                 "dingDrive": download_payload.get("dingDrive"),
             },
@@ -1062,131 +1053,6 @@ async def agui_agent(request: Request) -> StreamingResponse:
         **summarize_agui_input(input_data),
     )
     return StreamingResponse(agui_stream(input_data, request, current_user), media_type="text/event-stream")
-
-
-@app.get("/api/auth/status")
-def auth_status() -> dict:
-    return {
-        "ok": True,
-        "skipAuth": skip_login_auth(),
-        "dingtalkConfigured": dingtalk_configured(),
-        "corpId": (os.getenv("DINGTALK_CORP_ID") or "").strip() or None,
-    }
-
-
-@app.get("/api/auth/me")
-def auth_me(request: Request) -> dict:
-    if skip_login_auth():
-        return {
-            "ok": True,
-            "skipAuth": True,
-            "loggedIn": True,
-            "user": {"userid": "dev_skip", "name": "开发模式（未鉴权）"},
-        }
-    raw = request.cookies.get(SESSION_COOKIE_NAME)
-    payload = verify_session_cookie(raw) if raw else None
-    if not payload:
-        return {"ok": True, "skipAuth": False, "loggedIn": False, "user": None}
-    return {"ok": True, "skipAuth": False, "loggedIn": True, "user": public_user_from_session(payload)}
-
-
-@app.post("/api/dingtalk/login")
-def dingtalk_login(request: Request, payload: dict = Body(...)) -> JSONResponse:
-    code = payload.get("code")
-    corp_id = (payload.get("corpId") or os.getenv("DINGTALK_CORP_ID") or "").strip()
-    configured = dingtalk_configured()
-
-    if not configured:
-        return JSONResponse({
-            "ok": True,
-            "configured": False,
-            "codeReceived": bool(code),
-            "corpId": corp_id or None,
-            "message": "未配置钉钉 Client ID/Client Secret/CorpId，已跳过服务端免登",
-        })
-
-    if not code:
-        raise HTTPException(status_code=400, detail="缺少免登授权码 code")
-
-    try:
-        access_token = dingtalk_oapi.get_app_access_token(corp_id or None)
-        info_by_code = dingtalk_oapi.get_userid_by_login_code(access_token, str(code))
-        userid = str(info_by_code.get("userid") or "").strip()
-        if not userid:
-            raise HTTPException(status_code=502, detail="钉钉未返回 userid")
-        nick_from_code = info_by_code.get("name")
-        detail = dingtalk_oapi.get_user_detail(access_token, userid)
-        dept_ids = dingtalk_oapi.parse_dept_id_list(detail.get("dept_id_list"))
-        dept_names: list[str] = []
-        for dept_id in dept_ids:
-            dept_name = dingtalk_oapi.get_department_name(access_token, dept_id)
-            if dept_name:
-                dept_names.append(dept_name)
-
-        exp = time.time() + SESSION_TTL_SEC
-        session_payload: dict[str, Any] = {
-            "exp": exp,
-            "userid": userid,
-            "name": (detail.get("name") or nick_from_code or userid),
-            "nick": (detail.get("nick") or nick_from_code or ""),
-            "mobile": str(detail.get("mobile") or ""),
-            "title": str(detail.get("title") or ""),
-            "job_number": str(detail.get("job_number") or ""),
-            "email": str(detail.get("email") or ""),
-            "avatar": str(detail.get("avatar") or info_by_code.get("avatar") or ""),
-            "dept_ids": dept_ids,
-            "dept_names": dept_names,
-            "unionid": str(detail.get("unionid") or info_by_code.get("unionid") or ""),
-        }
-        merged_public = dingtalk_oapi.enrich_user_profile(
-            {
-                "userid": userid,
-                "name": session_payload["name"],
-                "nick": session_payload["nick"] or None,
-                "mobile": session_payload["mobile"] or None,
-                "title": session_payload["title"] or None,
-                "jobNumber": session_payload["job_number"] or None,
-                "email": session_payload["email"] or None,
-                "avatar": session_payload["avatar"] or None,
-                "deptIds": dept_ids,
-                "deptNames": dept_names,
-                "unionid": session_payload["unionid"] or None,
-            }
-        )
-
-        body: dict[str, Any] = {
-            "ok": True,
-            "configured": True,
-            "corpId": corp_id or None,
-            "sessionExpiresAt": int(exp * 1000),
-            "user": {k: v for k, v in merged_public.items() if v is not None},
-        }
-
-        response = JSONResponse(body)
-        if not skip_login_auth():
-            try:
-                cookie_value = sign_session_payload(session_payload)
-            except RuntimeError as exc:
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
-            secure = is_request_https(request)
-            response.set_cookie(
-                key=SESSION_COOKIE_NAME,
-                value=cookie_value,
-                max_age=SESSION_TTL_SEC,
-                httponly=True,
-                secure=secure,
-                samesite="none" if secure else "lax",
-                path="/",
-            )
-        return response
-    except HTTPException:
-        raise
-    except RuntimeError as exc:
-        log_warning("dingtalk login failed", error=str(exc))
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    except requests.RequestException as exc:
-        log_warning("dingtalk login http failed", error=str(exc))
-        raise HTTPException(status_code=502, detail=f"调用钉钉接口失败：{exc}") from exc
 
 
 if __name__ == "__main__":

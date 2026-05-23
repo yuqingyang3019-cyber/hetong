@@ -7,10 +7,21 @@ from fastapi.testclient import TestClient
 
 from agent.contract.config import DRAFTS_DIR, UPLOADS_DIR, get_template_config
 from agent.contract.render import build_docxtpl_context
-from agent.main import app, contract_download_payload, generate_contract
+from agent.main import app, contract_download_payload, generate_contract, sign_session_payload
 
 
 client = TestClient(app)
+
+
+def agent_auth_header(userid: str = "uid1", unionid: str = "union-x") -> dict[str, str]:
+    token = sign_session_payload({
+        "typ": "agent",
+        "exp": 4_102_444_800,
+        "userid": userid,
+        "name": "张三",
+        "unionid": unionid,
+    })
+    return {"Authorization": f"Bearer {token}"}
 
 
 def test_health() -> None:
@@ -32,11 +43,7 @@ def test_upload_and_download_txt() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["id"]
-    assert body["downloadUrl"].endswith("/download")
-
-    download = client.get(body["downloadUrl"])
-    assert download.status_code == 200
-    assert download.text == "hello quote"
+    assert body["ok"] is True
 
 
 def test_upload_json_base64_and_download_txt() -> None:
@@ -52,10 +59,7 @@ def test_upload_json_base64_and_download_txt() -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["size"] == len(b"hello quote")
-
-    download = client.get(body["downloadUrl"])
-    assert download.status_code == 200
-    assert download.text == "hello quote"
+    assert body["ok"] is True
 
 
 def test_parse_uploaded_quote_text() -> None:
@@ -82,6 +86,32 @@ def test_parse_uploaded_quote_text() -> None:
     assert body["originalName"] == "quote.txt"
     assert body["quoteText"] == "报价单文本"
     assert body["textLength"] == len("报价单文本")
+    assert body["parser"] == {"type": "text", "ocrUsed": False}
+
+
+def test_parse_uploaded_image_uses_ocr() -> None:
+    upload = client.post(
+        "/api/uploads",
+        json={
+            "originalName": "quote.png",
+            "mimeType": "image/png",
+            "size": len(b"image-bytes"),
+            "data": base64.b64encode(b"image-bytes").decode("ascii"),
+        },
+    )
+    assert upload.status_code == 200
+    upload_body = upload.json()
+
+    with patch("agent.contract.extract.extract_image_text", return_value="OCR 报价单文本"):
+        response = client.post(
+            f"/api/uploads/{upload_body['id']}/quote-text",
+            json={"templateType": "caigouhetong"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quoteText"] == "OCR 报价单文本"
+    assert body["parser"] == {"type": "image", "ocrUsed": True}
 
 
 def test_upload_rejects_empty_file() -> None:
@@ -95,7 +125,7 @@ def test_upload_rejects_empty_file() -> None:
         },
     )
     assert response.status_code == 400
-    assert "文件内容" in response.json()["detail"]
+    assert "文件内容" in response.json()["message"]
 
 
 def test_agui_health_check() -> None:
@@ -256,7 +286,7 @@ def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None
     assert not (DRAFTS_DIR / f"{draft['contractId']}.json").exists()
 
 
-def test_contract_download_payload_returns_dingdrive_post_download() -> None:
+def test_contract_download_payload_returns_dingdrive_preview() -> None:
     draft = {
         "contractId": "contract_test",
         "fileName": "20260523_供应商A.docx",
@@ -265,18 +295,15 @@ def test_contract_download_payload_returns_dingdrive_post_download() -> None:
             "fileId": "file1",
             "fileName": "20260523_供应商A.docx",
             "filePath": "/采购合同测试/20260523_供应商A.docx",
+            "previewUrl": "https://preview.example/file1",
         },
     }
 
     payload = contract_download_payload(draft, Mock())
 
-    assert payload["downloadPath"] == "/api/dingdrive/download"
-    assert payload["downloadMethod"] == "POST"
-    assert payload["downloadPayload"] == {
-        "spaceId": "space1",
-        "fileId": "file1",
-        "fileName": "20260523_供应商A.docx",
-    }
+    assert payload["preview"]["type"] == "dingtalk_drive"
+    assert payload["preview"]["previewUrl"] == "https://preview.example/file1"
+    assert "downloadPath" not in payload
 
 
 def test_dingdrive_download_proxy_streams_file() -> None:
@@ -391,24 +418,6 @@ def test_templates_exist() -> None:
     assert Path("agent/contract/templates/zhanweifu/caigouhetong.placeholders.json").exists()
 
 
-def test_auth_status_skip_when_no_session_secret() -> None:
-    isolated = TestClient(app)
-    response = isolated.get("/api/auth/status")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["ok"] is True
-    assert body["skipAuth"] is True
-
-
-def test_auth_me_skip_mode() -> None:
-    isolated = TestClient(app)
-    response = isolated.get("/api/auth/me")
-    assert response.status_code == 200
-    body = response.json()
-    assert body["skipAuth"] is True
-    assert body["loggedIn"] is True
-
-
 def test_upload_requires_login_when_enforced(monkeypatch) -> None:
     monkeypatch.setenv("HETONG_SKIP_AUTH", "false")
     monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
@@ -444,43 +453,14 @@ def test_agui_requires_login_when_enforced(monkeypatch) -> None:
     assert response.status_code == 401
 
 
-def test_dingtalk_login_sets_session_and_allows_upload(monkeypatch) -> None:
+def test_agent_bearer_token_allows_upload_when_enforced(monkeypatch) -> None:
     monkeypatch.setenv("HETONG_SKIP_AUTH", "false")
     monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
-    monkeypatch.setenv("DINGTALK_CLIENT_ID", "cid")
-    monkeypatch.setenv("DINGTALK_CLIENT_SECRET", "csecret")
-    monkeypatch.setenv("DINGTALK_CORP_ID", "corp")
-
-    from agent import dingtalk_oapi
-
-    dingtalk_oapi.clear_token_cache()
     isolated = TestClient(app)
-    with patch.object(dingtalk_oapi, "get_app_access_token", return_value="tok") as app_token, patch.object(
-        dingtalk_oapi,
-        "get_userid_by_login_code",
-        return_value={"userid": "uid1", "name": "Nick", "unionid": "union-x"},
-    ), patch.object(
-        dingtalk_oapi,
-        "get_user_detail",
-        return_value={
-            "userid": "uid1",
-            "name": "张三",
-            "mobile": "13800000000",
-            "title": "工程师",
-            "dept_id_list": [10],
-        },
-    ), patch.object(dingtalk_oapi, "get_department_name", return_value="研发部"):
-        login = isolated.post("/api/dingtalk/login", json={"code": "tmpcode", "corpId": "corp-x"})
-
-    assert login.status_code == 200
-    app_token.assert_called_once_with("corp-x")
-    login_body = login.json()
-    assert login_body["ok"] is True
-    assert login_body["user"]["name"] == "张三"
-    assert isolated.cookies.get("hetong_session")
 
     upload = isolated.post(
         "/api/uploads",
+        headers=agent_auth_header(),
         json={
             "originalName": "quote.txt",
             "mimeType": "text/plain",
@@ -489,7 +469,6 @@ def test_dingtalk_login_sets_session_and_allows_upload(monkeypatch) -> None:
         },
     )
     assert upload.status_code == 200
-    dingtalk_oapi.clear_token_cache()
 
 
 def test_dingtalk_login_code_uses_h5_microapp_code(monkeypatch) -> None:

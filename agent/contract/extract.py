@@ -125,6 +125,62 @@ def extract_pdf_text(path: Path) -> str:
     return result
 
 
+def extract_image_text(path: Path) -> str:
+    try:
+        from alibabacloud_ocr_api20210707.client import Client as OcrClient
+        from alibabacloud_ocr_api20210707 import models as ocr_models
+        from alibabacloud_tea_openapi import models as open_api_models
+        from alibabacloud_tea_util import models as util_models
+    except ImportError as exc:
+        raise ValueError("未安装阿里云 OCR SDK，无法识别图片报价单") from exc
+
+    import base64
+    import os
+
+    access_key_id = (os.getenv("ALIYUN_ACCESS_KEY_ID") or "").strip()
+    access_key_secret = (os.getenv("ALIYUN_ACCESS_KEY_SECRET") or "").strip()
+    endpoint = (os.getenv("ALIYUN_OCR_ENDPOINT") or "ocr-api.cn-hangzhou.aliyuncs.com").strip()
+    region_id = (os.getenv("ALIYUN_OCR_REGION_ID") or "cn-hangzhou").strip()
+    if not access_key_id or not access_key_secret:
+        raise ValueError("未配置阿里云 OCR 访问凭证")
+
+    config = open_api_models.Config(
+        access_key_id=access_key_id,
+        access_key_secret=access_key_secret,
+        endpoint=endpoint,
+        region_id=region_id,
+    )
+    client = OcrClient(config)
+    body = base64.b64encode(path.read_bytes()).decode("ascii")
+    request = ocr_models.RecognizeGeneralRequest(body=body)
+    response = client.recognize_general_with_options(request, util_models.RuntimeOptions())
+    raw = response.to_map() if hasattr(response, "to_map") else {}
+    data = raw.get("body") if isinstance(raw.get("body"), dict) else raw
+    content = data.get("Data") or data.get("data") or data.get("content") if isinstance(data, dict) else None
+    if isinstance(content, str):
+        text = content.strip()
+    elif isinstance(content, dict):
+        text = "\n".join(str(value).strip() for value in content.values() if str(value).strip())
+    else:
+        text = ""
+    if not text:
+        raise ValueError("图片 OCR 未识别到有效文本")
+    return text
+
+
+def parser_metadata_for_file(path: Path, mime_type: str = "") -> dict[str, Any]:
+    lower = path.name.lower()
+    if lower.endswith((".xlsx", ".xls")) or "spreadsheet" in mime_type or "ms-excel" in mime_type:
+        return {"type": "excel", "ocrUsed": False}
+    if lower.endswith(".pdf") or mime_type == "application/pdf":
+        return {"type": "pdf", "ocrUsed": False}
+    if lower.endswith((".jpg", ".jpeg", ".png")) or mime_type.startswith("image/"):
+        return {"type": "image", "ocrUsed": True}
+    if mime_type.startswith("text/") or lower.endswith(".txt"):
+        return {"type": "text", "ocrUsed": False}
+    return {"type": "unknown", "ocrUsed": False}
+
+
 def extract_text_from_file(path: Path, mime_type: str = "") -> str:
     lower = path.name.lower()
     if mime_type.startswith("text/") or lower.endswith(".txt"):
@@ -136,4 +192,6 @@ def extract_text_from_file(path: Path, mime_type: str = "") -> str:
         return extract_excel_text(path)
     if lower.endswith(".pdf") or mime_type == "application/pdf":
         return extract_pdf_text(path)
-    raise ValueError("当前 Python H5 版本暂不支持图片 OCR，请先上传 PDF、Excel 或 TXT")
+    if lower.endswith((".jpg", ".jpeg", ".png")) or mime_type.startswith("image/"):
+        return extract_image_text(path)
+    raise ValueError("当前版本支持 PDF、Excel 或图片报价单")

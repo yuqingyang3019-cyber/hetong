@@ -30,8 +30,6 @@ const progressSteps = Array.from(document.querySelectorAll("[data-step]"));
 const accessModal = document.querySelector("#accessModal");
 const accessModalMessage = document.querySelector("#accessModalMessage");
 
-const clientIdFromConfig = (window.__DINGTALK_CLIENT_ID__ || "").trim();
-const corpIdFromConfig = (window.__DINGTALK_CORP_ID__ || "").trim();
 const MAX_TASKS = 5;
 const templateSchemaFiles = Object.freeze({
   caigouhetong: "caigouhetong",
@@ -47,8 +45,8 @@ const completedStatuses = new Set(["completed"]);
 const templateSchemaCache = new Map();
 const tasks = [];
 
-let authContext = { skipAuth: false, dingtalkConfigured: false, corpId: "" };
-/** 是否允许使用上传、解析、生成（免登成功或开发跳过鉴权） */
+let authContext = { dingtalkConfigured: false, corpId: "", clientId: "", agentBaseUrl: "", agentTokenTtlSeconds: 1800 };
+let agentAuth = { baseUrl: "", token: "", expiresAt: 0 };
 let sessionReady = false;
 let activeTaskId = null;
 
@@ -56,13 +54,49 @@ function apiUrl(path) {
   return path;
 }
 
-function fetchAuth(url, options = {}) {
+function agentUrl(path) {
+  const base = (agentAuth.baseUrl || authContext.agentBaseUrl || "").replace(/\/$/, "");
+  if (!base) throw new Error("缺少 AgentRun 业务入口，请重新登录");
+  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+function fetchBff(url, options = {}) {
   const headers = { ...(options.headers || {}) };
   return fetch(url, {
     ...options,
     credentials: "include",
     headers,
   });
+}
+
+async function refreshAgentToken() {
+  const response = await fetchBff(apiUrl("/bff/auth/agent-token"), { method: "POST" });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.ok) {
+    throw new Error(body.message || body.detail || "刷新 AgentRun 访问凭证失败");
+  }
+  agentAuth = {
+    baseUrl: body.agentBaseUrl || authContext.agentBaseUrl || "",
+    token: body.agentAccessToken || "",
+    expiresAt: Number(body.expiresAt || 0),
+  };
+  return agentAuth;
+}
+
+async function fetchAgent(path, options = {}, retry = true) {
+  if (!agentAuth.token || (agentAuth.expiresAt && Date.now() / 1000 > agentAuth.expiresAt - 60)) {
+    await refreshAgentToken();
+  }
+  const headers = { ...(options.headers || {}), Authorization: `Bearer ${agentAuth.token}` };
+  const response = await fetch(agentUrl(path), { ...options, headers });
+  if (response.status === 401 && retry) {
+    const body = await response.clone().json().catch(() => ({}));
+    if (body.code === "AGENT_TOKEN_EXPIRED" || body.code === "AUTH_REQUIRED") {
+      await refreshAgentToken();
+      return fetchAgent(path, options, false);
+    }
+  }
+  return response;
 }
 
 function appendSystemLog(text) {
@@ -111,7 +145,7 @@ function updateSelectedFile() {
   uploadDropzone?.classList.toggle("has-file", Boolean(file));
   if (!file) {
     if (fileNameText) fileNameText.textContent = "点击选择报价单文件";
-    if (fileMetaText) fileMetaText.textContent = "支持 PDF、Excel、TXT 格式";
+    if (fileMetaText) fileMetaText.textContent = "支持 PDF、Excel、图片格式";
     return;
   }
   if (fileNameText) fileNameText.textContent = file.name || "已选择报价单";
@@ -264,48 +298,8 @@ function hideUserBar() {
   if (userBar) userBar.hidden = true;
 }
 
-async function downloadContractBlob(path, fileName = "contract.docx") {
-  const response = await fetchAuth(apiUrl(path));
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || "下载失败");
-  }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName || "contract.docx";
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-async function downloadContractByPost(path, payload, fileName = "contract.docx") {
-  const response = await fetchAuth(apiUrl(path), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload || {}),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || "下载失败");
-  }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName || "contract.docx";
-  a.rel = "noopener";
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
 async function refreshAuthMe() {
-  const response = await fetchAuth(apiUrl("/api/auth/me"));
+  const response = await fetchBff(apiUrl("/bff/auth/me"));
   if (!response.ok) return null;
   return response.json();
 }
@@ -404,52 +398,37 @@ async function initAuth() {
   sessionReady = false;
   appendStageLog("免登初始化", "开始");
   appendStageLog(
-    "免登配置",
-    `api=同域代理 corpId=${configState(corpIdFromConfig)} clientId=${configState(clientIdFromConfig)}`,
-  );
-  appendStageLog(
     "运行环境",
     `platform=${getDingTalkPlatform() || "unknown"} dingtalkClient=${isDingTalkClient() ? "是" : "否"}`,
   );
   setProgress("auth", "active", "正在确认钉钉免登状态。");
 
-  let statusResponse;
+  let configResponse;
   try {
-    appendStageLog("读取鉴权状态", "请求 /api/auth/status");
-    statusResponse = await fetchAuth(apiUrl("/api/auth/status"));
-    appendStageLog("读取鉴权状态", `HTTP ${statusResponse.status}`);
+    appendStageLog("读取鉴权配置", "请求 /bff/auth/config");
+    configResponse = await fetchBff(apiUrl("/bff/auth/config"));
+    appendStageLog("读取鉴权配置", `HTTP ${configResponse.status}`);
   } catch (error) {
-    const message = `读取鉴权状态失败：${formatError(error)}`;
-    appendStageLog("读取鉴权状态失败", message);
+    const message = `读取鉴权配置失败：${formatError(error)}`;
+    appendStageLog("读取鉴权配置失败", message);
     setInteractionEnabled(false);
     setStatus(message, "error");
     setProgress("auth", "error", message);
     return;
   }
-  if (!statusResponse.ok) {
-    appendStageLog("读取鉴权状态失败", `HTTP ${statusResponse.status}`);
+  if (!configResponse.ok) {
+    appendStageLog("读取鉴权配置失败", `HTTP ${configResponse.status}`);
     setInteractionEnabled(false);
-    setStatus(`读取鉴权状态失败：HTTP ${statusResponse.status}`, "error");
-    setProgress("auth", "error", "读取鉴权状态失败，请稍后重试。");
+    setStatus(`读取鉴权配置失败：HTTP ${configResponse.status}`, "error");
+    setProgress("auth", "error", "读取鉴权配置失败，请稍后重试。");
     return;
   }
-  authContext = await statusResponse.json();
+  authContext = await configResponse.json();
+  agentAuth.baseUrl = authContext.agentBaseUrl || "";
   appendStageLog(
-    "读取鉴权状态",
-    `skipAuth=${authContext.skipAuth ? "是" : "否"} dingtalkConfigured=${authContext.dingtalkConfigured ? "是" : "否"} corpId=${configState(authContext.corpId)}`,
+    "读取鉴权配置",
+    `agent=${configState(authContext.agentBaseUrl)} corpId=${configState(authContext.corpId)} clientId=${configState(authContext.clientId)}`,
   );
-
-  if (authContext.skipAuth) {
-    appendStageLog("免登完成", "服务端跳过鉴权");
-    setInteractionEnabled(true);
-    showUserBar(
-      { name: "开发模式", deptNames: [], mobile: "", title: "" },
-      "后端未启用登录鉴权（未配置 APP_SESSION_SECRET 或已开启跳过）。",
-    );
-    setStatus("请选择报价单文件。");
-    setProgress("upload", "active", "免登已就绪，请上传报价单。");
-    return;
-  }
 
   if (!isDingTalkClient()) {
     blockNonDingTalkAccess();
@@ -463,13 +442,13 @@ async function initAuth() {
     appendStageLog("免登配置失败", "服务端未配置钉钉应用");
     setStatus("服务端未配置钉钉应用，无法免登。", "error");
     setProgress("auth", "error", "服务端未配置钉钉应用，无法免登。");
-    if (loginHintEl) loginHintEl.textContent = "请联系管理员配置 DINGTALK_CLIENT_ID / DINGTALK_CLIENT_SECRET / DINGTALK_CORP_ID。";
+    if (loginHintEl) loginHintEl.textContent = "请联系管理员配置钉钉新版 SDK 凭证。";
     return;
   }
 
   let me = null;
   try {
-    appendStageLog("检查已有登录态", "请求 /api/auth/me");
+    appendStageLog("检查已有登录态", "请求 /bff/auth/me");
     me = await refreshAuthMe();
     appendStageLog("检查已有登录态", me?.loggedIn ? "已有有效登录态" : "未登录或登录态过期");
   } catch (error) {
@@ -481,8 +460,9 @@ async function initAuth() {
     } catch {
       /* ignore */
     }
-    setInteractionEnabled(true);
+    await refreshAgentToken();
     showUserBar(me.user, "已通过钉钉免登。");
+    setInteractionEnabled(true);
     setStatus("请选择报价单文件。");
     setProgress("upload", "active", "免登已就绪，请上传报价单。");
     return;
@@ -496,8 +476,8 @@ async function initAuth() {
 
   const searchParams = new URLSearchParams(window.location.search);
   const corpIdFromUrl = searchParams.get("corpid") || searchParams.get("corpId") || "";
-  const corpId = corpIdFromUrl || authContext.corpId || corpIdFromConfig || "";
-  const clientId = clientIdFromConfig || "";
+  const corpId = corpIdFromUrl || authContext.corpId || "";
+  const clientId = authContext.clientId || "";
 
   if (!corpId) {
     sessionReady = false;
@@ -519,10 +499,10 @@ async function initAuth() {
   await waitForDingTalkReady().then(() => requestDingTalkAuthCode(corpId, clientId)).then(async (result) => {
     const code = result && result.code;
     if (!code) throw new Error("获取钉钉免登码失败：未获取到免登授权码");
-    appendStageLog("提交免登码", "请求 /api/dingtalk/login");
+    appendStageLog("提交免登码", "请求 /bff/auth/dingtalk-login");
     let loginResponse;
     try {
-      loginResponse = await fetchAuth(apiUrl("/api/dingtalk/login"), {
+      loginResponse = await fetchBff(apiUrl("/bff/auth/dingtalk-login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code, corpId }),
@@ -533,11 +513,13 @@ async function initAuth() {
     }
     const body = await loginResponse.json().catch(() => ({}));
     if (!loginResponse.ok) {
-      throw new Error(`提交免登码到服务端失败：${body.detail || body.message || `HTTP ${loginResponse.status}`}`);
+      throw new Error(`提交免登码到 BFF 失败：${body.message || body.detail || `HTTP ${loginResponse.status}`}`);
     }
-    if (!body.configured) {
-      throw new Error(`提交免登码到服务端失败：${body.message || "钉钉未配置"}`);
-    }
+    agentAuth = {
+      baseUrl: body.agentBaseUrl || authContext.agentBaseUrl || "",
+      token: body.agentAccessToken || "",
+      expiresAt: Number(body.expiresAt || 0),
+    };
     if (body.user) {
       try {
         sessionStorage.setItem("hetong_user_preview", JSON.stringify(body.user));
@@ -546,7 +528,7 @@ async function initAuth() {
       }
       showUserBar(body.user, "已通过钉钉免登。");
     }
-    appendStageLog("免登完成", "已通过钉钉免登");
+    appendStageLog("免登完成", "已通过钉钉免登并获取 AgentRun 访问凭证");
     setInteractionEnabled(true);
     setStatus("请选择报价单文件。");
     setProgress("upload", "active", "免登已就绪，请上传报价单。");
@@ -564,7 +546,7 @@ async function initAuth() {
 
 async function uploadQuote(file) {
   const data = await fileToDataUrl(file);
-  const response = await fetchAuth(apiUrl("/api/uploads"), {
+  const response = await fetchAgent("/api/uploads", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -576,26 +558,26 @@ async function uploadQuote(file) {
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || "上传失败");
+    throw new Error(body.message || body.detail || body.error || "上传失败");
   }
   return response.json();
 }
 
 async function parseUploadedQuote(uploadId, taskTemplateType) {
-  const response = await fetchAuth(apiUrl(`/api/uploads/${encodeURIComponent(uploadId)}/quote-text`), {
+  const response = await fetchAgent(`/api/uploads/${encodeURIComponent(uploadId)}/quote-text`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ templateType: taskTemplateType }),
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || "解析报价单失败");
+    throw new Error(body.message || body.detail || body.error || "解析报价单失败");
   }
   return response.json();
 }
 
 async function previewQuoteFields(uploadId, quoteText, extraInfo, taskTemplateType) {
-  const response = await fetchAuth(apiUrl(`/api/uploads/${encodeURIComponent(uploadId)}/field-preview`), {
+  const response = await fetchAgent(`/api/uploads/${encodeURIComponent(uploadId)}/field-preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -606,7 +588,7 @@ async function previewQuoteFields(uploadId, quoteText, extraInfo, taskTemplateTy
   });
   if (!response.ok) {
     const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || body.error || "字段识别失败");
+    throw new Error(body.message || body.detail || body.error || "字段识别失败");
   }
   return response.json();
 }
@@ -618,6 +600,21 @@ function fileToDataUrl(file) {
     reader.onerror = () => reject(new Error("读取报价单文件失败"));
     reader.readAsDataURL(file);
   });
+}
+
+function openDingTalkPreview(payload) {
+  const preview = payload?.preview || {};
+  const url = preview.previewUrl || preview.openUrl || payload?.previewUrl || payload?.openUrl;
+  if (!url) throw new Error("未返回钉盘预览入口");
+  if (window.dd?.openLink) {
+    window.dd.openLink({ url });
+    return;
+  }
+  if (window.dd?.biz?.util?.openLink) {
+    window.dd.biz.util.openLink({ url });
+    return;
+  }
+  window.open(url, "_blank", "noopener");
 }
 
 function parseSseBuffer(buffer) {
@@ -644,7 +641,7 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
     userPreview = null;
   }
 
-  const response = await fetchAuth(apiUrl("/ag-ui/agent"), {
+  const response = await fetchAgent("/ag-ui/agent", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -669,7 +666,8 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
   });
 
   if (!response.ok || !response.body) {
-    throw new Error("生成请求失败");
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.message || body.detail || "生成请求失败");
   }
 
   const reader = response.body.getReader();
@@ -980,37 +978,19 @@ function removeTask(taskId) {
 function createTaskDownloadNode(task) {
   if (!task.download) return null;
   const payload = task.download;
-  if (payload.downloadDataUrl) {
-    const link = createEl("a", "task-download", "下载合同");
-    link.href = payload.downloadDataUrl;
-    link.download = payload.fileName || `${payload.contractId || "contract"}.docx`;
-    return link;
-  }
-  if (payload.downloadPath) {
-    const button = createEl("button", "task-download", "下载合同");
+  const url = payload.preview?.previewUrl || payload.preview?.openUrl || payload.previewUrl || payload.openUrl;
+  if (url) {
+    const button = createEl("button", "task-download", "预览钉盘合同");
     button.type = "button";
-    button.addEventListener("click", async (event) => {
+    button.addEventListener("click", (event) => {
       event.stopPropagation();
       try {
-        const fileName = payload.fileName || payload.downloadPayload?.fileName || `${payload.contractId || "contract"}.docx`;
-        if (payload.downloadMethod === "POST") {
-          await downloadContractByPost(payload.downloadPath, payload.downloadPayload || {}, fileName);
-        } else {
-          await downloadContractBlob(payload.downloadPath, fileName);
-        }
+        openDingTalkPreview(payload);
       } catch (error) {
-        appendTaskLog(task, `下载失败：${formatError(error)}\n`);
+        appendTaskLog(task, `预览失败：${formatError(error)}\n`);
       }
     });
     return button;
-  }
-  const url = payload.openUrl || payload.downloadUrl;
-  if (url) {
-    const link = createEl("a", "task-download", "打开钉盘合同");
-    link.href = url;
-    link.target = "_blank";
-    link.rel = "noopener";
-    return link;
   }
   if (payload.filePath || payload.dingDrive?.filePath) {
     return createEl("p", "task-file-path", `已存入钉盘：${payload.filePath || payload.dingDrive.filePath}`);

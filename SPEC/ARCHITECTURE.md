@@ -325,11 +325,11 @@ V1 主要依赖 AgentRun 日志和前端任务日志排障。
 
 | 项目 | PRD 目标 | 当前实现状态 | 后续动作 |
 | --- | --- | --- | --- |
-| 图片报价单 OCR | 支持 `.jpg`、`.jpeg`、`.png` 图片 OCR | `s.yaml` 已配置阿里云 OCR 环境变量，但 `agent/contract/extract.py` 当前仍未接入图片 OCR 解析 | 在报价单抽取模块接入阿里云 OCR，并补充测试 |
-| 前端文件选择 | 支持 Excel、PDF、图片 | 当前 H5 文件选择提示和 `accept` 仍需与图片格式对齐 | 更新前端文件格式提示和 `accept` |
-| 鉴权边界 | BFF 负责免登和 AgentRun 短期凭证，AgentRun 只处理业务请求 | 当前实现仍由 AgentRun 处理免登并依赖 Cookie，H5 通过 BFF 代理业务接口 | 将免登迁移到 BFF，使用钉钉官方新版服务端 SDK，新增 AgentRun Bearer 鉴权 |
-| 业务请求路径 | 前端直连 AgentRun 业务接口 | 当前实现仍经 H5 BFF 同源代理 `/api` 和 `/ag-ui` | 前端改为使用 AgentRun baseUrl + Bearer Token |
-| 合同交付 | 前端使用钉钉客户端 JSAPI SDK 预览钉盘文件 | 当前实现支持代理下载或打开 `openUrl` | 使用钉盘官方新版 SDK 返回稳定预览链接，前端接入钉钉文件预览能力 |
+| 图片报价单 OCR | 支持 `.jpg`、`.jpeg`、`.png` 图片 OCR | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |
+| 前端文件选择 | 支持 Excel、PDF、图片 | 已更新 H5 文件选择提示和 `accept` | 后续根据 OCR 质量补充图片清晰度提示 |
+| 鉴权边界 | BFF 负责免登和 AgentRun 短期凭证，AgentRun 只处理业务请求 | 已迁移为 BFF `/bff/auth/*` + AgentRun Bearer 鉴权 | 继续替换 BFF 内部钉钉调用为官方新版 SDK 封装 |
+| 业务请求路径 | 前端直连 AgentRun 业务接口 | 已改为 `agentBaseUrl` + Bearer Token | 部署时确保 AgentRun CORS 允许 H5 域名 |
+| 合同交付 | 前端使用钉钉客户端 JSAPI SDK 预览钉盘文件 | 已返回 `preview` 结构并由前端打开预览入口 | 继续确认钉盘新版 SDK 的稳定预览 URL 字段 |
 | TXT 输入 | PRD 不将 TXT 作为正式业务格式 | 测试和抽取模块仍保留 TXT 能力 | 保留为内部兼容或测试能力，但不在前端正式入口展示 |
 | 服务端任务持久化 | V1 不包含 | 当前任务状态在前端内存中维护 | 后续若做跨端恢复再设计服务端任务表 |
 

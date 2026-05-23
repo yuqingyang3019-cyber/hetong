@@ -420,7 +420,7 @@ data: {"type":"RUN_FINISHED"}
 
 | 项目 | 目标接口设计 | 当前实现 | 待办 |
 | --- | --- | --- | --- |
-| 鉴权职责 | BFF 使用钉钉官方新版服务端 SDK 完成免登并签发 AgentRun 短期凭证 | AgentRun 仍处理 `/api/dingtalk/login` 和 Cookie 会话 | 将免登服务端逻辑迁移到 BFF，AgentRun 改为 Bearer 鉴权 |
-| 业务请求路径 | 前端直连 AgentRun | 当前前端通过同源 BFF 代理 `/api`、`/ag-ui` | 前端保存 `agentBaseUrl` 并直连业务接口 |
-| 合同交付 | AgentRun 使用钉盘官方新版 SDK 返回钉盘预览链接，前端 JSAPI SDK 打开预览 | 当前支持代理下载或普通链接打开 | 明确钉盘预览 URL/SDK 参数，前端接入预览能力 |
-| 图片 OCR | AgentRun 解析图片报价单 | 当前抽取模块仍未接入图片 OCR | 接入阿里云 OCR 并补充接口测试 |
+| 鉴权职责 | BFF 使用钉钉官方新版服务端 SDK 完成免登并签发 AgentRun 短期凭证 | 已迁移为 `/bff/auth/*` + AgentRun Bearer 鉴权 | 继续替换 BFF 内部钉钉调用为官方新版 SDK 封装 |
+| 业务请求路径 | 前端直连 AgentRun | 已改为 `agentBaseUrl` + `Authorization: Bearer` | 部署时确保 AgentRun CORS 允许 H5 域名 |
+| 合同交付 | AgentRun 使用钉盘官方新版 SDK 返回钉盘预览链接，前端 JSAPI SDK 打开预览 | 已返回 `preview` 结构并由前端打开预览入口 | 继续确认钉盘新版 SDK 的稳定预览 URL 字段 |
+| 图片 OCR | AgentRun 解析图片报价单 | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |
