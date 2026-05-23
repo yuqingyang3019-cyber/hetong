@@ -9,6 +9,7 @@ python-docx
 openpyxl
 xlrd
 requests
+alibabacloud_dingtalk
 pytest
 httpx
 ag-ui-protocol

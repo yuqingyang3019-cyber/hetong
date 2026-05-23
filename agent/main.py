@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -10,6 +11,7 @@ import os
 import sys
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 from urllib.parse import urlsplit
@@ -46,8 +48,12 @@ except ImportError:
 
 try:
     from . import dingtalk_oapi
+    from .dingdrive import upload_contract_to_dingdrive
+    from .storage_cleanup import remove_contract_files, remove_upload
 except ImportError:
     import dingtalk_oapi  # type: ignore[no-redef]
+    from dingdrive import upload_contract_to_dingdrive  # type: ignore[no-redef]
+    from storage_cleanup import remove_contract_files, remove_upload  # type: ignore[no-redef]
 
 
 app = FastAPI(title="合同生成 Agent")
@@ -203,6 +209,12 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
 
 
+def contract_file_name(render_data: dict[str, Any], generated_at: datetime | None = None) -> str:
+    supplier = str(render_data.get("supplierName") or "未知乙方").strip() or "未知乙方"
+    timestamp = (generated_at or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    return f"{timestamp}_{safe_file_name(supplier)}.docx"
+
+
 def sse_event(event: dict[str, Any]) -> bytes:
     payload = {"timestamp": int(time.time() * 1000), **event}
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
@@ -234,6 +246,22 @@ def content_type_for_file(path: Path) -> str:
 
 def contract_download_payload(draft: dict[str, Any], request: Request, include_data_url: bool = False) -> dict[str, Any]:
     contract_id = draft["contractId"]
+    ding_drive = draft.get("dingDrive") if isinstance(draft.get("dingDrive"), dict) else None
+    if ding_drive:
+        payload = {
+            "contractId": contract_id,
+            "fileName": ding_drive.get("fileName") or draft.get("fileName") or f"{contract_id}.docx",
+            "dingDrive": ding_drive,
+            "downloadUrl": ding_drive.get("downloadUrl") or ding_drive.get("openUrl") or "",
+        }
+        if ding_drive.get("downloadUrl"):
+            payload["downloadUrl"] = ding_drive["downloadUrl"]
+        if ding_drive.get("openUrl"):
+            payload["openUrl"] = ding_drive["openUrl"]
+        if ding_drive.get("filePath"):
+            payload["filePath"] = ding_drive["filePath"]
+        return payload
+
     download_path = contract_download_path(contract_id)
     payload = {
         "contractId": contract_id,
@@ -492,6 +520,7 @@ def generate_contract(
     quote_text: str | None = None,
     extra_info: str | None = None,
     extracted_data: dict[str, Any] | None = None,
+    current_user: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     start = time.perf_counter()
     has_confirmed_text = bool(quote_text and quote_text.strip())
@@ -556,16 +585,30 @@ def generate_contract(
 
         render_data = merge_render_data(extracted, config)
         contract_id = new_id("contract")
+        file_name = contract_file_name(render_data)
+        contract_stem = Path(file_name).stem
 
         render_start = time.perf_counter()
-        log_info("contract render start", uploadId=upload_id, contractId=contract_id, templateType=config.type)
-        contract_path = render_contract(render_data, config, contract_id, blank_missing=has_confirmed_data)
+        log_info("contract render start", uploadId=upload_id, contractId=contract_id, fileName=file_name, templateType=config.type)
+        contract_path = render_contract(render_data, config, contract_stem, blank_missing=has_confirmed_data)
         log_info(
             "contract render finished",
             uploadId=upload_id,
             contractId=contract_id,
             outputFile=contract_path.name,
             elapsedMs=elapsed_ms(render_start),
+        )
+
+        upload_start = time.perf_counter()
+        ding_drive = upload_contract_to_dingdrive(contract_path, file_name, current_user)
+        log_info(
+            "contract uploaded to dingdrive",
+            uploadId=upload_id,
+            contractId=contract_id,
+            fileName=file_name,
+            dingDriveFileId=ding_drive.get("fileId"),
+            dingDrivePath=ding_drive.get("filePath"),
+            elapsedMs=elapsed_ms(upload_start),
         )
 
         draft = {
@@ -576,14 +619,20 @@ def generate_contract(
             "extractedData": extracted,
             "renderData": render_data,
             "contractId": contract_id,
+            "fileName": file_name,
             "contractPath": str(contract_path),
+            "dingDrive": ding_drive,
         }
         (DRAFTS_DIR / f"{contract_id}.json").write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
+        removed_paths = remove_upload(upload)
+        removed_paths.extend(remove_contract_files(contract_id, contract_path))
         log_info(
             "contract generation finished",
             uploadId=upload_id,
             contractId=contract_id,
+            fileName=file_name,
             templateType=config.type,
+            processFilesRemoved=len(removed_paths),
             elapsedMs=elapsed_ms(start),
         )
         return draft
@@ -797,7 +846,7 @@ def generate_contract_api(
         if not isinstance(parsed_extracted, dict):
             raise HTTPException(status_code=400, detail="extractedData 必须是对象")
         confirmed_extracted = parsed_extracted
-    draft = generate_contract(uploadId, templateType, quoteText, extraInfo, confirmed_extracted)
+    draft = generate_contract(uploadId, templateType, quoteText, extraInfo, confirmed_extracted, current_user)
     response = {
         **contract_download_payload(draft, request),
         "templateType": draft["templateType"],
@@ -904,9 +953,9 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
             extraInfoLength=len(extra_info or ""),
             confirmedExtractedData=bool(extracted_data),
         )
-        draft = generate_contract(upload_id, template_type, quote_text, extra_info, extracted_data)
-        download_payload = contract_download_payload(draft, request, include_data_url=True)
-        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "合同已生成，请点击下方按钮下载。"})
+        draft = await asyncio.to_thread(generate_contract, upload_id, template_type, quote_text, extra_info, extracted_data, current_user)
+        download_payload = contract_download_payload(draft, request, include_data_url=False)
+        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "合同已生成并已存入钉盘。"})
         yield sse_event({"type": "CUSTOM", "name": "contract_generated", "value": download_payload})
         yield sse_event({"type": "TEXT_MESSAGE_END", "messageId": message_id})
         yield sse_event({
@@ -916,7 +965,9 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
             "result": {
                 "contractId": download_payload["contractId"],
                 "downloadUrl": download_payload["downloadUrl"],
-                "downloadPath": download_payload["downloadPath"],
+                "downloadPath": download_payload.get("downloadPath"),
+                "openUrl": download_payload.get("openUrl"),
+                "dingDrive": download_payload.get("dingDrive"),
             },
         })
         log_info(

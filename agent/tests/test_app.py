@@ -2,9 +2,10 @@ from pathlib import Path
 import base64
 from unittest.mock import ANY, Mock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
-from agent.contract.config import get_template_config
+from agent.contract.config import DRAFTS_DIR, UPLOADS_DIR, get_template_config
 from agent.contract.render import build_docxtpl_context
 from agent.main import app, generate_contract
 
@@ -148,7 +149,7 @@ def test_agui_uses_confirmed_quote_text() -> None:
         )
 
     assert response.status_code == 200
-    generate_contract.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", None, None)
+    generate_contract.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", None, None, ANY)
     assert "已确认报价单文本" in response.text
 
 
@@ -206,13 +207,85 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
     with patch("agent.main.extract_template_render_data") as llm, patch(
         "agent.main.render_contract",
         return_value=Path("agent/storage/contracts/confirmed.docx"),
-    ) as render_contract_mock:
-        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted)
+    ) as render_contract_mock, patch(
+        "agent.main.upload_contract_to_dingdrive",
+        return_value={"spaceId": "space1", "fileId": "file1", "fileName": "confirmed.docx", "filePath": "/confirmed.docx"},
+    ):
+        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"unionid": "union1"})
 
     llm.assert_not_called()
     render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True)
     assert draft["extractedData"] == extracted
     assert draft["extraInfoLength"] == len("补充信息")
+    assert draft["dingDrive"]["fileId"] == "file1"
+
+
+def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None:
+    upload = client.post(
+        "/api/uploads",
+        json={
+            "originalName": "quote.txt",
+            "mimeType": "text/plain",
+            "size": len("报价单文本".encode("utf-8")),
+            "data": base64.b64encode("报价单文本".encode("utf-8")).decode("ascii"),
+        },
+    )
+    assert upload.status_code == 200
+    upload_body = upload.json()
+    upload_id = upload_body["id"]
+    extracted = {"supplierName": "供应商A", "items": []}
+    rendered_path = Path("agent/storage/contracts/20260523_供应商A.docx")
+
+    def fake_render(*args, **kwargs) -> Path:
+        rendered_path.parent.mkdir(parents=True, exist_ok=True)
+        rendered_path.write_bytes(b"docx")
+        return rendered_path
+
+    with patch("agent.main.render_contract", side_effect=fake_render), patch(
+        "agent.main.upload_contract_to_dingdrive",
+        return_value={"spaceId": "space1", "fileId": "file1", "fileName": "20260523_供应商A.docx", "filePath": "/采购合同测试/20260523_供应商A.docx"},
+    ) as upload_dingdrive:
+        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"unionid": "union1"})
+
+    upload_dingdrive.assert_called_once()
+    assert draft["dingDrive"]["fileId"] == "file1"
+    assert "供应商A" in draft["fileName"]
+    assert not Path(upload_body["path"]).exists()
+    assert not (UPLOADS_DIR / f"{upload_id}.json").exists()
+    assert not rendered_path.exists()
+    assert not (DRAFTS_DIR / f"{draft['contractId']}.json").exists()
+
+
+def test_generate_contract_keeps_process_files_when_dingdrive_fails() -> None:
+    upload = client.post(
+        "/api/uploads",
+        json={
+            "originalName": "quote.txt",
+            "mimeType": "text/plain",
+            "size": len("报价单文本".encode("utf-8")),
+            "data": base64.b64encode("报价单文本".encode("utf-8")).decode("ascii"),
+        },
+    )
+    assert upload.status_code == 200
+    upload_body = upload.json()
+    upload_id = upload_body["id"]
+    rendered_path = Path("agent/storage/contracts/failed-upload.docx")
+
+    def fake_render(*args, **kwargs) -> Path:
+        rendered_path.parent.mkdir(parents=True, exist_ok=True)
+        rendered_path.write_bytes(b"docx")
+        return rendered_path
+
+    with patch("agent.main.render_contract", side_effect=fake_render), patch(
+        "agent.main.upload_contract_to_dingdrive",
+        side_effect=RuntimeError("钉盘上传失败"),
+    ), pytest.raises(RuntimeError):
+        generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", {"supplierName": "供应商A", "items": []}, {"unionid": "union1"})
+
+    assert Path(upload_body["path"]).exists()
+    assert (UPLOADS_DIR / f"{upload_id}.json").exists()
+    assert rendered_path.exists()
+    rendered_path.unlink(missing_ok=True)
 
 
 def test_confirmed_blank_fields_render_empty() -> None:
@@ -264,7 +337,7 @@ def test_agui_passes_confirmed_extracted_data() -> None:
         )
 
     assert response.status_code == 200
-    generate_contract_mock.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", "补充信息", extracted)
+    generate_contract_mock.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", "补充信息", extracted, ANY)
     assert "已确认字段识别结果" in response.text
 
 

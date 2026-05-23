@@ -482,6 +482,171 @@ button:disabled {
   color: #047857;
 }
 
+.task-list {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.task-card {
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  transition:
+    border-color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out),
+    transform var(--duration) var(--ease-out);
+}
+
+.task-card:hover {
+  border-color: rgba(15, 108, 189, 0.32);
+  box-shadow: var(--shadow-sm);
+}
+
+.task-card.is-active {
+  border-color: rgba(15, 108, 189, 0.48);
+  box-shadow: 0 0 0 4px rgba(15, 108, 189, 0.1);
+}
+
+.task-card.is-error {
+  border-color: rgba(220, 38, 38, 0.24);
+}
+
+.task-card.is-complete {
+  border-color: rgba(5, 150, 105, 0.24);
+}
+
+.task-card-header,
+.task-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.task-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.task-title strong,
+.task-title small,
+.task-message,
+.task-file-path {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.task-title small {
+  color: #64748b;
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+
+.task-status {
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 4px 9px;
+}
+
+.status-uploading,
+.status-parsing,
+.status-identifying,
+.status-generating {
+  background: rgba(15, 108, 189, 0.1);
+  color: #0f548c;
+}
+
+.status-needs_text,
+.status-needs_fields {
+  background: rgba(180, 83, 9, 0.1);
+  color: #92400e;
+}
+
+.status-completed {
+  background: rgba(5, 150, 105, 0.1);
+  color: #047857;
+}
+
+.status-failed {
+  background: rgba(220, 38, 38, 0.1);
+  color: #991b1b;
+}
+
+.task-message,
+.task-file-path {
+  color: var(--color-secondary);
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.task-actions {
+  justify-content: flex-start;
+}
+
+.task-secondary-button {
+  background: #ffffff;
+  border-color: var(--color-border);
+  color: var(--color-primary);
+  min-height: 36px;
+  padding: 7px 12px;
+  width: auto;
+}
+
+.task-secondary-button:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: rgba(15, 108, 189, 0.32);
+  color: var(--color-accent);
+}
+
+.task-secondary-button.is-danger {
+  color: #991b1b;
+}
+
+.task-download {
+  background: var(--color-success);
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-md);
+  color: var(--color-on-primary);
+  cursor: pointer;
+  display: inline-block;
+  font-weight: 700;
+  min-height: 40px;
+  padding: 9px 14px;
+  text-align: center;
+  text-decoration: none;
+  width: auto;
+}
+
+.task-download:hover {
+  background: var(--color-success-hover);
+  border-color: var(--color-success-hover);
+}
+
+.task-log {
+  border-top: 1px dashed var(--color-border);
+  padding-top: var(--space-2);
+}
+
+.task-log summary {
+  color: var(--color-secondary);
+  cursor: pointer;
+  font-size: 0.8125rem;
+  font-weight: 800;
+}
+
+.task-log pre {
+  margin-top: var(--space-2);
+  max-height: 180px;
+  min-height: 72px;
+}
+
 .modal-backdrop {
   align-items: center;
   background: rgba(15, 23, 42, 0.45);
