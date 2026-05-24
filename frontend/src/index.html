@@ -46,7 +46,7 @@
           <span class="top-step" data-step="review">补充识别</span>
           <span class="top-step" data-step="generate">生成预览</span>
         </div>
-        <p class="hint hero-progress-hint" id="progressHint">系统会在每一步完成后自动更新状态。</p>
+        <p class="hint hero-progress-hint" id="progressHint" hidden>系统会在每一步完成后自动更新状态。</p>
         <details class="log-details hero-log-details">
           <summary>查看详细日志</summary>
           <pre id="log"></pre>
@@ -89,7 +89,7 @@
         </label>
 
         <button id="parseButton" type="button" disabled>创建任务并解析报价单</button>
-        <p id="status" class="status" aria-live="polite">正在准备免登环境…</p>
+        <p id="status" class="status" aria-live="polite" hidden></p>
       </section>
 
       <section id="taskQueueCard" class="card task-queue-card">

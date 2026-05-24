@@ -144,6 +144,13 @@ function maskDiagnosticValue(value, prefix = 4, suffix = 4) {
 }
 
 function setStatus(message, tone = "info") {
+  if (!message) {
+    statusEl.textContent = "";
+    statusEl.hidden = true;
+    statusEl.classList.remove("is-error", "is-success");
+    return;
+  }
+  statusEl.hidden = false;
   statusEl.textContent = message;
   statusEl.classList.toggle("is-error", tone === "error");
   statusEl.classList.toggle("is-success", tone === "success");
@@ -261,7 +268,21 @@ function setProgress(currentStep, state = "active", message = "") {
     }
   });
 
-  if (progressHint && message) progressHint.textContent = message;
+  if (progressHint) {
+    progressHint.textContent = message || "";
+    progressHint.hidden = !message;
+  }
+}
+
+function setAuthReadyProgress(message = "") {
+  progressSteps.forEach((step) => {
+    step.classList.remove("is-active", "is-complete", "is-error");
+    if (step.dataset.step === "auth") step.classList.add("is-complete");
+  });
+  if (progressHint) {
+    progressHint.textContent = message;
+    progressHint.hidden = !message;
+  }
 }
 
 function showUserBar(user, hint) {
@@ -490,8 +511,8 @@ async function initAuth() {
     await refreshAgentToken();
     showUserBar(me.user, "已通过钉钉免登。");
     setInteractionEnabled(true);
-    setStatus("请选择报价单文件。");
-    setProgress("upload", "active", "免登已就绪，请上传报价单。");
+    setStatus("");
+    setAuthReadyProgress("");
     return;
   }
 
@@ -564,8 +585,8 @@ async function initAuth() {
     }
     appendStageLog("免登完成", "已通过钉钉免登并获取 AgentRun 访问凭证");
     setInteractionEnabled(true);
-    setStatus("请选择报价单文件。");
-    setProgress("upload", "active", "免登已就绪，请上传报价单。");
+    setStatus("");
+    setAuthReadyProgress("");
     if (loginHintEl) loginHintEl.textContent = "";
   }).catch((error) => {
     sessionReady = false;
@@ -1059,7 +1080,12 @@ function renderTaskList() {
   if (!taskList) return;
   taskList.textContent = "";
   if (!tasks.length) {
-    taskList.append(createEl("p", "empty-state", "暂无任务。选择报价单后点击“创建任务并解析报价单”。"));
+    const placeholder = createEl("article", "task-placeholder-card");
+    placeholder.append(
+      createEl("strong", "", "等待新任务加入"),
+      createEl("p", "", "选择合同模板和报价单后，任务卡片会出现在这里。"),
+    );
+    taskList.append(placeholder);
     updateActionAvailability();
     return;
   }
@@ -1229,8 +1255,12 @@ function retryTask(task) {
 
 quoteFile.addEventListener("change", () => {
   updateSelectedFile();
-  setStatus(quoteFile.files?.[0] ? "文件已选择，可以创建任务。" : "请选择报价单文件。");
-  setProgress("upload", "active", quoteFile.files?.[0] ? "文件已选择，点击创建任务。" : "请选择报价单文件。");
+  setStatus(quoteFile.files?.[0] ? "文件已选择，可以创建任务。" : "");
+  if (quoteFile.files?.[0]) {
+    setProgress("upload", "active", "文件已选择，点击创建任务。");
+  } else {
+    setAuthReadyProgress("");
+  }
   updateActionAvailability();
 });
 
