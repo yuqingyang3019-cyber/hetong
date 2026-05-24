@@ -311,8 +311,8 @@ h2 {
 .task-create-strip {
   border-bottom: 1px solid rgba(226, 232, 240, 0.9);
   display: grid;
-  gap: var(--space-3);
-  padding-bottom: var(--space-3);
+  gap: var(--space-4);
+  padding-bottom: var(--space-2);
 }
 
 .task-queue-panel {
@@ -368,9 +368,9 @@ button {
   border-radius: var(--radius-md);
   color: var(--color-foreground);
   font: inherit;
-  min-height: var(--touch-min);
+  min-height: 56px;
   min-width: 0;
-  padding: var(--space-2) 14px;
+  padding: 0 14px;
   transition:
     border-color var(--duration) var(--ease-out),
     box-shadow var(--duration) var(--ease-out),
@@ -444,9 +444,9 @@ textarea {
   cursor: pointer;
   display: flex;
   gap: var(--space-2);
-  min-height: 58px;
+  min-height: 56px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 8px 12px;
   transition:
     border-color var(--duration) var(--ease-out),
     box-shadow var(--duration) var(--ease-out),
@@ -505,7 +505,7 @@ textarea {
 
 .upload-meta {
   color: #64748b;
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   font-weight: 600;
 }
 
@@ -522,9 +522,11 @@ button {
 
 .task-create-strip > button {
   display: block;
-  margin: 4px auto 0;
-  max-width: 240px;
-  width: min(100%, 240px);
+  margin: 0 auto;
+  max-width: 140px;
+  min-width: 120px;
+  width: min(100%, 140px);
+  white-space: nowrap;
 }
 
 button:hover:not(:disabled) {
