@@ -53,52 +53,50 @@
         </details>
       </section>
 
-      <section class="card form-card">
-        <div class="card-heading">
-          <p class="eyebrow">第 1 步</p>
-          <h2>上传报价单</h2>
-          <p class="hint">先选择合同模板，再上传报价单文件。系统最多保留 5 个未完成任务，可并行生成多份合同。</p>
+      <section class="card workbench-card">
+        <div class="task-create-strip">
+          <label class="field">
+            <span class="field-label">合同模板</span>
+            <select id="templateType">
+              <option value="caigouhetong">采购合同（通用设备）</option>
+              <option value="nonStandardNoInstall">设备采购合同（不含安装）</option>
+              <option value="nonStandardWithInstall">设备采购合同（含安装）</option>
+              <option value="annualFramework">年度采购框架合同</option>
+              <option value="professionalSubcontract">专业工程分包合同</option>
+              <option value="laborSubcontract">劳务分包合同（清包工）</option>
+            </select>
+          </label>
+
+          <label class="field file-field" for="quoteFile">
+            <span class="field-label">报价单文件</span>
+            <span class="upload-dropzone" id="uploadDropzone">
+              <span class="upload-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img" focusable="false">
+                  <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
+                </svg>
+              </span>
+              <span class="upload-copy">
+                <span id="fileNameText" class="upload-title">点击选择报价单文件</span>
+                <span id="fileMetaText" class="upload-meta">支持 PDF、Excel、图片格式</span>
+              </span>
+            </span>
+            <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png" />
+          </label>
+
+          <button id="parseButton" type="button" disabled>创建任务并解析报价单</button>
+          <p id="status" class="status" aria-live="polite" hidden></p>
         </div>
 
-        <label class="field">
-          <span class="field-label">合同模板</span>
-          <select id="templateType">
-            <option value="caigouhetong">采购合同（通用设备）</option>
-            <option value="nonStandardNoInstall">设备采购合同（不含安装）</option>
-            <option value="nonStandardWithInstall">设备采购合同（含安装）</option>
-            <option value="annualFramework">年度采购框架合同</option>
-            <option value="professionalSubcontract">专业工程分包合同</option>
-            <option value="laborSubcontract">劳务分包合同（清包工）</option>
-          </select>
-        </label>
-
-        <label class="field file-field" for="quoteFile">
-          <span class="field-label">报价单文件</span>
-          <span class="upload-dropzone" id="uploadDropzone">
-            <span class="upload-mark" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img" focusable="false">
-                <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
-              </svg>
-            </span>
-            <span class="upload-copy">
-              <span id="fileNameText" class="upload-title">点击选择报价单文件</span>
-              <span id="fileMetaText" class="upload-meta">支持 PDF、Excel、图片格式</span>
-            </span>
-          </span>
-          <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png" />
-        </label>
-
-        <button id="parseButton" type="button" disabled>创建任务并解析报价单</button>
-        <p id="status" class="status" aria-live="polite" hidden></p>
-      </section>
-
-      <section id="taskQueueCard" class="card task-queue-card">
-        <div class="card-heading">
-          <p class="eyebrow">任务队列</p>
-          <h2>合同生成任务</h2>
-          <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务，点击任务卡片可切换编辑。</p>
+        <div id="taskQueueCard" class="task-queue-panel">
+          <div class="task-queue-heading">
+            <div>
+              <p class="eyebrow">任务队列</p>
+              <h2>合同生成任务</h2>
+            </div>
+            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务，点击任务卡片可切换编辑。</p>
+          </div>
+          <div id="taskList" class="task-list"></div>
         </div>
-        <div id="taskList" class="task-list"></div>
       </section>
 
       <div id="taskDrawerBackdrop" class="drawer-backdrop" hidden></div>

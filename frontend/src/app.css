@@ -279,15 +279,14 @@ h2 {
 }
 
 .card {
-  background: var(--color-soft-card);
+  background: var(--color-card);
   border: 1px solid var(--color-border);
   border-radius: calc(var(--radius-lg) + 2px);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
   display: grid;
   gap: var(--space-3);
   margin-top: var(--space-2);
   padding: var(--space-3);
-  backdrop-filter: blur(14px);
 }
 
 .card-heading {
@@ -303,6 +302,35 @@ h2 {
 
 .log-card h2 {
   margin-bottom: var(--space-2);
+}
+
+.workbench-card {
+  gap: var(--space-3);
+}
+
+.task-create-strip {
+  border-bottom: 1px solid rgba(226, 232, 240, 0.9);
+  display: grid;
+  gap: var(--space-3);
+  padding-bottom: var(--space-3);
+}
+
+.task-queue-panel {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.task-queue-heading {
+  align-items: end;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.task-queue-heading h2,
+.task-queue-heading .eyebrow,
+.task-queue-heading .hint {
+  margin: 0;
 }
 
 label,
@@ -415,10 +443,10 @@ textarea {
   border-radius: var(--radius-md);
   cursor: pointer;
   display: flex;
-  gap: var(--space-3);
-  min-height: 72px;
+  gap: var(--space-2);
+  min-height: 58px;
   min-width: 0;
-  padding: var(--space-3);
+  padding: 10px 12px;
   transition:
     border-color var(--duration) var(--ease-out),
     box-shadow var(--duration) var(--ease-out),
@@ -447,20 +475,20 @@ textarea {
   border-radius: 999px;
   color: var(--color-accent);
   display: inline-flex;
-  flex: 0 0 42px;
-  height: 42px;
+  flex: 0 0 34px;
+  height: 34px;
   justify-content: center;
-  width: 42px;
+  width: 34px;
 }
 
 .upload-mark svg {
   fill: none;
-  height: 22px;
+  height: 18px;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
-  width: 22px;
+  width: 18px;
 }
 
 .upload-copy {
@@ -490,6 +518,13 @@ button {
   letter-spacing: 0.01em;
   touch-action: manipulation;
   width: 100%;
+}
+
+.task-create-strip > button {
+  display: block;
+  margin: 4px auto 0;
+  max-width: 240px;
+  width: min(100%, 240px);
 }
 
 button:hover:not(:disabled) {
@@ -1317,6 +1352,15 @@ pre {
 
   .hero-layout {
     grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  }
+
+  .task-create-strip {
+    align-items: end;
+    grid-template-columns: minmax(220px, 0.8fr) minmax(320px, 1.2fr) auto;
+  }
+
+  .task-create-strip > button {
+    margin: 0;
   }
 
   .field-preview-card {
