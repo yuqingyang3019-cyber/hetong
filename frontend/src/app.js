@@ -33,6 +33,9 @@ const progressHint = document.querySelector("#progressHint");
 const progressSteps = Array.from(document.querySelectorAll("[data-step]"));
 const accessModal = document.querySelector("#accessModal");
 const accessModalMessage = document.querySelector("#accessModalMessage");
+const taskDrawer = document.querySelector("#taskDrawer");
+const taskDrawerBackdrop = document.querySelector("#taskDrawerBackdrop");
+const closeTaskDrawerButton = document.querySelector("#closeTaskDrawerButton");
 
 const MAX_TASKS = 5;
 const templateSchemaFiles = Object.freeze({
@@ -53,6 +56,7 @@ let authContext = { dingtalkConfigured: false, corpId: "", clientId: "", agentBa
 let agentAuth = { baseUrl: "", token: "", expiresAt: 0 };
 let sessionReady = false;
 let activeTaskId = null;
+let drawerOpen = false;
 
 function apiUrl(path) {
   return path;
@@ -937,6 +941,7 @@ function clearActiveEditor() {
   resetFieldPreviewUi();
   quoteTextPreview.value = "";
   if (extraInfoText) extraInfoText.value = "";
+  syncDrawerVisibility(false);
 }
 
 function statusLabel(status) {
@@ -984,16 +989,38 @@ function createTask(file) {
 
 function selectTask(taskId) {
   activeTaskId = taskId;
+  drawerOpen = Boolean(activeTaskId);
   renderTaskList();
   syncActiveTaskEditor();
   updateActionAvailability();
+}
+
+function closeTaskDrawer() {
+  drawerOpen = false;
+  if (taskDrawer) {
+    taskDrawer.hidden = true;
+    taskDrawer.setAttribute("aria-hidden", "true");
+  }
+  if (taskDrawerBackdrop) taskDrawerBackdrop.hidden = true;
+}
+
+function syncDrawerVisibility(hasContent) {
+  const open = Boolean(drawerOpen && hasContent);
+  if (taskDrawer) {
+    taskDrawer.hidden = !open;
+    taskDrawer.setAttribute("aria-hidden", open ? "false" : "true");
+  }
+  if (taskDrawerBackdrop) taskDrawerBackdrop.hidden = !open;
 }
 
 function removeTask(taskId) {
   const index = tasks.findIndex((task) => task.id === taskId);
   if (index < 0 || taskIsBusy(tasks[index])) return;
   tasks.splice(index, 1);
-  if (activeTaskId === taskId) activeTaskId = tasks[0]?.id || null;
+  if (activeTaskId === taskId) {
+    activeTaskId = tasks[0]?.id || null;
+    drawerOpen = Boolean(activeTaskId);
+  }
   renderTaskList();
   syncActiveTaskEditor();
   updateActionAvailability();
@@ -1049,10 +1076,10 @@ function renderTaskList() {
     header.append(title, createEl("span", `task-status status-${task.status}`, statusLabel(task.status)));
 
     const message = createEl("p", "task-message", task.message || "等待处理");
+    const meta = createEl("p", "task-file-path", `${task.templateName} · ${task.fileName}`);
     const actions = createEl("div", "task-actions");
-    const selectButton = createEl("button", "task-secondary-button", task.id === activeTaskId ? "正在编辑" : "编辑");
+    const selectButton = createEl("button", "task-secondary-button", task.id === activeTaskId && drawerOpen ? "正在查看" : "查看详情");
     selectButton.type = "button";
-    selectButton.disabled = task.id === activeTaskId;
     selectButton.addEventListener("click", (event) => {
       event.stopPropagation();
       selectTask(task.id);
@@ -1078,7 +1105,7 @@ function renderTaskList() {
     });
     actions.append(deleteButton);
 
-    card.append(header, message, actions);
+    card.append(header, meta, message, actions);
     const downloadNode = createTaskDownloadNode(task);
     if (downloadNode) card.append(downloadNode);
     if (task.log) {
@@ -1097,9 +1124,11 @@ async function syncActiveTaskEditor() {
   const task = activeTask();
   if (!task || !task.quoteText) {
     clearActiveEditor();
+    syncDrawerVisibility(false);
     return;
   }
   previewCard.hidden = false;
+  syncDrawerVisibility(true);
   if (activeTaskTitle) activeTaskTitle.textContent = `${task.fileName} · 文本确认`;
   if (activeTaskHint) activeTaskHint.textContent = `${task.templateName}。当前状态：${statusLabel(task.status)}。`;
   quoteTextPreview.value = task.quoteText || "";
@@ -1283,6 +1312,9 @@ generateButton.addEventListener("click", async () => {
   task.quoteText = quoteText;
   await runGenerateTask(task);
 });
+
+closeTaskDrawerButton?.addEventListener("click", closeTaskDrawer);
+taskDrawerBackdrop?.addEventListener("click", closeTaskDrawer);
 
 updateSelectedFile();
 renderTaskList();

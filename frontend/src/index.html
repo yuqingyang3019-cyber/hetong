@@ -126,33 +126,50 @@
         <div id="taskList" class="task-list"></div>
       </section>
 
-      <section id="previewCard" class="card preview-card" hidden>
-        <div class="card-heading">
-          <p class="eyebrow">当前任务</p>
-          <h2 id="activeTaskTitle">确认解析文本并补充信息</h2>
-          <p class="hint" id="activeTaskHint">请检查当前任务的报价单解析文本，必要时可直接修正；额外信息会和解析文本一起交给 LLM 识别合同字段。</p>
-        </div>
-        <label class="field">
-          <span class="field-label">解析内容</span>
-          <textarea id="quoteTextPreview" rows="12"></textarea>
-        </label>
-        <label class="field">
-          <span class="field-label">额外信息提供 <small>可选</small></span>
-          <textarea id="extraInfoText" class="textarea-compact" rows="5" placeholder="例如：付款比例、交货地点、联系人、开户行、税号、签约主体等报价单中没有的信息。"></textarea>
-          <span class="field-help">识别字段时会同时读取“解析内容”和“额外信息”，补充信息优先用于填补缺失字段。</span>
-        </label>
-        <button id="identifyFieldsButton" type="button" disabled>识别当前任务字段</button>
-      </section>
+      <div id="taskDrawerBackdrop" class="drawer-backdrop" hidden></div>
+      <aside id="taskDrawer" class="task-drawer" aria-labelledby="activeTaskTitle" aria-hidden="true" hidden>
+        <div class="drawer-shell">
+          <header class="drawer-header">
+            <div>
+              <p class="eyebrow">当前任务</p>
+              <h2 id="activeTaskTitle">确认解析文本并补充信息</h2>
+              <p class="hint" id="activeTaskHint">请检查当前任务的报价单解析文本，必要时可直接修正；额外信息会和解析文本一起交给 LLM 识别合同字段。</p>
+            </div>
+            <button id="closeTaskDrawerButton" class="drawer-close" type="button" aria-label="关闭任务详情">关闭</button>
+          </header>
 
-      <section id="fieldPreviewCard" class="card field-preview-card" hidden>
-        <div class="card-heading">
-          <p class="eyebrow">字段识别结果</p>
-          <h2>合同式字段预览</h2>
-          <p class="hint" id="fieldPreviewSummary">请按合同字段顺序确认识别结果，红色字段会在合同中显示为待填写。</p>
+          <div class="drawer-content">
+            <section id="previewCard" class="drawer-panel preview-card" hidden>
+              <div class="drawer-section-heading">
+                <h3>报价单解析内容</h3>
+                <p class="hint">左侧对照原报价单，当前版本先展示可编辑文本。</p>
+              </div>
+              <label class="field">
+                <span class="field-label">解析内容</span>
+                <textarea id="quoteTextPreview" rows="12"></textarea>
+              </label>
+              <label class="field">
+                <span class="field-label">额外信息提供 <small>可选</small></span>
+                <textarea id="extraInfoText" class="textarea-compact" rows="5" placeholder="例如：付款比例、交货地点、联系人、开户行、税号、签约主体等报价单中没有的信息。"></textarea>
+                <span class="field-help">识别字段时会同时读取“解析内容”和“额外信息”，补充信息优先用于填补缺失字段。</span>
+              </label>
+              <button id="identifyFieldsButton" type="button" disabled>识别当前任务字段</button>
+            </section>
+
+            <section id="fieldPreviewCard" class="drawer-panel field-preview-card" hidden>
+              <div class="drawer-section-heading">
+                <h3>合同式字段预览</h3>
+                <p class="hint" id="fieldPreviewSummary">请按合同字段顺序确认识别结果，红色字段会在合同中显示为待填写。</p>
+              </div>
+              <div id="contractPreview" class="contract-preview-shell"></div>
+            </section>
+          </div>
+
+          <footer class="drawer-actions">
+            <button id="generateButton" type="button" disabled>确认识别结果并生成合同</button>
+          </footer>
         </div>
-        <div id="contractPreview" class="contract-preview-shell"></div>
-        <button id="generateButton" type="button" disabled>确认识别结果并生成合同</button>
-      </section>
+      </aside>
     </main>
 
     <div id="accessModal" class="modal-backdrop" role="presentation" hidden>
