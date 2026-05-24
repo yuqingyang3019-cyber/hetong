@@ -15,6 +15,7 @@ __pycache__/
 frontend/node_modules/
 agent/.venv/
 agent/python/
+agent/wheelhouse/
 agent/storage/uploads/*
 !agent/storage/uploads/.gitkeep
 agent/storage/contracts/*

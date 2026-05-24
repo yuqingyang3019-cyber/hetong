@@ -93,6 +93,17 @@ jobs:
         working-directory: frontend/dist
         run: npm ci --omit=dev --ignore-scripts
 
+      - name: Build Agent Python wheelhouse
+        run: |
+          rm -rf agent/wheelhouse
+          docker run --rm \
+            -v "$PWD":/io \
+            -w /io \
+            quay.io/pypa/manylinux2014_x86_64 \
+            /opt/python/cp312-cp312/bin/python -m pip wheel \
+              --wheel-dir agent/wheelhouse \
+              -r agent/requirements.txt
+
       - name: Configure Aliyun credentials
         run: |
           s config add \

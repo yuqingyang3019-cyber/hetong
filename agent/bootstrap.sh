@@ -20,7 +20,11 @@ HASH_FILE="$TARGET_DIR/.requirements.sha256"
 if [ ! -x "$TARGET_DIR/bin/uvicorn" ] || [ ! -f "$HASH_FILE" ] || [ "$(cat "$HASH_FILE")" != "$REQ_HASH" ]; then
   rm -rf "$TARGET_DIR"
   python3 -m venv "$TARGET_DIR"
-  "$TARGET_DIR/bin/python" -m pip install --no-cache-dir -r requirements.txt
+  if [ ! -d wheelhouse ]; then
+    echo "缺少 agent/wheelhouse，请确认 CI 已执行 Build Agent Python wheelhouse" >&2
+    exit 2
+  fi
+  "$TARGET_DIR/bin/python" -m pip install --no-index --find-links wheelhouse -r requirements.txt
   echo "$REQ_HASH" > "$HASH_FILE"
 fi
 
