@@ -299,8 +299,8 @@ function showUserBar(user, hint) {
   setUserDetail(userTitleEl, "职位", user?.title);
   setUserDetail(userJobNumberEl, "工号", user?.jobNumber);
   setUserDetail(userEmailEl, "邮箱", user?.email, "未返回（需通讯录邮箱权限）");
-  setUserDetail(userUseridEl, "UserID", user?.userid);
-  setUserDetail(userUnionidEl, "UnionID", user?.unionid);
+  setUserDetail(userUseridEl, "UserID", compactIdentity(user?.userid));
+  setUserDetail(userUnionidEl, "UnionID", compactIdentity(user?.unionid));
   if (loginHintEl && hint != null) {
     loginHintEl.textContent = hint;
   }
@@ -320,6 +320,12 @@ function setUserDetail(el, label, value, emptyText = "未返回") {
     el.textContent = `${label}：${emptyText}`;
     el.classList.add("muted");
   }
+}
+
+function compactIdentity(value) {
+  const text = String(value || "").trim();
+  if (text.length <= 18) return text;
+  return `${text.slice(0, 8)}…${text.slice(-6)}`;
 }
 
 async function refreshAuthMe() {

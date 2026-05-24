@@ -12,9 +12,45 @@
   <body>
     <main class="page">
       <section class="hero">
-        <h1>合同生成助手</h1>
-        <p>上传报价单 → 补充信息 → 确认字段 → 生成合同</p>
+        <div class="hero-layout">
+          <div>
+            <h1>合同生成助手</h1>
+            <p>上传报价单 → 补充信息 → 确认字段 → 生成合同</p>
+          </div>
+          <section id="userBar" class="identity-panel" hidden>
+            <div class="identity-main">
+              <img id="userAvatar" class="user-avatar" alt="用户头像" width="40" height="40" hidden />
+              <div class="user-summary">
+                <p id="userName" class="user-name">—</p>
+                <p id="userDept" class="login-hint">部门：—</p>
+              </div>
+            </div>
+            <details class="identity-details">
+              <summary>查看身份详情</summary>
+              <div class="user-detail-list">
+                <p id="userMobile" class="user-detail">手机：—</p>
+                <p id="userTitle" class="user-detail">职位：—</p>
+                <p id="userJobNumber" class="user-detail">工号：—</p>
+                <p id="userEmail" class="user-detail">邮箱：—</p>
+                <p id="userUserid" class="user-detail">UserID：—</p>
+                <p id="userUnionid" class="user-detail">UnionID：—</p>
+              </div>
+            </details>
+            <p id="loginHint" class="hint login-hint"></p>
+          </section>
+        </div>
 
+        <div class="top-step-bar" id="progressSteps">
+          <span class="top-step is-active" data-step="auth">钉钉免登</span>
+          <span class="top-step" data-step="upload">上传解析</span>
+          <span class="top-step" data-step="review">补充识别</span>
+          <span class="top-step" data-step="generate">生成预览</span>
+        </div>
+        <p class="hint hero-progress-hint" id="progressHint">系统会在每一步完成后自动更新状态。</p>
+        <details class="log-details hero-log-details">
+          <summary>查看详细日志</summary>
+          <pre id="log"></pre>
+        </details>
       </section>
 
       <section class="card form-card">
@@ -23,67 +59,6 @@
           <h2>上传报价单</h2>
           <p class="hint">先选择合同模板，再上传报价单文件。系统最多保留 5 个未完成任务，可并行生成多份合同。</p>
         </div>
-
-        <section id="userBar" class="identity-panel" hidden>
-          <div class="identity-main">
-            <img id="userAvatar" class="user-avatar" alt="用户头像" width="44" height="44" hidden />
-            <div class="user-summary">
-              <p id="userName" class="user-name">—</p>
-              <p id="loginHint" class="hint login-hint"></p>
-            </div>
-          </div>
-          <div class="user-detail-list">
-            <p id="userDept" class="user-detail">部门：—</p>
-            <p id="userMobile" class="user-detail">手机：—</p>
-            <p id="userTitle" class="user-detail">职位：—</p>
-            <p id="userJobNumber" class="user-detail">工号：—</p>
-            <p id="userEmail" class="user-detail">邮箱：—</p>
-            <p id="userUserid" class="user-detail">UserID：—</p>
-            <p id="userUnionid" class="user-detail">UnionID：—</p>
-          </div>
-        </section>
-
-        <section class="inline-progress-card">
-          <div class="inline-progress-heading">
-            <p class="eyebrow">系统日志</p>
-            <h3>免登与运行状态</h3>
-            <p class="hint" id="progressHint">系统会在每一步完成后自动更新状态。</p>
-          </div>
-          <ol class="step-list" id="progressSteps">
-            <li class="step is-active" data-step="auth">
-              <span class="step-dot" aria-hidden="true"></span>
-              <span>
-                <strong>钉钉免登</strong>
-                <small>确认当前用户身份</small>
-              </span>
-            </li>
-            <li class="step" data-step="upload">
-              <span class="step-dot" aria-hidden="true"></span>
-              <span>
-                <strong>上传并解析</strong>
-                <small>读取报价单内容</small>
-              </span>
-            </li>
-            <li class="step" data-step="review">
-              <span class="step-dot" aria-hidden="true"></span>
-              <span>
-                <strong>补充并识别</strong>
-                <small>确认合同关键字段</small>
-              </span>
-            </li>
-            <li class="step" data-step="generate">
-              <span class="step-dot" aria-hidden="true"></span>
-              <span>
-                <strong>生成合同</strong>
-                <small>上传钉盘并预览</small>
-              </span>
-            </li>
-          </ol>
-          <details class="log-details">
-            <summary>查看详细日志</summary>
-            <pre id="log"></pre>
-          </details>
-        </section>
 
         <label class="field">
           <span class="field-label">合同模板</span>
