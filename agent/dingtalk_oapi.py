@@ -1,21 +1,11 @@
-"""钉钉企业内部应用旧版 OAPI 调用与 access_token 内存缓存。"""
+"""DingTalk OAuth2 access token helper backed by the official SDK."""
 
 from __future__ import annotations
 
-import json
 import os
 import threading
 import time
 from typing import Any
-from urllib.parse import quote
-
-import requests
-
-_GETTOKEN_URL = "https://oapi.dingtalk.com/gettoken"
-_OAUTH_TOKEN_URL_TEMPLATE = "https://api.dingtalk.com/v1.0/oauth2/{corp_id}/token"
-_GETUSERINFO_URL = "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo"
-_USER_GET_URL = "https://oapi.dingtalk.com/topapi/v2/user/get"
-_DEPT_GET_URL = "https://oapi.dingtalk.com/topapi/v2/department/get"
 
 _lock = threading.Lock()
 _cached_access_tokens: dict[str, tuple[str, float]] = {}
@@ -26,24 +16,6 @@ def clear_token_cache() -> None:
         _cached_access_tokens.clear()
 
 
-def _dingtalk_errcode_ok(value: Any) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return int(value) == 0
-    if isinstance(value, str):
-        return value == "0" or value.lower() == "ok"
-    return False
-
-
-def get_app_credentials() -> tuple[str, str]:
-    key = (os.getenv("DINGTALK_APP_KEY") or os.getenv("DINGTALK_CLIENT_ID") or "").strip()
-    secret = (os.getenv("DINGTALK_APP_SECRET") or os.getenv("DINGTALK_CLIENT_SECRET") or "").strip()
-    return key, secret
-
-
 def get_client_credentials() -> tuple[str, str, str]:
     client_id = (os.getenv("DINGTALK_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("DINGTALK_CLIENT_SECRET") or "").strip()
@@ -51,200 +23,71 @@ def get_client_credentials() -> tuple[str, str, str]:
     return client_id, client_secret, corp_id
 
 
-def _raise_for_dingtalk_status(resp: requests.Response, operation: str) -> None:
-    if resp.status_code < 400:
-        return
-
-    try:
-        body: Any = resp.json()
-    except ValueError:
-        body = resp.text[:500]
-
-    if isinstance(body, dict):
-        code = body.get("code") or body.get("errcode")
-        message = body.get("message") or body.get("errmsg")
-        detail = f"code={code} message={message} body={body}"
-    else:
-        detail = f"body={body}"
-
-    raise requests.HTTPError(f"{operation} 失败：HTTP {resp.status_code} {detail}", response=resp)
+def _response_body(response: Any) -> Any:
+    if hasattr(response, "body"):
+        return response.body
+    return response
 
 
-def get_legacy_app_credentials() -> tuple[str, str]:
-    app_key = (os.getenv("DINGTALK_APP_KEY") or "").strip()
-    app_secret = (os.getenv("DINGTALK_APP_SECRET") or "").strip()
-    return app_key, app_secret
-
-
-def _cache_access_token(cache_key: str, token: str, expires_in: int, fetched_at: float) -> None:
-    with _lock:
-        _cached_access_tokens[cache_key] = (token, fetched_at + max(60, expires_in))
-
-
-def _get_oauth_access_token(client_id: str, client_secret: str, corp_id: str, fetched_at: float, cache_key: str) -> str:
-    resp = requests.post(
-        _OAUTH_TOKEN_URL_TEMPLATE.format(corp_id=quote(corp_id, safe="")),
-        json={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "grant_type": "client_credentials",
-        },
-        timeout=15,
-    )
-    _raise_for_dingtalk_status(resp, "获取钉钉应用 access_token")
-    data = resp.json()
-    token = data.get("access_token")
-    if not token or not isinstance(token, str):
-        raise RuntimeError(f"钉钉 OAuth2 token 未返回 access_token: {data}")
-
-    expires_in = int(data.get("expires_in") or 7200)
-    _cache_access_token(cache_key, token, expires_in, fetched_at)
-    return token
-
-
-def _get_legacy_access_token(app_key: str, app_secret: str, fetched_at: float, cache_key: str) -> str:
-    resp = requests.get(
-        _GETTOKEN_URL,
-        params={"appkey": app_key, "appsecret": app_secret},
-        timeout=15,
-    )
-    _raise_for_dingtalk_status(resp, "获取钉钉旧版应用 access_token")
-    data = resp.json()
-    if not _dingtalk_errcode_ok(data.get("errcode")):
-        raise RuntimeError(f"钉钉 gettoken 失败: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
-
-    token = data.get("access_token")
-    if not token or not isinstance(token, str):
-        raise RuntimeError("钉钉 gettoken 未返回 access_token")
-
-    expires_in = int(data.get("expires_in") or 7200)
-    _cache_access_token(cache_key, token, expires_in, fetched_at)
-    return token
-
-
-def get_app_access_token(corp_id: str | None = None) -> str:
-    """获取企业内部应用 access_token，带进程内缓存（提前 120 秒刷新）。"""
-    now = time.time()
-
-    client_id, client_secret, configured_corp_id = get_client_credentials()
-    effective_corp_id = (corp_id or configured_corp_id).strip()
-    if client_id or client_secret:
-        if not client_id or not client_secret or not effective_corp_id:
-            raise RuntimeError("新版钉钉凭证需要同时配置 DINGTALK_CLIENT_ID、DINGTALK_CLIENT_SECRET 和 DINGTALK_CORP_ID")
-        cache_key = f"oauth:{effective_corp_id}"
-        with _lock:
-            cached = _cached_access_tokens.get(cache_key)
-            if cached and now < cached[1] - 120:
-                return cached[0]
-        return _get_oauth_access_token(client_id, client_secret, effective_corp_id, now, cache_key)
-
-    app_key, app_secret = get_legacy_app_credentials()
-    if app_key and app_secret:
-        cache_key = f"legacy:{app_key}"
-        with _lock:
-            cached = _cached_access_tokens.get(cache_key)
-            if cached and now < cached[1] - 120:
-                return cached[0]
-        return _get_legacy_access_token(app_key, app_secret, now, cache_key)
-
-    raise RuntimeError("未配置钉钉应用凭证：需要新版 CLIENT_ID/SECRET/CORP_ID 或旧版 APP_KEY/APP_SECRET")
-
-
-def get_userid_by_auth_code(access_token: str, auth_code: str) -> dict[str, Any]:
-    resp = requests.post(
-        _GETUSERINFO_URL,
-        data={"access_token": access_token, "code": auth_code},
-        headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
-        timeout=15,
-    )
-    _raise_for_dingtalk_status(resp, "通过免登码获取钉钉用户信息")
-    data = resp.json()
-    if not _dingtalk_errcode_ok(data.get("errcode")):
-        raise RuntimeError(f"钉钉 getuserinfo 失败: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
-
-    result = data.get("result")
-    if not isinstance(result, dict):
-        raise RuntimeError("钉钉 getuserinfo 返回缺少 result")
-    userid = result.get("userid")
-    if not userid:
-        raise RuntimeError("钉钉 getuserinfo 未返回 userid")
-    return result
-
-
-def get_userid_by_login_code(access_token: str, auth_code: str) -> dict[str, Any]:
-    result = get_userid_by_auth_code(access_token, auth_code)
-    result.setdefault("authMode", "h5_microapp")
-    return result
-
-
-def get_user_detail(access_token: str, userid: str, language: str = "zh_CN") -> dict[str, Any]:
-    resp = requests.post(
-        f"{_USER_GET_URL}?access_token={quote(access_token, safe='')}",
-        json={"userid": userid, "language": language},
-        timeout=15,
-    )
-    _raise_for_dingtalk_status(resp, "获取钉钉用户详情")
-    data = resp.json()
-    if not _dingtalk_errcode_ok(data.get("errcode")):
-        raise RuntimeError(f"钉钉 user/get 失败: errcode={data.get('errcode')} errmsg={data.get('errmsg')}")
-
-    result = data.get("result")
-    if not isinstance(result, dict):
-        raise RuntimeError("钉钉 user/get 返回缺少 result")
-    return result
-
-
-def parse_dept_id_list(raw: Any) -> list[int]:
-    if raw is None:
-        return []
-    if isinstance(raw, list):
-        out: list[int] = []
-        for x in raw:
-            try:
-                out.append(int(x))
-            except (TypeError, ValueError):
-                continue
-        return out
-    if isinstance(raw, str):
-        raw = raw.strip()
-        if not raw:
-            return []
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return parse_dept_id_list(parsed)
-        except json.JSONDecodeError:
-            pass
-        try:
-            return [int(raw)]
-        except ValueError:
-            return []
-    try:
-        return [int(raw)]
-    except (TypeError, ValueError):
-        return []
-
-
-def get_department_name(access_token: str, dept_id: int) -> str | None:
-    try:
-        resp = requests.post(
-            f"{_DEPT_GET_URL}?access_token={quote(access_token, safe='')}",
-            json={"dept_id": dept_id},
-            timeout=10,
-        )
-        _raise_for_dingtalk_status(resp, "获取钉钉部门信息")
-        data = resp.json()
-        if not _dingtalk_errcode_ok(data.get("errcode")):
-            return None
-        result = data.get("result")
-        if isinstance(result, dict):
-            name = result.get("name")
-            return str(name) if name else None
-    except Exception:
-        return None
+def _get_value(data: Any, *names: str) -> Any:
+    if isinstance(data, dict):
+        for name in names:
+            if name in data:
+                return data[name]
+    for name in names:
+        if hasattr(data, name):
+            return getattr(data, name)
     return None
 
 
-def enrich_user_profile(user: dict[str, Any]) -> dict[str, Any]:
-    """预留：对接企业权限中台或花名册时在此扩展。"""
-    return dict(user)
+def _oauth_client() -> Any:
+    try:
+        from alibabacloud_dingtalk.oauth2_1_0.client import Client as OAuthClient
+        from alibabacloud_tea_openapi import models as open_api_models
+    except ImportError as exc:
+        raise RuntimeError("未安装 alibabacloud_dingtalk OAuth2 SDK，无法获取钉钉 access_token") from exc
+
+    config = open_api_models.Config()
+    config.protocol = "https"
+    config.region_id = "central"
+    return OAuthClient(config)
+
+
+def _oauth_models() -> Any:
+    try:
+        from alibabacloud_dingtalk.oauth2_1_0 import models as oauth_models
+    except ImportError as exc:
+        raise RuntimeError("未安装 alibabacloud_dingtalk OAuth2 SDK，无法构造钉钉 token 请求") from exc
+    return oauth_models
+
+
+def get_app_access_token(corp_id: str | None = None) -> str:
+    """Fetch an app access token with the official DingTalk OAuth2 SDK."""
+    now = time.time()
+    client_id, client_secret, configured_corp_id = get_client_credentials()
+    effective_corp_id = (corp_id or configured_corp_id).strip()
+    if not client_id or not client_secret or not effective_corp_id:
+        raise RuntimeError("新版钉钉凭证需要同时配置 DINGTALK_CLIENT_ID、DINGTALK_CLIENT_SECRET 和 DINGTALK_CORP_ID")
+
+    cache_key = f"oauth:{effective_corp_id}"
+    with _lock:
+        cached = _cached_access_tokens.get(cache_key)
+        if cached and now < cached[1] - 120:
+            return cached[0]
+
+    oauth_models = _oauth_models()
+    request = oauth_models.GetTokenRequest(
+        client_id=client_id,
+        client_secret=client_secret,
+        grant_type="client_credentials",
+    )
+    response = _oauth_client().get_token(effective_corp_id, request)
+    body = _response_body(response)
+    token = _get_value(body, "accessToken", "access_token")
+    if not token:
+        raise RuntimeError("钉钉 OAuth2 SDK 未返回 access_token")
+    expires_in = int(_get_value(body, "expiresIn", "expires_in") or 7200)
+    with _lock:
+        _cached_access_tokens[cache_key] = (str(token), now + max(60, expires_in))
+    return str(token)
+

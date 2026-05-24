@@ -192,8 +192,8 @@ flowchart TD
 2. AgentRun 加载模板字段契约。
 3. AgentRun 调用 DashScope 识别结构化字段。
 4. AgentRun 返回已识别字段、缺失字段和表格行数。
-5. 前端展示字段预览，用户确认后调用 `POST /ag-ui/agent`。
-6. AgentRun 使用用户确认后的字段数据渲染合同。
+5. 前端展示字段预览，待填写字段只作为确认界面提示。
+6. 用户确认后调用 `POST /ag-ui/agent`，AgentRun 使用用户确认后的字段数据渲染合同；仍缺失的字段在生成的 Word 合同中渲染为空白。
 7. AgentRun 上传合同到钉盘。
 8. AgentRun 通过 AG-UI 事件返回进度、日志和合同预览信息。
 
@@ -327,10 +327,10 @@ V1 主要依赖 AgentRun 日志和前端任务日志排障。
 | --- | --- | --- | --- |
 | 图片报价单 OCR | 支持 `.jpg`、`.jpeg`、`.png` 图片 OCR | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |
 | 前端文件选择 | 支持 Excel、PDF、图片 | 已更新 H5 文件选择提示和 `accept` | 后续根据 OCR 质量补充图片清晰度提示 |
-| 鉴权边界 | BFF 负责免登和 AgentRun 短期凭证，AgentRun 只处理业务请求 | 已迁移为 BFF `/bff/auth/*` + AgentRun Bearer 鉴权 | 继续替换 BFF 内部钉钉调用为官方新版 SDK 封装 |
+| 鉴权边界 | BFF 负责免登和 AgentRun 短期凭证，AgentRun 只处理业务请求 | 已迁移为 BFF `/bff/auth/*` + AgentRun Bearer 鉴权，BFF 内部钉钉调用使用官方新版 SDK | 后续在真实钉钉环境验证新版 SDK 免登字段稳定性 |
 | 业务请求路径 | 前端直连 AgentRun 业务接口 | 已改为 `agentBaseUrl` + Bearer Token | 部署时确保 AgentRun CORS 允许 H5 域名 |
 | 合同交付 | 前端使用钉钉客户端 JSAPI SDK 预览钉盘文件 | 已返回 `preview` 结构并由前端打开预览入口 | 继续确认钉盘新版 SDK 的稳定预览 URL 字段 |
-| TXT 输入 | PRD 不将 TXT 作为正式业务格式 | 测试和抽取模块仍保留 TXT 能力 | 保留为内部兼容或测试能力，但不在前端正式入口展示 |
+| TXT 输入 | PRD 不将 TXT 作为正式业务格式 | 上传入口已按正式格式白名单拒绝 TXT | 后续若需内部测试文本输入，应使用独立开发工具而非正式业务 API |
 | 服务端任务持久化 | V1 不包含 | 当前任务状态在前端内存中维护 | 后续若做跨端恢复再设计服务端任务表 |
 
 ## 15. 后续扩展方向

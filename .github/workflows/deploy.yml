@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+  pull_request:
   workflow_dispatch:
 
 env:
@@ -22,22 +23,47 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: agent/requirements.txt
+          cache-dependency-path: |
+            agent/requirements.txt
+            agent/requirements-dev.txt
 
       - name: Install Python dependencies
-        run: python3 -m pip install -r agent/requirements.txt
+        run: python3 -m pip install -r agent/requirements-dev.txt
+
+      - name: Python syntax check
+        run: python3 -m compileall agent
 
       - name: Run tests
         run: python3 -m pytest agent/tests
+
+      - name: Build Agent Python wheelhouse
+        run: |
+          rm -rf agent/wheelhouse
+          docker run --rm \
+            -v "$PWD":/io \
+            -w /io \
+            quay.io/pypa/manylinux2014_x86_64 \
+            /opt/python/cp312-cp312/bin/python -m pip wheel \
+              --wheel-dir agent/wheelhouse \
+              -r agent/requirements.txt
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install H5 frontend dependencies
+        working-directory: frontend
+        run: npm ci
 
       - name: Build H5 frontend
         working-directory: frontend
         run: npm run build
+
+      - name: Node syntax check
+        run: node --check frontend/dist/index.cjs
 
   deploy:
     needs: test
@@ -157,16 +183,12 @@ jobs:
           echo "$PAGE" | grep "上传报价单 → 补充信息 → 确认字段 → 生成合同"
           echo "$PAGE" | grep "accessModal"
 
-      - name: AGUI protocol check
+      - name: Agent health check
         if: steps.get-url.outputs.endpoint_url != ''
         run: |
           sleep 30
           ENDPOINT_URL="${{ steps.get-url.outputs.endpoint_url }}"
-          curl --fail-with-body --connect-timeout 10 --max-time 120 --retry 2 --retry-delay 10 --retry-all-errors -N "${ENDPOINT_URL}/ag-ui/agent" \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -H "Accept: text/event-stream" \
-            -d '{"threadId":"ci-thread","runId":"ci-run","state":{},"messages":[{"id":"ci-msg","role":"user","content":"健康检查"}],"tools":[],"context":[],"forwardedProps":{"healthCheck":true}}'
+          curl --fail-with-body --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 10 --retry-all-errors "${ENDPOINT_URL}/health"
 
       - name: Dump AgentRun logs on failure
         if: failure()

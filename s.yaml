@@ -49,6 +49,7 @@ resources:
           DINGTALK_DRIVE_CONFLICT_POLICY: ${env("DINGTALK_DRIVE_CONFLICT_POLICY", "AUTO_RENAME")}
           APP_SESSION_SECRET: ${env("APP_SESSION_SECRET")}
           AGENT_ALLOWED_ORIGINS: ${env("AGENT_ALLOWED_ORIGINS")}
+          AGENT_ALLOWED_ORIGIN_REGEX: ${env("AGENT_ALLOWED_ORIGIN_REGEX", "")}
         endpoints:
           - name: Default
             version: LATEST

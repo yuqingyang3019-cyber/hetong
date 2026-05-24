@@ -88,9 +88,20 @@ async function refreshAgentToken() {
   agentAuth = {
     baseUrl: body.agentBaseUrl || authContext.agentBaseUrl || "",
     token: body.agentAccessToken || "",
-    expiresAt: Number(body.expiresAt || 0),
+    expiresAt: parseExpiresAt(body.expiresAt),
   };
   return agentAuth;
+}
+
+function parseExpiresAt(value) {
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    const millis = Date.parse(value);
+    if (Number.isFinite(millis)) return Math.floor(millis / 1000);
+  }
+  return 0;
 }
 
 async function fetchAgent(path, options = {}, retry = true) {
@@ -136,13 +147,6 @@ function appendStageLog(stage, message = "") {
 
 function configState(value) {
   return value ? "已配置" : "缺失";
-}
-
-function maskDiagnosticValue(value, prefix = 4, suffix = 4) {
-  const text = String(value || "");
-  if (!text) return "未配置";
-  if (text.length <= prefix + suffix) return "***";
-  return `${text.slice(0, prefix)}***${text.slice(-suffix)}`;
 }
 
 function setStatus(message, tone = "info") {
@@ -427,10 +431,7 @@ function requestDingTalkAuthCode(corpId, timeoutMs = 12000) {
         corpId,
         onSuccess: finish((value) => {
           const code = value?.code || "";
-          appendStageLog(
-            "获取钉钉免登码",
-            code ? `成功获取 code length=${code.length} code=${maskDiagnosticValue(code, 6, 6)}` : "成功回调但未返回 code",
-          );
+          appendStageLog("获取钉钉免登码", code ? `成功获取 code length=${code.length}` : "成功回调但未返回 code");
           resolve(value);
         }),
         onFail: finish((err) => {
@@ -514,11 +515,20 @@ async function initAuth() {
     } catch {
       /* ignore */
     }
-    await refreshAgentToken();
-    showUserBar(me.user, "已通过钉钉免登。");
-    setInteractionEnabled(true);
-    setStatus("");
-    setAuthReadyProgress("");
+    try {
+      await refreshAgentToken();
+      showUserBar(me.user, "已通过钉钉免登。");
+      setInteractionEnabled(true);
+      setStatus("");
+      setAuthReadyProgress("");
+    } catch (error) {
+      const message = `登录态刷新失败：${formatError(error)}，请重新打开应用。`;
+      appendStageLog("刷新 AgentRun 访问凭证失败", message);
+      setInteractionEnabled(false);
+      setStatus(message, "error");
+      setProgress("auth", "error", message);
+      if (loginHintEl) loginHintEl.textContent = message;
+    }
     return;
   }
 
@@ -552,13 +562,13 @@ async function initAuth() {
 
   appendStageLog(
     "免登诊断",
-    `origin=${window.location.origin} corpId=${corpId} clientId=${clientId} clientSecret=${authContext.clientSecretHint || "未知"} jsapi=dd.runtime.permission.requestAuthCode`,
+    `origin=${window.location.origin} corpId=${corpId} clientId=${clientId} jsapi=dd.runtime.permission.requestAuthCode`,
   );
 
   await waitForDingTalkReady().then(() => requestDingTalkAuthCode(corpId)).then(async (result) => {
     const code = result && result.code;
     if (!code) throw new Error("获取钉钉免登码失败：未获取到免登授权码");
-    appendStageLog("免登码诊断", `length=${code.length} code=${maskDiagnosticValue(code, 6, 6)}`);
+    appendStageLog("免登码诊断", `length=${code.length}`);
     appendStageLog("提交免登码", "请求 /bff/auth/dingtalk-login");
     let loginResponse;
     try {
@@ -579,7 +589,7 @@ async function initAuth() {
     agentAuth = {
       baseUrl: body.agentBaseUrl || authContext.agentBaseUrl || "",
       token: body.agentAccessToken || "",
-      expiresAt: Number(body.expiresAt || 0),
+      expiresAt: parseExpiresAt(body.expiresAt),
     };
     if (body.user) {
       try {
@@ -665,8 +675,31 @@ function fileToDataUrl(file) {
 
 function openDingTalkPreview(payload) {
   const preview = payload?.preview || {};
+  const dingDrive = payload?.dingDrive || {};
   const url = preview.previewUrl || preview.openUrl || payload?.previewUrl || payload?.openUrl;
-  if (!url) throw new Error("未返回钉盘预览入口");
+  if (!url && !(dingDrive.spaceId && dingDrive.fileId)) throw new Error("未返回钉盘预览入口");
+  const fileName = dingDrive.fileName || payload?.fileName || "合同.docx";
+  const previewOptions = {
+    spaceId: dingDrive.spaceId,
+    fileId: dingDrive.fileId,
+    fileName,
+    url,
+  };
+  const nativePreview = window.dd?.biz?.cspace?.preview || window.dd?.biz?.util?.previewFile;
+  if (nativePreview && dingDrive.spaceId && dingDrive.fileId) {
+    try {
+      nativePreview({
+        ...previewOptions,
+        onFail: () => {
+          if (url) window.dd?.biz?.util?.openLink?.({ url }) || window.dd?.openLink?.({ url });
+        },
+      });
+      return;
+    } catch {
+      if (!url) throw new Error("钉钉客户端无法打开钉盘文件预览");
+    }
+  }
+  if (!url) throw new Error("未返回钉盘预览链接");
   if (window.dd?.openLink) {
     window.dd.openLink({ url });
     return;
@@ -678,9 +711,8 @@ function openDingTalkPreview(payload) {
   window.open(url, "_blank", "noopener");
 }
 
-function parseSseBuffer(buffer) {
-  return buffer
-    .split("\n\n")
+function parseSseChunk(chunk) {
+  return chunk
     .map((chunk) => chunk.trim())
     .filter(Boolean)
     .map((chunk) => chunk.replace(/^data:\s*/, ""))
@@ -692,6 +724,13 @@ function parseSseBuffer(buffer) {
       }
     })
     .filter(Boolean);
+}
+
+function consumeSseBuffer(buffer) {
+  const lastBoundary = buffer.lastIndexOf("\n\n");
+  if (lastBoundary < 0) return { events: [], rest: buffer };
+  const complete = buffer.slice(0, lastBoundary);
+  return { events: parseSseChunk(complete.split("\n\n")), rest: buffer.slice(lastBoundary + 2) };
 }
 
 async function generateContract(task, quoteText, extraInfo, extractedData) {
@@ -734,20 +773,30 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let finished = false;
+  let generated = null;
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
-    const events = parseSseBuffer(buffer);
-    if (buffer.endsWith("\n\n")) buffer = "";
-    for (const event of events) {
+    const parsed = consumeSseBuffer(buffer);
+    buffer = parsed.rest;
+    for (const event of parsed.events) {
       if (event.type === "TEXT_MESSAGE_CONTENT") appendTaskLog(task, event.delta || "");
       if (event.type === "CUSTOM" && event.name === "contract_generated") {
-        task.download = event.value || {};
+        generated = event.value || {};
+        task.download = generated;
       }
       if (event.type === "RUN_ERROR") throw new Error(event.message || "生成失败");
+      if (event.type === "RUN_FINISHED") finished = true;
     }
   }
+  const preview = generated?.preview || {};
+  const hasPreview = Boolean(preview.previewUrl || preview.openUrl || generated?.previewUrl || generated?.openUrl || generated?.dingDrive?.fileId);
+  if (!finished || !generated || !hasPreview) {
+    throw new Error("合同生成未返回钉盘预览入口，请重试。");
+  }
+  return generated;
 }
 
 function createEl(tagName, className, text) {
@@ -951,7 +1000,7 @@ async function renderFieldPreview(task) {
   if (fieldPreviewSummary) {
     fieldPreviewSummary.className = `hint field-preview-summary${stats.missing ? " has-missing" : " all-recognized"}`;
     fieldPreviewSummary.textContent = stats.missing
-      ? `按合同顺序展示：已识别 ${stats.recognized} 项，仍有 ${stats.missing} 项待填写。红色字段会在合同中保留待填写提示。`
+      ? `按合同顺序展示：已识别 ${stats.recognized} 项，仍有 ${stats.missing} 项待填写。确认生成后，红色字段在 Word 合同中留空。`
       : `按合同顺序展示：已识别 ${stats.recognized} 项，没有待填写字段。请确认预览后生成合同。`;
   }
   if (fieldPreviewCard) fieldPreviewCard.hidden = false;
@@ -961,7 +1010,7 @@ function resetFieldPreviewUi() {
   if (fieldPreviewCard) fieldPreviewCard.hidden = true;
   if (fieldPreviewSummary) {
     fieldPreviewSummary.className = "hint field-preview-summary";
-    fieldPreviewSummary.textContent = "请按合同字段顺序确认识别结果，红色字段会在合同中显示为待填写。";
+    fieldPreviewSummary.textContent = "请按合同字段顺序确认识别结果，红色字段生成到 Word 合同时会留空。";
   }
   if (contractPreviewEl) {
     contractPreviewEl.textContent = "";
@@ -1077,7 +1126,7 @@ function createTaskDownloadNode(task) {
   if (!task.download) return null;
   const payload = task.download;
   const url = payload.preview?.previewUrl || payload.preview?.openUrl || payload.previewUrl || payload.openUrl;
-  if (url) {
+  if (url || payload.dingDrive?.fileId) {
     const button = createEl("button", "task-download", "预览钉盘合同");
     button.type = "button";
     button.addEventListener("click", (event) => {

@@ -60,7 +60,9 @@ def safe_file_name(name: str) -> str:
 
 
 def template_basename(template_type: str) -> str:
-    return TEMPLATE_BASENAME.get(template_type, TEMPLATE_BASENAME["caigouhetong"])
+    if template_type not in TEMPLATE_BASENAME:
+        raise ValueError(f"不支持的合同模板：{template_type}")
+    return TEMPLATE_BASENAME[template_type]
 
 
 def template_options() -> list[dict[str, str]]:
@@ -80,7 +82,9 @@ def template_schema_path(template_type: str) -> Path:
 
 @lru_cache(maxsize=16)
 def get_template_config(template_type: str) -> TemplateConfig:
-    mapped = template_type if template_type in TEMPLATE_BASENAME else "caigouhetong"
+    mapped = template_type
+    if mapped not in TEMPLATE_BASENAME:
+        raise ValueError(f"不支持的合同模板：{template_type}")
     schema_path = template_schema_path(mapped)
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     scalar_keys = [field["key"] for field in schema.get("scalars", [])]

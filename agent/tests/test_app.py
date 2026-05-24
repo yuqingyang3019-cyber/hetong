@@ -1,7 +1,8 @@
 from pathlib import Path
 import base64
+import json
 import os
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import ANY, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -27,6 +28,30 @@ def agent_auth_header(userid: str = "uid1", unionid: str = "union-x") -> dict[st
     return {"Authorization": f"Bearer {token}"}
 
 
+def upload_quote(
+    original_name: str = "quote.pdf",
+    mime_type: str = "application/pdf",
+    content: bytes = b"%PDF-1.4 quote",
+    headers: dict[str, str] | None = None,
+) -> dict:
+    response = client.post(
+        "/api/uploads",
+        headers=headers or agent_auth_header(),
+        json={
+            "originalName": original_name,
+            "mimeType": mime_type,
+            "size": len(content),
+            "data": base64.b64encode(content).decode("ascii"),
+        },
+    )
+    assert response.status_code == 200
+    return response.json()
+
+
+def upload_record(upload_id: str) -> dict:
+    return json.loads((UPLOADS_DIR / f"{upload_id}.json").read_text(encoding="utf-8"))
+
+
 def test_health() -> None:
     response = client.get("/health")
     assert response.status_code == 200
@@ -38,19 +63,27 @@ def test_h5_page_is_not_served_by_agent() -> None:
     assert response.status_code == 404
 
 
-def test_upload_and_download_txt() -> None:
+def test_upload_multipart_pdf() -> None:
     response = client.post(
         "/api/uploads",
         headers=agent_auth_header(),
-        files={"file": ("quote.txt", b"hello quote", "text/plain")},
+        files={"file": ("quote.pdf", b"%PDF-1.4 quote", "application/pdf")},
     )
     assert response.status_code == 200
     body = response.json()
     assert body["id"]
     assert body["ok"] is True
+    assert "path" not in body
 
 
-def test_upload_json_base64_and_download_txt() -> None:
+def test_upload_json_base64_pdf() -> None:
+    content = b"%PDF-1.4 hello quote"
+    body = upload_quote(content=content)
+    assert body["size"] == len(content)
+    assert body["ok"] is True
+
+
+def test_upload_rejects_txt() -> None:
     response = client.post(
         "/api/uploads",
         headers=agent_auth_header(),
@@ -61,39 +94,50 @@ def test_upload_json_base64_and_download_txt() -> None:
             "data": base64.b64encode(b"hello quote").decode("ascii"),
         },
     )
-    assert response.status_code == 200
+    assert response.status_code == 400
     body = response.json()
-    assert body["size"] == len(b"hello quote")
-    assert body["ok"] is True
+    assert body["code"] == "UNSUPPORTED_FILE_TYPE"
 
 
-def test_parse_uploaded_quote_text() -> None:
+def test_upload_owner_cannot_access_other_user_upload() -> None:
+    upload_body = upload_quote()
+    response = client.post(
+        f"/api/uploads/{upload_body['id']}/quote-text",
+        headers=agent_auth_header(userid="uid2", unionid="union-y"),
+        json={"templateType": "caigouhetong"},
+    )
+    assert response.status_code == 403
+    assert response.json()["code"] == "FORBIDDEN"
+
+
+def test_parse_uploaded_quote_image_text() -> None:
     upload = client.post(
         "/api/uploads",
         headers=agent_auth_header(),
         json={
-            "originalName": "quote.txt",
-            "mimeType": "text/plain",
-            "size": len("报价单文本".encode("utf-8")),
-            "data": base64.b64encode("报价单文本".encode("utf-8")).decode("ascii"),
+            "originalName": "quote.png",
+            "mimeType": "image/png",
+            "size": len(b"image-bytes"),
+            "data": base64.b64encode(b"image-bytes").decode("ascii"),
         },
     )
     assert upload.status_code == 200
     upload_body = upload.json()
 
-    response = client.post(
-        f"/api/uploads/{upload_body['id']}/quote-text",
-        headers=agent_auth_header(),
-        json={"templateType": "caigouhetong"},
-    )
+    with patch("agent.contract.extract.extract_image_text", return_value="报价单文本"):
+        response = client.post(
+            f"/api/uploads/{upload_body['id']}/quote-text",
+            headers=agent_auth_header(),
+            json={"templateType": "caigouhetong"},
+        )
 
     assert response.status_code == 200
     body = response.json()
     assert body["uploadId"] == upload_body["id"]
-    assert body["originalName"] == "quote.txt"
+    assert body["originalName"] == "quote.png"
     assert body["quoteText"] == "报价单文本"
     assert body["textLength"] == len("报价单文本")
-    assert body["parser"] == {"type": "text", "ocrUsed": False}
+    assert body["parser"] == {"type": "image", "ocrUsed": True}
 
 
 def test_parse_uploaded_image_uses_ocr() -> None:
@@ -138,37 +182,8 @@ def test_upload_rejects_empty_file() -> None:
     assert "文件内容" in response.json()["message"]
 
 
-def test_agui_health_check() -> None:
-    response = client.post(
-        "/ag-ui/agent",
-        json={
-            "threadId": "t1",
-            "runId": "r1",
-            "state": {},
-            "messages": [{"id": "m1", "role": "user", "content": "健康检查"}],
-            "tools": [],
-            "context": [],
-            "forwardedProps": {"healthCheck": True},
-        },
-    )
-    assert response.status_code == 200
-    assert "RUN_STARTED" in response.text
-    assert "AGUI H5 服务正常" in response.text
-
-
 def test_agui_uses_confirmed_quote_text() -> None:
-    upload = client.post(
-        "/api/uploads",
-        headers=agent_auth_header(),
-        json={
-            "originalName": "quote.txt",
-            "mimeType": "text/plain",
-            "size": len(b"raw quote"),
-            "data": base64.b64encode(b"raw quote").decode("ascii"),
-        },
-    )
-    assert upload.status_code == 200
-    upload_id = upload.json()["id"]
+    upload_id = upload_quote(content=b"%PDF-1.4 raw quote")["id"]
 
     with patch("agent.main.generate_contract") as generate_contract:
         generate_contract.return_value = {"contractId": "contract_test", "templateType": "caigouhetong", "quoteTextLength": 4}
@@ -196,18 +211,7 @@ def test_agui_uses_confirmed_quote_text() -> None:
 
 
 def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
-    upload = client.post(
-        "/api/uploads",
-        headers=agent_auth_header(),
-        json={
-            "originalName": "quote.txt",
-            "mimeType": "text/plain",
-            "size": len("报价单文本".encode("utf-8")),
-            "data": base64.b64encode("报价单文本".encode("utf-8")).decode("ascii"),
-        },
-    )
-    assert upload.status_code == 200
-    upload_id = upload.json()["id"]
+    upload_id = upload_quote()["id"]
 
     extracted = {
         "supplierName": "供应商A",
@@ -235,18 +239,7 @@ def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
 
 
 def test_generate_contract_reuses_confirmed_extracted_data() -> None:
-    upload = client.post(
-        "/api/uploads",
-        headers=agent_auth_header(),
-        json={
-            "originalName": "quote.txt",
-            "mimeType": "text/plain",
-            "size": len("报价单文本".encode("utf-8")),
-            "data": base64.b64encode("报价单文本".encode("utf-8")).decode("ascii"),
-        },
-    )
-    assert upload.status_code == 200
-    upload_id = upload.json()["id"]
+    upload_id = upload_quote()["id"]
     extracted = {"supplierName": "供应商A", "items": []}
 
     with patch("agent.main.extract_template_render_data") as llm, patch(
@@ -256,7 +249,7 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
         "agent.main.upload_contract_to_dingdrive",
         return_value={"spaceId": "space1", "fileId": "file1", "fileName": "confirmed.docx", "filePath": "/confirmed.docx"},
     ):
-        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"unionid": "union1"})
+        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"})
 
     llm.assert_not_called()
     render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True)
@@ -266,19 +259,9 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
 
 
 def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None:
-    upload = client.post(
-        "/api/uploads",
-        headers=agent_auth_header(),
-        json={
-            "originalName": "quote.txt",
-            "mimeType": "text/plain",
-            "size": len("报价单文本".encode("utf-8")),
-            "data": base64.b64encode("报价单文本".encode("utf-8")).decode("ascii"),
-        },
-    )
-    assert upload.status_code == 200
-    upload_body = upload.json()
+    upload_body = upload_quote()
     upload_id = upload_body["id"]
+    record = upload_record(upload_id)
     extracted = {"supplierName": "供应商A", "items": []}
     rendered_path = Path("agent/storage/contracts/20260523_供应商A.docx")
 
@@ -291,12 +274,12 @@ def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None
         "agent.main.upload_contract_to_dingdrive",
         return_value={"spaceId": "space1", "fileId": "file1", "fileName": "20260523_供应商A.docx", "filePath": "/采购合同测试/20260523_供应商A.docx"},
     ) as upload_dingdrive:
-        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"unionid": "union1"})
+        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"})
 
     upload_dingdrive.assert_called_once()
     assert draft["dingDrive"]["fileId"] == "file1"
     assert "供应商A" in draft["fileName"]
-    assert not Path(upload_body["path"]).exists()
+    assert not Path(record["path"]).exists()
     assert not (UPLOADS_DIR / f"{upload_id}.json").exists()
     assert not rendered_path.exists()
     assert not (DRAFTS_DIR / f"{draft['contractId']}.json").exists()
@@ -315,50 +298,15 @@ def test_contract_download_payload_returns_dingdrive_preview() -> None:
         },
     }
 
-    payload = contract_download_payload(draft, Mock())
+    payload = contract_download_payload(draft)
 
     assert payload["preview"]["type"] == "dingtalk_drive"
     assert payload["preview"]["previewUrl"] == "https://preview.example/file1"
     assert "downloadPath" not in payload
-
-
-def test_dingdrive_download_proxy_streams_file() -> None:
-    upstream = Mock()
-    upstream.iter_content.return_value = [b"docx-content"]
-    upstream.raise_for_status.return_value = None
-
-    with patch(
-        "agent.main.get_contract_download_info",
-        return_value={"resourceUrls": ["https://download.example/file"], "headers": {"x-test": "1"}},
-    ) as download_info, patch("agent.main.requests.get", return_value=upstream) as get:
-        response = client.post(
-            "/api/dingdrive/download",
-            headers=agent_auth_header(),
-            json={"spaceId": "space1", "fileId": "file1", "fileName": "20260523_供应商A.docx"},
-        )
-
-    assert response.status_code == 200
-    assert response.content == b"docx-content"
-    assert "filename*=UTF-8''20260523_" in response.headers["content-disposition"]
-    download_info.assert_called_once()
-    get.assert_called_once_with("https://download.example/file", headers={"x-test": "1"}, stream=True, timeout=120)
-    upstream.close.assert_called_once()
-
-
 def test_generate_contract_keeps_process_files_when_dingdrive_fails() -> None:
-    upload = client.post(
-        "/api/uploads",
-        headers=agent_auth_header(),
-        json={
-            "originalName": "quote.txt",
-            "mimeType": "text/plain",
-            "size": len("报价单文本".encode("utf-8")),
-            "data": base64.b64encode("报价单文本".encode("utf-8")).decode("ascii"),
-        },
-    )
-    assert upload.status_code == 200
-    upload_body = upload.json()
+    upload_body = upload_quote()
     upload_id = upload_body["id"]
+    record = upload_record(upload_id)
     rendered_path = Path("agent/storage/contracts/failed-upload.docx")
 
     def fake_render(*args, **kwargs) -> Path:
@@ -370,9 +318,9 @@ def test_generate_contract_keeps_process_files_when_dingdrive_fails() -> None:
         "agent.main.upload_contract_to_dingdrive",
         side_effect=RuntimeError("钉盘上传失败"),
     ), pytest.raises(RuntimeError):
-        generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", {"supplierName": "供应商A", "items": []}, {"unionid": "union1"})
+        generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", {"supplierName": "供应商A", "items": []}, {"userid": "uid1", "unionid": "union-x"})
 
-    assert Path(upload_body["path"]).exists()
+    assert Path(record["path"]).exists()
     assert (UPLOADS_DIR / f"{upload_id}.json").exists()
     assert rendered_path.exists()
     rendered_path.unlink(missing_ok=True)
@@ -392,18 +340,7 @@ def test_confirmed_blank_fields_render_empty() -> None:
 
 
 def test_agui_passes_confirmed_extracted_data() -> None:
-    upload = client.post(
-        "/api/uploads",
-        headers=agent_auth_header(),
-        json={
-            "originalName": "quote.txt",
-            "mimeType": "text/plain",
-            "size": len(b"raw quote"),
-            "data": base64.b64encode(b"raw quote").decode("ascii"),
-        },
-    )
-    assert upload.status_code == 200
-    upload_id = upload.json()["id"]
+    upload_id = upload_quote(content=b"%PDF-1.4 raw quote")["id"]
     extracted = {"supplierName": "供应商A", "items": []}
 
     with patch("agent.main.generate_contract") as generate_contract_mock:
@@ -444,8 +381,8 @@ def test_upload_requires_login_when_enforced(monkeypatch) -> None:
     response = isolated.post(
         "/api/uploads",
         json={
-            "originalName": "quote.txt",
-            "mimeType": "text/plain",
+            "originalName": "quote.pdf",
+            "mimeType": "application/pdf",
             "size": len(b"x"),
             "data": base64.b64encode(b"x").decode("ascii"),
         },
@@ -479,8 +416,8 @@ def test_agent_bearer_token_allows_upload_when_enforced(monkeypatch) -> None:
         "/api/uploads",
         headers=agent_auth_header(),
         json={
-            "originalName": "quote.txt",
-            "mimeType": "text/plain",
+            "originalName": "quote.pdf",
+            "mimeType": "application/pdf",
             "size": len(b"hello quote"),
             "data": base64.b64encode(b"hello quote").decode("ascii"),
         },
@@ -488,44 +425,3 @@ def test_agent_bearer_token_allows_upload_when_enforced(monkeypatch) -> None:
     assert upload.status_code == 200
 
 
-def test_dingtalk_login_code_uses_h5_microapp_code(monkeypatch) -> None:
-    monkeypatch.setenv("DINGTALK_CLIENT_ID", "cid")
-    monkeypatch.setenv("DINGTALK_CLIENT_SECRET", "csecret")
-    monkeypatch.setenv("DINGTALK_CORP_ID", "corp")
-
-    from agent import dingtalk_oapi
-
-    with patch.object(
-        dingtalk_oapi,
-        "get_userid_by_auth_code",
-        return_value={"userid": "uid1", "unionid": "union-x"},
-    ) as by_auth_code:
-        result = dingtalk_oapi.get_userid_by_login_code("app-token", "h5-code")
-
-    by_auth_code.assert_called_once_with("app-token", "h5-code")
-    assert result["userid"] == "uid1"
-    assert result["unionid"] == "union-x"
-    assert result["authMode"] == "h5_microapp"
-
-
-def test_dingtalk_getuserinfo_uses_form_payload() -> None:
-    from agent import dingtalk_oapi
-
-    response = Mock()
-    response.status_code = 200
-    response.json.return_value = {
-        "errcode": 0,
-        "errmsg": "ok",
-        "result": {"userid": "uid1", "unionid": "union-x"},
-    }
-
-    with patch.object(dingtalk_oapi.requests, "post", return_value=response) as post:
-        result = dingtalk_oapi.get_userid_by_auth_code("app-token", "h5-code")
-
-    post.assert_called_once_with(
-        dingtalk_oapi._GETUSERINFO_URL,
-        data={"access_token": "app-token", "code": "h5-code"},
-        headers={"Content-Type": "application/x-www-form-urlencoded;charset=utf-8"},
-        timeout=15,
-    )
-    assert result["userid"] == "uid1"

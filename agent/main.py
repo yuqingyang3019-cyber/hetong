@@ -14,16 +14,13 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
-from urllib.parse import quote, urlsplit
 
-import requests
-from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 try:
     from .contract.config import (
-        CONTRACTS_DIR,
         DRAFTS_DIR,
         UPLOADS_DIR,
         ensure_storage,
@@ -35,7 +32,6 @@ try:
     from .contract.render import merge_render_data, render_contract
 except ImportError:
     from contract.config import (
-        CONTRACTS_DIR,
         DRAFTS_DIR,
         UPLOADS_DIR,
         ensure_storage,
@@ -47,10 +43,9 @@ except ImportError:
     from contract.render import merge_render_data, render_contract
 
 try:
-    from .dingdrive import get_contract_download_info, upload_contract_to_dingdrive
+    from .dingdrive import upload_contract_to_dingdrive
     from .storage_cleanup import remove_contract_files, remove_upload
 except ImportError:
-    from dingdrive import get_contract_download_info  # type: ignore[no-redef]
     from dingdrive import upload_contract_to_dingdrive  # type: ignore[no-redef]
     from storage_cleanup import remove_contract_files, remove_upload  # type: ignore[no-redef]
 
@@ -78,6 +73,13 @@ def error_payload(code: str, message: str, detail: Any = None) -> dict[str, Any]
     return payload
 
 
+def api_error(status_code: int, code: str, message: str, detail: Any = None) -> HTTPException:
+    payload: dict[str, Any] = {"code": code, "message": message}
+    if detail is not None and detail != message:
+        payload["detail"] = detail
+    return HTTPException(status_code=status_code, detail=payload)
+
+
 @app.exception_handler(HTTPException)
 async def json_http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     detail = exc.detail
@@ -90,6 +92,22 @@ async def json_http_exception_handler(request: Request, exc: HTTPException) -> J
         message = str(detail or "请求失败")
         extra = None
     return JSONResponse(error_payload(code, message, extra), status_code=exc.status_code, headers=exc.headers)
+
+
+def error_code_message(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail
+        if isinstance(detail, dict):
+            return str(detail.get("code") or "HTTP_ERROR"), str(detail.get("message") or "请求失败")
+        return "HTTP_ERROR", str(detail or "请求失败")
+    text = str(exc)
+    if "OCR" in text or "图片" in text:
+        return "OCR_FAILED", "图片识别失败，请检查图片清晰度后重试"
+    if "DashScope" in text or "百炼" in text or "DASHSCOPE" in text:
+        return "LLM_FAILED", "字段识别失败，请检查报价单文本或补充说明后重试"
+    if "钉盘" in text or "DINGTALK_DRIVE" in text:
+        return "DINGDRIVE_UPLOAD_FAILED", "合同上传钉盘失败，请稍后重试"
+    return "CONTRACT_GENERATE_FAILED", "合同生成失败，请根据原因调整字段后重试"
 
 AGENT_TOKEN_TYPE = "agent"
 
@@ -207,71 +225,82 @@ def sse_event(event: dict[str, Any]) -> bytes:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
-def absolute_url(request: Request, path: str) -> str:
-    if path.startswith("http://") or path.startswith("https://"):
-        return path
-    forwarded_host = request.headers.get("x-forwarded-host")
-    host = forwarded_host or request.headers.get("host") or ""
-    host = host.split(",", 1)[0].strip()
-    if "://" in host:
-        host = urlsplit(host).netloc
-    proto = request.headers.get("x-forwarded-proto") or "https"
-    return f"{proto}://{host}{path}" if host else path
-
-
-def upload_download_path(file_name: str) -> str:
-    return f"/api/uploads/{file_name}/download"
-
-
-def contract_download_path(contract_id: str) -> str:
-    return f"/api/contracts/{contract_id}/download"
-
-
-def content_type_for_file(path: Path) -> str:
-    return mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-
-
-def contract_download_payload(draft: dict[str, Any], request: Request) -> dict[str, Any]:
+def contract_download_payload(draft: dict[str, Any]) -> dict[str, Any]:
     contract_id = draft["contractId"]
     ding_drive = draft.get("dingDrive") if isinstance(draft.get("dingDrive"), dict) else None
-    if ding_drive:
-        file_name = ding_drive.get("fileName") or draft.get("fileName") or f"{contract_id}.docx"
-        preview_url = str(ding_drive.get("previewUrl") or ding_drive.get("openUrl") or "").strip()
-        open_url = str(ding_drive.get("openUrl") or ding_drive.get("previewUrl") or "").strip()
-        payload = {
-            "contractId": contract_id,
-            "fileName": file_name,
-            "dingDrive": ding_drive,
-            "preview": {
-                "type": "dingtalk_drive",
-                "previewUrl": preview_url,
-                "openUrl": open_url,
-                "downloadProvidedByPreview": True,
-            },
-        }
-        if open_url:
-            payload["openUrl"] = open_url
-        if preview_url:
-            payload["previewUrl"] = preview_url
-        if ding_drive.get("filePath"):
-            payload["filePath"] = ding_drive["filePath"]
-        return payload
-
-    download_path = contract_download_path(contract_id)
+    if not ding_drive:
+        raise RuntimeError("合同未返回钉盘文件信息")
+    file_name = ding_drive.get("fileName") or draft.get("fileName") or f"{contract_id}.docx"
+    preview_url = str(ding_drive.get("previewUrl") or ding_drive.get("openUrl") or "").strip()
+    open_url = str(ding_drive.get("openUrl") or ding_drive.get("previewUrl") or "").strip()
     payload = {
         "contractId": contract_id,
+        "fileName": file_name,
+        "dingDrive": ding_drive,
         "preview": {
-            "type": "local_contract",
-            "previewUrl": "",
-            "openUrl": absolute_url(request, download_path),
-            "downloadProvidedByPreview": False,
+            "type": "dingtalk_drive",
+            "previewUrl": preview_url,
+            "openUrl": open_url,
+            "downloadProvidedByPreview": True,
         },
-        "openUrl": absolute_url(request, download_path),
     }
+    if open_url:
+        payload["openUrl"] = open_url
+    if preview_url:
+        payload["previewUrl"] = preview_url
+    if ding_drive.get("filePath"):
+        payload["filePath"] = ding_drive["filePath"]
     return payload
 
 
-def save_upload_bytes(content: bytes, original_name: str, mime_type: str) -> dict[str, Any]:
+SUPPORTED_QUOTE_EXTENSIONS = {".xlsx", ".xls", ".pdf", ".jpg", ".jpeg", ".png"}
+SUPPORTED_QUOTE_MIME_TYPES = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+}
+
+
+def _user_resource_owner(current_user: dict[str, Any] | None) -> dict[str, str]:
+    user = current_user or {}
+    userid = str(user.get("userid") or "").strip()
+    unionid = str(user.get("unionid") or user.get("unionId") or "").strip()
+    return {"ownerUserid": userid, "ownerUnionid": unionid}
+
+
+def _same_upload_owner(upload: dict[str, Any], current_user: dict[str, Any] | None) -> bool:
+    owner = _user_resource_owner(current_user)
+    return bool(
+        owner["ownerUserid"]
+        and owner["ownerUnionid"]
+        and upload.get("ownerUserid") == owner["ownerUserid"]
+        and upload.get("ownerUnionid") == owner["ownerUnionid"]
+    )
+
+
+def public_upload_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": record["id"],
+        "originalName": record["originalName"],
+        "fileName": record["fileName"],
+        "mimeType": record["mimeType"],
+        "size": record["size"],
+    }
+
+
+def validate_supported_quote_file(original_name: str, mime_type: str) -> None:
+    suffix = Path(original_name).suffix.lower()
+    normalized_mime = (mime_type or "").split(";", 1)[0].strip().lower()
+    if suffix in SUPPORTED_QUOTE_EXTENSIONS:
+        return
+    if normalized_mime in SUPPORTED_QUOTE_MIME_TYPES:
+        return
+    raise api_error(400, "UNSUPPORTED_FILE_TYPE", "当前版本支持 PDF、Excel 或图片报价单")
+
+
+def save_upload_bytes(content: bytes, original_name: str, mime_type: str, current_user: dict[str, Any]) -> dict[str, Any]:
     ensure_storage()
     upload_id = new_id("upload")
     file_name = f"{upload_id}_{safe_file_name(original_name)}"
@@ -284,6 +313,7 @@ def save_upload_bytes(content: bytes, original_name: str, mime_type: str) -> dic
         "mimeType": mime_type or "application/octet-stream",
         "size": len(content),
         "path": str(path),
+        **_user_resource_owner(current_user),
     }
     (UPLOADS_DIR / f"{upload_id}.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
     log_info(
@@ -297,11 +327,14 @@ def save_upload_bytes(content: bytes, original_name: str, mime_type: str) -> dic
     return record
 
 
-def load_upload(upload_id: str) -> dict[str, Any]:
+def load_upload(upload_id: str, current_user: dict[str, Any] | None = None) -> dict[str, Any]:
     record_path = UPLOADS_DIR / f"{upload_id}.json"
     if not record_path.exists():
-        raise HTTPException(status_code=404, detail="上传文件不存在")
-    return json.loads(record_path.read_text(encoding="utf-8"))
+        raise api_error(404, "NOT_FOUND", "上传文件不存在")
+    upload = json.loads(record_path.read_text(encoding="utf-8"))
+    if current_user is not None and not _same_upload_owner(upload, current_user):
+        raise api_error(403, "FORBIDDEN", "无权访问该上传文件")
+    return upload
 
 
 def parse_data_source(value: str, fallback_mime_type: str) -> tuple[bytes, str]:
@@ -318,21 +351,21 @@ async def read_upload_payload(request: Request, file: UploadFile | None) -> tupl
     if "application/json" in content_type:
         payload = await request.json()
         if not isinstance(payload, dict):
-            raise HTTPException(status_code=400, detail="上传请求体格式不正确")
+            raise api_error(400, "INVALID_ARGUMENT", "上传请求体格式不正确")
         original_name = str(payload.get("originalName") or payload.get("fileName") or "quote.bin")
         mime_type = str(payload.get("mimeType") or "application/octet-stream")
         data = payload.get("data") or payload.get("contentBase64")
         if not isinstance(data, str) or not data:
-            raise HTTPException(status_code=400, detail="上传请求缺少文件内容")
+            raise api_error(400, "INVALID_ARGUMENT", "上传请求缺少文件内容")
         try:
             content, parsed_mime = parse_data_source(data, mime_type)
         except Exception as exc:
-            raise HTTPException(status_code=400, detail="上传文件内容不是合法 base64") from exc
+            raise api_error(400, "INVALID_ARGUMENT", "上传文件内容不是合法 base64") from exc
         declared_size = payload.get("size")
         return content, original_name, parsed_mime, declared_size if isinstance(declared_size, int) else None, "json-base64"
 
     if file is None:
-        raise HTTPException(status_code=400, detail="请上传报价单文件")
+        raise api_error(400, "INVALID_ARGUMENT", "请上传报价单文件")
     content = await file.read()
     return content, file.filename or "quote.bin", file.content_type or "application/octet-stream", None, "multipart"
 
@@ -450,7 +483,7 @@ def classify_extracted_fields(extracted: dict[str, Any], config: Any) -> dict[st
     }
 
 
-def extract_agui_attachment(input_data: dict[str, Any]) -> dict[str, Any] | None:
+def extract_agui_attachment(input_data: dict[str, Any], current_user: dict[str, Any]) -> dict[str, Any] | None:
     message = last_user_message(input_data)
     content = message.get("content") if message else None
     if not isinstance(content, list):
@@ -466,21 +499,10 @@ def extract_agui_attachment(input_data: dict[str, Any]) -> dict[str, Any] | None
         mime_type = source.get("mimeType") or "application/octet-stream"
         file_name = metadata.get("fileName") or metadata.get("filename") or metadata.get("name") or f"quote{mimetypes.guess_extension(mime_type) or '.bin'}"
         log_info("agui attachment detected", sourceType=source_type, fileName=file_name, mimeType=mime_type)
-        if source_type == "url":
-            download_start = time.perf_counter()
-            response = requests.get(source.get("value"), timeout=30)
-            response.raise_for_status()
-            log_info(
-                "agui attachment downloaded",
-                fileName=file_name,
-                mimeType=mime_type,
-                size=len(response.content),
-                elapsedMs=elapsed_ms(download_start),
-            )
-            return save_upload_bytes(response.content, file_name, mime_type)
         if source_type == "data":
             parse_start = time.perf_counter()
             content_bytes, parsed_mime = parse_data_source(source.get("value", ""), mime_type)
+            validate_supported_quote_file(file_name, parsed_mime)
             log_info(
                 "agui attachment decoded",
                 fileName=file_name,
@@ -488,12 +510,12 @@ def extract_agui_attachment(input_data: dict[str, Any]) -> dict[str, Any] | None
                 size=len(content_bytes),
                 elapsedMs=elapsed_ms(parse_start),
             )
-            return save_upload_bytes(content_bytes, file_name, parsed_mime)
+            return save_upload_bytes(content_bytes, file_name, parsed_mime, current_user)
     return None
 
 
-def extract_quote_text(upload_id: str) -> tuple[dict[str, Any], str, dict[str, Any]]:
-    upload = load_upload(upload_id)
+def extract_quote_text(upload_id: str, current_user: dict[str, Any]) -> tuple[dict[str, Any], str, dict[str, Any]]:
+    upload = load_upload(upload_id, current_user)
     extract_start = time.perf_counter()
     quote_text = extract_text_from_file(Path(upload["path"]), upload.get("mimeType", ""))
     parser = parser_metadata_for_file(Path(upload["path"]), upload.get("mimeType", ""))
@@ -528,7 +550,7 @@ def generate_contract(
         confirmedExtractedData=has_confirmed_data,
     )
     try:
-        upload = load_upload(upload_id)
+        upload = load_upload(upload_id, current_user)
         log_info(
             "contract upload loaded",
             uploadId=upload_id,
@@ -538,7 +560,10 @@ def generate_contract(
             size=upload.get("size"),
         )
 
-        config = get_template_config(template_type)
+        try:
+            config = get_template_config(template_type)
+        except ValueError as exc:
+            raise api_error(400, "INVALID_ARGUMENT", str(exc)) from exc
         log_info("contract template loaded", uploadId=upload_id, templateType=config.type)
 
         if has_confirmed_text:
@@ -550,7 +575,7 @@ def generate_contract(
                 quoteTextLength=len(quote_text),
             )
         else:
-            upload, quote_text, _parser = extract_quote_text(upload_id)
+            upload, quote_text, _parser = extract_quote_text(upload_id, current_user)
 
         if has_confirmed_data:
             extracted = extracted_data or {}
@@ -656,8 +681,10 @@ async def upload_file(
         contentType=content_type,
         dingtalkUserId=current_user.get("userid"),
     )
+    original_name = ""
     try:
         content, original_name, mime_type, declared_size, uploadMode = await read_upload_payload(request, file)
+        validate_supported_quote_file(original_name, mime_type)
         log_info(
             "upload bytes read",
             originalName=original_name,
@@ -676,7 +703,7 @@ async def upload_file(
                 uploadMode=uploadMode,
                 elapsedMs=elapsed_ms(start),
             )
-            raise HTTPException(status_code=400, detail="上传文件为空，请重新选择报价单文件")
+            raise api_error(400, "INVALID_ARGUMENT", "上传文件为空，请重新选择报价单文件")
         if declared_size is not None and declared_size != len(content):
             log_warning(
                 "upload size mismatch",
@@ -686,7 +713,7 @@ async def upload_file(
                 decodedSize=len(content),
                 uploadMode=uploadMode,
             )
-        record = save_upload_bytes(content, original_name, mime_type)
+        record = save_upload_bytes(content, original_name, mime_type, current_user)
         log_info(
             "upload request finished",
             clientHost=client_host,
@@ -695,20 +722,12 @@ async def upload_file(
             uploadMode=uploadMode,
             elapsedMs=elapsed_ms(start),
         )
-        return {"ok": True, **record}
+        return {"ok": True, **public_upload_record(record)}
     except HTTPException:
         raise
     except Exception as exc:
         log_exception("upload request failed", exc, clientHost=client_host, originalName=original_name, elapsedMs=elapsed_ms(start))
-        raise
-
-
-@app.get("/api/uploads/{file_name}/download")
-def download_upload(file_name: str, current_user: dict = Depends(get_current_user)) -> FileResponse:
-    path = UPLOADS_DIR / Path(file_name).name
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="上传文件不存在")
-    return FileResponse(path, media_type=content_type_for_file(path), filename=path.name)
+        raise api_error(500, "INTERNAL_ERROR", "上传失败，请稍后重试", str(exc)) from exc
 
 
 @app.post("/api/uploads/{upload_id}/quote-text")
@@ -731,8 +750,18 @@ async def parse_quote_text_api(
         templateType=template_type,
         dingtalkUserId=current_user.get("userid"),
     )
-    upload, quote_text, parser = extract_quote_text(upload_id)
-    config = get_template_config(template_type)
+    try:
+        config = get_template_config(template_type)
+        upload, quote_text, parser = extract_quote_text(upload_id, current_user)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        if "图片" in str(exc) or "OCR" in str(exc):
+            raise api_error(502, "OCR_FAILED", "图片识别失败，请检查图片清晰度后重试", str(exc)) from exc
+        raise api_error(400, "INVALID_ARGUMENT", str(exc)) from exc
+    except Exception as exc:
+        log_exception("quote text extraction failed", exc, uploadId=upload_id, templateType=template_type, elapsedMs=elapsed_ms(start))
+        raise api_error(500, "INTERNAL_ERROR", "解析报价单失败，请检查文件后重试", str(exc)) from exc
     response = {
         "ok": True,
         "uploadId": upload_id,
@@ -765,7 +794,7 @@ async def preview_quote_fields_api(
     client_host = request.client.host if request.client else None
     payload = await request.json()
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="字段识别请求体格式不正确")
+        raise api_error(400, "INVALID_ARGUMENT", "字段识别请求体格式不正确")
 
     template_type = str(payload.get("templateType") or "caigouhetong")
     quote_text_value = payload.get("quoteText")
@@ -782,13 +811,32 @@ async def preview_quote_fields_api(
         extraInfoLength=len(extra_info or ""),
         dingtalkUserId=current_user.get("userid"),
     )
-    upload = load_upload(upload_id)
+    try:
+        config = get_template_config(template_type)
+        upload = load_upload(upload_id, current_user)
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise api_error(400, "INVALID_ARGUMENT", str(exc)) from exc
     if not quote_text:
-        upload, quote_text, _parser = extract_quote_text(upload_id)
-    config = get_template_config(template_type)
+        try:
+            upload, quote_text, _parser = extract_quote_text(upload_id, current_user)
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            if "图片" in str(exc) or "OCR" in str(exc):
+                raise api_error(502, "OCR_FAILED", "图片识别失败，请检查图片清晰度后重试", str(exc)) from exc
+            raise api_error(400, "INVALID_ARGUMENT", str(exc)) from exc
+        except Exception as exc:
+            log_exception("field preview quote extraction failed", exc, uploadId=upload_id, templateType=template_type, elapsedMs=elapsed_ms(start))
+            raise api_error(500, "INTERNAL_ERROR", "解析报价单失败，请检查文件后重试", str(exc)) from exc
 
     llm_start = time.perf_counter()
-    extracted = extract_template_render_data(quote_text, config, extra_info)
+    try:
+        extracted = extract_template_render_data(quote_text, config, extra_info)
+    except Exception as exc:
+        log_exception("field preview llm failed", exc, uploadId=upload_id, templateType=config.type, elapsedMs=elapsed_ms(llm_start))
+        raise api_error(502, "LLM_FAILED", "字段识别失败，请检查报价单文本或补充说明后重试", str(exc)) from exc
     field_summary = classify_extracted_fields(extracted, config)
     log_info(
         "field preview request finished",
@@ -816,99 +864,6 @@ async def preview_quote_fields_api(
     }
 
 
-@app.post("/api/contracts/generate")
-def generate_contract_api(
-    request: Request,
-    current_user: dict = Depends(get_current_user),
-    uploadId: str = Form(...),
-    templateType: str = Form("caigouhetong"),
-    quoteText: Optional[str] = Form(None),
-    extraInfo: Optional[str] = Form(None),
-    extractedData: Optional[str] = Form(None),
-) -> dict:
-    start = time.perf_counter()
-    client_host = request.client.host if request.client else None
-    log_info(
-        "contract api request start",
-        clientHost=client_host,
-        uploadId=uploadId,
-        templateType=templateType,
-        dingtalkUserId=current_user.get("userid"),
-    )
-    confirmed_extracted: dict[str, Any] | None = None
-    if extractedData:
-        try:
-            parsed_extracted = json.loads(extractedData)
-        except json.JSONDecodeError as exc:
-            raise HTTPException(status_code=400, detail="extractedData 不是合法 JSON") from exc
-        if not isinstance(parsed_extracted, dict):
-            raise HTTPException(status_code=400, detail="extractedData 必须是对象")
-        confirmed_extracted = parsed_extracted
-    draft = generate_contract(uploadId, templateType, quoteText, extraInfo, confirmed_extracted, current_user)
-    response = {
-        **contract_download_payload(draft, request),
-        "templateType": draft["templateType"],
-        "quoteTextLength": draft["quoteTextLength"],
-    }
-    log_info(
-        "contract api request finished",
-        clientHost=client_host,
-        uploadId=uploadId,
-        contractId=draft["contractId"],
-        elapsedMs=elapsed_ms(start),
-    )
-    return response
-
-
-@app.get("/api/contracts/{contract_id}/download")
-def download_contract(contract_id: str, current_user: dict = Depends(get_current_user)) -> FileResponse:
-    path = CONTRACTS_DIR / f"{Path(contract_id).name}.docx"
-    if not path.exists():
-        raise HTTPException(status_code=404, detail="合同文件不存在")
-    return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename=path.name)
-
-
-@app.post("/api/dingdrive/download")
-def download_dingdrive_contract(payload: dict = Body(...), current_user: dict = Depends(get_current_user)) -> StreamingResponse:
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="下载请求体格式不正确")
-    space_id = str(payload.get("spaceId") or "").strip()
-    file_id = str(payload.get("fileId") or "").strip()
-    file_name = safe_file_name(str(payload.get("fileName") or "contract.docx").strip() or "contract.docx")
-    if not space_id or not file_id:
-        raise HTTPException(status_code=400, detail="缺少钉盘 spaceId 或 fileId")
-
-    try:
-        download_info = get_contract_download_info(space_id, file_id, current_user)
-        resource_urls = download_info.get("resourceUrls") if isinstance(download_info, dict) else None
-        headers = download_info.get("headers") if isinstance(download_info, dict) else None
-        if not resource_urls:
-            raise HTTPException(status_code=502, detail="钉盘未返回下载地址")
-        response = requests.get(resource_urls[0], headers=headers or {}, stream=True, timeout=120)
-        response.raise_for_status()
-    except HTTPException:
-        raise
-    except requests.RequestException as exc:
-        raise HTTPException(status_code=502, detail=f"下载钉盘文件失败：{exc}") from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-
-    def iter_content() -> Any:
-        try:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    yield chunk
-        finally:
-            response.close()
-
-    encoded_name = quote(file_name)
-    return StreamingResponse(
-        iter_content(),
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"},
-    )
-
-
 async def agui_stream(input_data: dict[str, Any], request: Request, current_user: dict[str, Any]) -> AsyncGenerator[bytes, None]:
     start = time.perf_counter()
     thread_id = input_data.get("threadId") or new_id("thread")
@@ -926,14 +881,6 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
     yield sse_event({"type": "TEXT_MESSAGE_START", "messageId": message_id, "role": "assistant"})
     try:
         forwarded = input_data.get("forwardedProps") if isinstance(input_data.get("forwardedProps"), dict) else {}
-        if forwarded.get("healthCheck"):
-            log_info("agui health check", threadId=thread_id, runId=run_id)
-            yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "AGUI H5 服务正常。"})
-            yield sse_event({"type": "TEXT_MESSAGE_END", "messageId": message_id})
-            yield sse_event({"type": "RUN_FINISHED", "threadId": thread_id, "runId": run_id, "result": {"ok": True}})
-            log_info("agui run finished", threadId=thread_id, runId=run_id, result="healthCheck", elapsedMs=elapsed_ms(start))
-            return
-
         state = input_data.get("state") if isinstance(input_data.get("state"), dict) else {}
         upload_id = forwarded.get("uploadId") or state.get("uploadId")
         template_type = forwarded.get("templateType") or state.get("templateType") or "caigouhetong"
@@ -955,7 +902,7 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
         )
         if not upload_id:
             log_info("agui attachment lookup start", threadId=thread_id, runId=run_id)
-            attachment = extract_agui_attachment(input_data)
+            attachment = extract_agui_attachment(input_data, current_user)
             if attachment:
                 upload_id = attachment["id"]
                 log_info(
@@ -969,11 +916,7 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
                 yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": f"已收到附件：{attachment['originalName']}\n"})
             else:
                 log_warning("agui run missing upload", threadId=thread_id, runId=run_id)
-                yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "未收到报价单文件，请在 H5 页面上传文件或提供 AGUI document/image。"})
-                yield sse_event({"type": "TEXT_MESSAGE_END", "messageId": message_id})
-                yield sse_event({"type": "RUN_FINISHED", "threadId": thread_id, "runId": run_id, "result": {"needsUpload": True}})
-                log_info("agui run finished", threadId=thread_id, runId=run_id, result="needsUpload", elapsedMs=elapsed_ms(start))
-                return
+                raise api_error(400, "INVALID_ARGUMENT", "未收到报价单文件，请先在 H5 页面上传报价单")
 
         if quote_text:
             yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "已确认报价单文本。\n"})
@@ -993,7 +936,7 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
             confirmedExtractedData=bool(extracted_data),
         )
         draft = await asyncio.to_thread(generate_contract, upload_id, template_type, quote_text, extra_info, extracted_data, current_user)
-        download_payload = contract_download_payload(draft, request)
+        download_payload = contract_download_payload(draft)
         yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "合同已生成并已存入钉盘。"})
         yield sse_event({"type": "CUSTOM", "name": "contract_generated", "value": download_payload})
         yield sse_event({"type": "TEXT_MESSAGE_END", "messageId": message_id})
@@ -1017,10 +960,11 @@ async def agui_stream(input_data: dict[str, Any], request: Request, current_user
             elapsedMs=elapsed_ms(start),
         )
     except Exception as exc:
-        log_exception("agui run failed", exc, threadId=thread_id, runId=run_id, elapsedMs=elapsed_ms(start))
-        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": f"处理失败：{exc}"})
+        code, message = error_code_message(exc)
+        log_exception("agui run failed", exc, threadId=thread_id, runId=run_id, code=code, elapsedMs=elapsed_ms(start))
+        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": f"处理失败：{message}"})
         yield sse_event({"type": "TEXT_MESSAGE_END", "messageId": message_id})
-        yield sse_event({"type": "RUN_ERROR", "message": str(exc)})
+        yield sse_event({"type": "RUN_ERROR", "code": code, "message": message})
 
 
 @app.post("/ag-ui/agent")
@@ -1032,11 +976,7 @@ async def agui_agent(request: Request) -> StreamingResponse:
     except Exception as exc:
         log_exception("agui request json parse failed", exc, clientHost=client_host, elapsedMs=elapsed_ms(start))
         raise
-    forwarded = input_data.get("forwardedProps") if isinstance(input_data.get("forwardedProps"), dict) else {}
-    if forwarded.get("healthCheck"):
-        current_user: dict[str, Any] = {"userid": "health_check", "name": "HealthCheck", "systemCheck": True}
-    else:
-        current_user = get_current_user(request)
+    current_user = get_current_user(request)
     log_info(
         "agui request received",
         clientHost=client_host,

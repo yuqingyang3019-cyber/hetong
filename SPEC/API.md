@@ -405,22 +405,22 @@ data: {"type":"RUN_FINISHED"}
 - 新增实现不得继续引入旧版 OAPI/Storage API 手写 HTTP 调用；确需保留旧实现时，只能作为迁移期兼容路径，并必须在当前实现差距中标注。
 - SDK 抛出的异常必须转换为本文档定义的稳定错误码，不允许将 SDK 原始错误直接透传给前端。
 
-## 8. 废弃或降级接口
+## 8. 已移除接口
 
-以下接口不作为目标主路径：
+以下接口不属于 V1 正式目标路径，当前实现不再保留：
 
-| 接口 | 状态 | 原因 |
-| --- | --- | --- |
-| `POST /api/dingdrive/download` | 降级备用 | 合同交付改为钉盘预览，预览页自带下载能力 |
-| `GET /api/contracts/{contractId}/download` | 调试/备用 | 合同成功上传钉盘后应返回预览链接，不暴露本地文件下载为主路径 |
-| `POST /api/contracts/generate` | 调试/备用 | H5 主路径使用 AG-UI SSE 生成合同 |
-| BFF 代理 `/api`、`/ag-ui` | 过渡兼容 | 目标设计为前端带短期凭证直连 AgentRun 业务接口 |
+| 接口 | 原因 |
+| --- | --- |
+| `POST /api/dingdrive/download` | 合同交付改为钉盘预览，预览页自带下载能力，前端不代理下载文件流 |
+| `GET /api/contracts/{contractId}/download` | 合同成功上传钉盘后只返回预览入口和必要元数据，不暴露本地合同下载 |
+| `POST /api/contracts/generate` | H5 主路径统一使用 AG-UI SSE 生成合同 |
+| BFF 代理 `/api`、`/ag-ui` | 目标设计为前端带短期凭证直连 AgentRun 业务接口 |
 
 ## 9. 当前实现差距
 
 | 项目 | 目标接口设计 | 当前实现 | 待办 |
 | --- | --- | --- | --- |
-| 鉴权职责 | BFF 使用钉钉官方新版服务端 SDK 完成免登并签发 AgentRun 短期凭证 | 已迁移为 `/bff/auth/*` + AgentRun Bearer 鉴权 | 继续替换 BFF 内部钉钉调用为官方新版 SDK 封装 |
+| 鉴权职责 | BFF 使用钉钉官方新版服务端 SDK 完成免登并签发 AgentRun 短期凭证 | 已迁移为 `/bff/auth/*` + AgentRun Bearer 鉴权，BFF 内部钉钉调用使用官方新版 SDK | 后续在真实钉钉环境验证新版 SDK 免登字段稳定性 |
 | 业务请求路径 | 前端直连 AgentRun | 已改为 `agentBaseUrl` + `Authorization: Bearer` | 部署时确保 AgentRun CORS 允许 H5 域名 |
 | 合同交付 | AgentRun 使用钉盘官方新版 SDK 返回钉盘预览链接，前端 JSAPI SDK 打开预览 | 已返回 `preview` 结构并由前端打开预览入口 | 继续确认钉盘新版 SDK 的稳定预览 URL 字段 |
 | 图片 OCR | AgentRun 解析图片报价单 | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |

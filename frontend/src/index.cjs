@@ -1,10 +1,11 @@
 const http = require("http");
-const https = require("https");
 const { createReadStream, existsSync, statSync } = require("fs");
 const { extname, join, normalize } = require("path");
 const crypto = require("crypto");
 const dingtalkOauth = require("@alicloud/dingtalk/oauth2_1_0");
+const dingtalkContact = require("@alicloud/dingtalk/contact_1_0");
 const OpenApi = require("@alicloud/openapi-client");
+const Util = require("@alicloud/tea-util");
 
 const root = __dirname;
 const port = Number(process.env.PORT || 9000);
@@ -17,8 +18,6 @@ const agentTokenTtlSeconds = Number(process.env.AGENT_TOKEN_TTL_SEC || 1800);
 const h5SessionTtlSeconds = Number(process.env.H5_SESSION_TTL_SEC || 7 * 24 * 3600);
 const h5SessionCookieName = "hetong_h5_session";
 const bffPrefix = "/bff/auth";
-const dingtalkGetUserInfoUrl = "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo";
-const dingtalkUserGetUrl = "https://oapi.dingtalk.com/topapi/v2/user/get";
 const dingtalkTokenCache = new Map();
 
 const contentTypes = {
@@ -56,13 +55,6 @@ function makeError(code, message, detail) {
   return payload;
 }
 
-function maskDiagnosticValue(value, prefix = 4, suffix = 4) {
-  const text = String(value || "");
-  if (!text) return "未配置";
-  if (text.length <= prefix + suffix) return "***";
-  return `${text.slice(0, prefix)}***${text.slice(-suffix)}`;
-}
-
 function base64url(input) {
   return Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
@@ -95,16 +87,7 @@ function verifyPayload(raw, expectedType) {
   }
 }
 
-function readRequestBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", reject);
-  });
-}
-
-async function readJsonBody(req) {
+async function readJson(req) {
   const raw = await readRequestBody(req);
   if (!raw.length) return {};
   const value = JSON.parse(raw.toString("utf8"));
@@ -150,11 +133,19 @@ function dingtalkConfigured() {
   return Boolean(dingtalkClientId && dingtalkClientSecret && dingtalkCorpId);
 }
 
-function createOAuthClient() {
+function createOpenApiConfig() {
   const config = new OpenApi.Config({});
   config.protocol = "https";
   config.regionId = "central";
-  return new dingtalkOauth.default(config);
+  return config;
+}
+
+function createOAuthClient() {
+  return new dingtalkOauth.default(createOpenApiConfig());
+}
+
+function createContactClient() {
+  return new dingtalkContact.default(createOpenApiConfig());
 }
 
 async function getDingtalkAccessToken(corpId) {
@@ -177,36 +168,6 @@ async function getDingtalkAccessToken(corpId) {
   return token;
 }
 
-async function postJson(url, payload, operation) {
-  const body = JSON.stringify(payload);
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-  });
-  const text = await response.text();
-  let parsed;
-  try {
-    parsed = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`${operation} 响应不是合法 JSON`);
-  }
-  if (!response.ok) {
-    const code = parsed.code || parsed.errcode;
-    const message = parsed.message || parsed.errmsg || text.slice(0, 200);
-    throw new Error(`${operation} 失败：HTTP ${response.status} code=${code || ""} message=${message || ""}`);
-  }
-  if (Object.prototype.hasOwnProperty.call(parsed, "errcode") && Number(parsed.errcode) !== 0) {
-    throw new Error(`${operation} 失败：errcode=${parsed.errcode} errmsg=${parsed.errmsg || ""}`);
-  }
-  return parsed;
-}
-
-async function dingtalkTopapiPost(url, accessToken, payload, operation) {
-  const target = `${url}?${new URLSearchParams({ access_token: accessToken })}`;
-  return postJson(target, payload, operation);
-}
-
 function parseDeptIds(raw) {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw.map((item) => Number(item)).filter(Number.isFinite);
@@ -226,35 +187,37 @@ function parseDeptIds(raw) {
 
 async function exchangeDingtalkCode(code, corpId) {
   if (!dingtalkConfigured()) throw new Error("未配置钉钉新版服务端 SDK 凭证");
-  const accessToken = await getDingtalkAccessToken(corpId);
-  const userInfo = await dingtalkTopapiPost(
-    "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo",
-    accessToken,
-    { code },
-    "通过免登码获取钉钉用户信息",
-  );
-  const result = userInfo.result || {};
-  const userid = String(result.userid || "").trim();
-  if (!userid) throw new Error("钉钉免登未返回 userid");
-  const userDetail = await dingtalkTopapiPost(
-    "https://oapi.dingtalk.com/topapi/v2/user/get",
-    accessToken,
-    { userid, language: "zh_CN" },
-    "获取钉钉用户详情",
-  );
-  const detail = userDetail.result || {};
+  if (corpId !== dingtalkCorpId) throw new Error("corpId 与服务端配置不一致");
+  await getDingtalkAccessToken(corpId);
+  const userTokenRequest = new dingtalkOauth.GetUserTokenRequest({
+    clientId: dingtalkClientId,
+    clientSecret: dingtalkClientSecret,
+    code,
+    grantType: "authorization_code",
+  });
+  const userTokenResponse = await createOAuthClient().getUserToken(userTokenRequest);
+  const userTokenBody = userTokenResponse.body || userTokenResponse;
+  const userAccessToken = userTokenBody.accessToken || userTokenBody.access_token;
+  if (!userAccessToken) throw new Error("钉钉 OAuth2 SDK 未返回用户 access_token");
+
+  const headers = new dingtalkContact.GetUserHeaders();
+  headers.xAcsDingtalkAccessToken = userAccessToken;
+  const userResponse = await createContactClient().getUserWithOptions("me", headers, new Util.RuntimeOptions({}));
+  const detail = userResponse.body || userResponse;
+  const userid = String(detail.userid || detail.userId || detail.user_id || "").trim();
+  if (!userid) throw new Error("钉钉用户详情未返回 userid");
   return {
     userid,
-    name: detail.name || result.name || userid,
-    nick: detail.nick || result.name || "",
+    name: detail.name || detail.nick || userid,
+    nick: detail.nick || "",
     mobile: String(detail.mobile || ""),
     title: String(detail.title || ""),
-    job_number: String(detail.job_number || ""),
+    job_number: String(detail.jobNumber || detail.job_number || ""),
     email: String(detail.email || ""),
-    avatar: String(detail.avatar || result.avatar || ""),
-    dept_ids: parseDeptIds(detail.dept_id_list),
-    dept_names: [],
-    unionid: String(detail.unionid || result.unionid || ""),
+    avatar: String(detail.avatar || ""),
+    dept_ids: parseDeptIds(detail.deptIdList || detail.dept_id_list),
+    dept_names: Array.isArray(detail.deptNames) ? detail.deptNames : [],
+    unionid: String(detail.unionid || detail.unionId || ""),
   };
 }
 
@@ -280,7 +243,8 @@ function signAgentToken(sessionPayload) {
 }
 
 function h5Cookie(token) {
-  return `${h5SessionCookieName}=${token}; Max-Age=${h5SessionTtlSeconds}; Path=/; HttpOnly; SameSite=Lax`;
+  const secure = process.env.NODE_ENV === "production" || process.env.COOKIE_SECURE === "true" ? "; Secure" : "";
+  return `${h5SessionCookieName}=${token}; Max-Age=${h5SessionTtlSeconds}; Path=/; HttpOnly; SameSite=Lax${secure}`;
 }
 
 async function handleBff(req, res, pathname) {
@@ -289,8 +253,6 @@ async function handleBff(req, res, pathname) {
       ok: true,
       corpId: dingtalkCorpId || null,
       clientId: dingtalkClientId || null,
-      clientSecretConfigured: Boolean(dingtalkClientSecret),
-      clientSecretHint: maskDiagnosticValue(dingtalkClientSecret),
       agentBaseUrl: agentEndpoint.replace(/\/$/, ""),
       agentTokenTtlSeconds,
       dingtalkConfigured: dingtalkConfigured(),
@@ -333,9 +295,7 @@ async function handleBff(req, res, pathname) {
           host: req.headers.host || "",
           corpId,
           clientId: dingtalkClientId,
-          clientSecret: maskDiagnosticValue(dingtalkClientSecret),
           codeLength: code.length,
-          code: maskDiagnosticValue(code, 6, 6),
         }),
       );
       const sessionPayload = await exchangeDingtalkCode(code, corpId);
@@ -386,14 +346,6 @@ async function handleBff(req, res, pathname) {
   }
 
   sendJson(res, 404, makeError("NOT_FOUND", "接口不存在"));
-}
-
-async function readJson(req) {
-  const raw = await readRequestBody(req);
-  if (!raw.length) return {};
-  const parsed = JSON.parse(raw.toString("utf8"));
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("请求体必须是 JSON 对象");
-  return parsed;
 }
 
 const server = http.createServer(async (req, res) => {

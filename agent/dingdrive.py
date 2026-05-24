@@ -13,12 +13,10 @@ except ImportError:
 
 
 DEFAULT_CONFLICT_STRATEGY = "AUTO_RENAME"
-DEFAULT_DRIVE_SPACE_ID = "28905814322"
-DEFAULT_DRIVE_PARENT_ID = "7rdQPGYqjpJYrMZG10XH58akx1Z5NzL2"
 
 
-def _config_value(name: str, default: str = "") -> str:
-    value = (os.getenv(name) or default).strip()
+def _config_value(name: str) -> str:
+    value = (os.getenv(name) or "").strip()
     if not value:
         raise RuntimeError(f"未配置 {name}，无法上传合同到钉盘")
     return value
@@ -62,32 +60,11 @@ def _storage_client() -> Any:
     return DingtalkStorageClient(config)
 
 
-def _download_client() -> Any:
-    try:
-        from alibabacloud_dingtalk.storage_1_0.client import Client as DingtalkStorageClient
-        from alibabacloud_tea_openapi import models as open_api_models
-    except ImportError as exc:
-        raise RuntimeError("未安装 alibabacloud_dingtalk，无法调用钉盘下载 API") from exc
-
-    config = open_api_models.Config()
-    config.protocol = "https"
-    config.region_id = "central"
-    return DingtalkStorageClient(config)
-
-
 def _models() -> Any:
     try:
         from alibabacloud_dingtalk.storage_2_0 import models as storage_models
     except ImportError as exc:
         raise RuntimeError("未安装 alibabacloud_dingtalk，无法构造钉盘存储请求") from exc
-    return storage_models
-
-
-def _download_models() -> Any:
-    try:
-        from alibabacloud_dingtalk.storage_1_0 import models as storage_models
-    except ImportError as exc:
-        raise RuntimeError("未安装 alibabacloud_dingtalk，无法构造钉盘下载请求") from exc
     return storage_models
 
 
@@ -140,8 +117,8 @@ def _upload_with_header_signature(path: Path, upload_info: Any) -> None:
 
 def upload_contract_to_dingdrive(path: Path, file_name: str, current_user: dict[str, Any] | None) -> dict[str, Any]:
     """Upload a generated contract to the configured DingTalk team folder."""
-    parent_dentry_uuid = _config_value("DINGTALK_DRIVE_PARENT_ID", DEFAULT_DRIVE_PARENT_ID)
-    configured_space_id = _config_value("DINGTALK_DRIVE_SPACE_ID", DEFAULT_DRIVE_SPACE_ID)
+    parent_dentry_uuid = _config_value("DINGTALK_DRIVE_PARENT_ID")
+    configured_space_id = _config_value("DINGTALK_DRIVE_SPACE_ID")
     union_id = _union_id(current_user)
     size = path.stat().st_size
     token = dingtalk_oapi.get_app_access_token()
@@ -202,27 +179,4 @@ def upload_contract_to_dingdrive(path: Path, file_name: str, current_user: dict[
         "previewUrl": preview_url,
         "openUrl": open_url,
         "raw": dentry,
-    }
-
-
-def get_contract_download_info(space_id: str, file_id: str, current_user: dict[str, Any] | None) -> dict[str, Any]:
-    union_id = _union_id(current_user)
-    token = dingtalk_oapi.get_app_access_token()
-    client = _download_client()
-    storage_models = _download_models()
-
-    headers = storage_models.GetFileDownloadInfoHeaders()
-    headers.x_acs_dingtalk_access_token = token
-    option = storage_models.GetFileDownloadInfoRequestOption(version=1, prefer_intranet=False)
-    request = storage_models.GetFileDownloadInfoRequest(union_id=union_id, option=option)
-    response = client.get_file_download_info_with_options(space_id, file_id, request, headers, _runtime_options())
-    body = _to_map(_response_body(response))
-    header_signature = _get_value(body, "headerSignatureInfo", "header_signature_info") or body
-    resource_urls = _get_value(header_signature, "resourceUrls", "resource_urls") or []
-    download_headers = _get_value(header_signature, "headers") or {}
-    return {
-        "resourceUrls": resource_urls,
-        "headers": download_headers,
-        "expirationSeconds": _get_value(header_signature, "expirationSeconds", "expiration_seconds"),
-        "raw": body,
     }
