@@ -54,7 +54,18 @@
       </section>
 
       <section class="card workbench-card">
-        <div class="task-create-strip">
+        <div id="taskQueueCard" class="task-queue-panel">
+          <div class="task-queue-heading">
+            <div>
+              <p class="eyebrow">任务队列</p>
+              <h2>合同生成任务</h2>
+            </div>
+            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务，点击任务卡片可切换编辑。</p>
+          </div>
+          <div id="taskList" class="task-list"></div>
+        </div>
+
+        <div id="taskCreatePanel" class="task-create-strip" hidden>
           <label class="field">
             <span class="field-label">合同模板</span>
             <select id="templateType">
@@ -85,17 +96,6 @@
 
           <button id="parseButton" type="button" disabled>开始解析</button>
           <p id="status" class="status" aria-live="polite" hidden></p>
-        </div>
-
-        <div id="taskQueueCard" class="task-queue-panel">
-          <div class="task-queue-heading">
-            <div>
-              <p class="eyebrow">任务队列</p>
-              <h2>合同生成任务</h2>
-            </div>
-            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务，点击任务卡片可切换编辑。</p>
-          </div>
-          <div id="taskList" class="task-list"></div>
         </div>
       </section>
 

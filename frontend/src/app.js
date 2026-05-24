@@ -11,6 +11,7 @@ const extraInfoText = document.querySelector("#extraInfoText");
 const fieldPreviewSummary = document.querySelector("#fieldPreviewSummary");
 const contractPreviewEl = document.querySelector("#contractPreview");
 const templateType = document.querySelector("#templateType");
+const taskCreatePanel = document.querySelector("#taskCreatePanel");
 const taskList = document.querySelector("#taskList");
 const taskQueueHint = document.querySelector("#taskQueueHint");
 const activeTaskTitle = document.querySelector("#activeTaskTitle");
@@ -1036,6 +1037,20 @@ function closeTaskDrawer() {
   if (taskDrawerBackdrop) taskDrawerBackdrop.hidden = true;
 }
 
+function openCreatePanel() {
+  if (taskCreatePanel) taskCreatePanel.hidden = false;
+  setStatus("");
+  updateActionAvailability();
+}
+
+function closeCreatePanel() {
+  if (taskCreatePanel) taskCreatePanel.hidden = true;
+  quoteFile.value = "";
+  updateSelectedFile();
+  setStatus("");
+  updateActionAvailability();
+}
+
 function syncDrawerVisibility(hasContent) {
   const open = Boolean(drawerOpen && hasContent);
   if (taskDrawer) {
@@ -1084,13 +1099,16 @@ function createTaskDownloadNode(task) {
 function renderTaskList() {
   if (!taskList) return;
   taskList.textContent = "";
+  const createCard = createEl("button", "new-task-card", "");
+  createCard.type = "button";
+  createCard.disabled = !sessionReady || incompleteTaskCount() >= MAX_TASKS;
+  createCard.append(
+    createEl("strong", "", "+ 新建合同任务"),
+    createEl("span", "", createCard.disabled ? "请先完成免登或释放任务额度" : "点击后选择模板并上传报价单"),
+  );
+  createCard.addEventListener("click", openCreatePanel);
+  taskList.append(createCard);
   if (!tasks.length) {
-    const placeholder = createEl("article", "task-placeholder-card");
-    placeholder.append(
-      createEl("strong", "", "等待新任务加入"),
-      createEl("p", "", "选择合同模板和报价单后，任务卡片会出现在这里。"),
-    );
-    taskList.append(placeholder);
     updateActionAvailability();
     return;
   }
@@ -1315,6 +1333,7 @@ parseButton.addEventListener("click", async () => {
   selectTask(task.id);
   quoteFile.value = "";
   updateSelectedFile();
+  closeCreatePanel();
   setStatus("已创建任务，正在上传解析...");
   setProgress("upload", "active", "任务已创建，正在上传解析。");
   void runParseTask(task);
