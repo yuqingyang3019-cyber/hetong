@@ -8,14 +8,16 @@ import json
 import logging
 import mimetypes
 import os
+import requests
 import sys
 import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
+from urllib.parse import quote
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -43,9 +45,10 @@ except ImportError:
     from contract.render import merge_render_data, render_contract
 
 try:
-    from .dingdrive import upload_contract_to_dingdrive
+    from .dingdrive import get_contract_download_info, upload_contract_to_dingdrive
     from .storage_cleanup import remove_contract_files, remove_upload
 except ImportError:
+    from dingdrive import get_contract_download_info  # type: ignore[no-redef]
     from dingdrive import upload_contract_to_dingdrive  # type: ignore[no-redef]
     from storage_cleanup import remove_contract_files, remove_upload  # type: ignore[no-redef]
 
@@ -242,6 +245,11 @@ def contract_download_payload(draft: dict[str, Any]) -> dict[str, Any]:
             "previewUrl": preview_url,
             "openUrl": open_url,
             "downloadProvidedByPreview": True,
+        },
+        "download": {
+            "type": "agent_proxy",
+            "fileName": file_name,
+            "savePathHint": "文件将保存到浏览器或钉钉客户端的默认下载目录；如系统弹窗提示，请选择目标保存位置。",
         },
     }
     if open_url:
@@ -866,6 +874,47 @@ async def preview_quote_fields_api(
         "extractedData": extracted,
         **field_summary,
     }
+
+
+@app.post("/api/dingdrive/download")
+def download_dingdrive_contract(payload: dict = Body(...), current_user: dict = Depends(get_current_user)) -> StreamingResponse:
+    if not isinstance(payload, dict):
+        raise api_error(400, "INVALID_ARGUMENT", "下载请求体格式不正确")
+    space_id = str(payload.get("spaceId") or "").strip()
+    file_id = str(payload.get("fileId") or "").strip()
+    file_name = safe_file_name(str(payload.get("fileName") or "contract.docx").strip() or "contract.docx")
+    if not space_id or not file_id:
+        raise api_error(400, "INVALID_ARGUMENT", "缺少钉盘 spaceId 或 fileId")
+
+    try:
+        download_info = get_contract_download_info(space_id, file_id, current_user)
+        resource_urls = download_info.get("resourceUrls") if isinstance(download_info, dict) else None
+        headers = download_info.get("headers") if isinstance(download_info, dict) else None
+        if not resource_urls:
+            raise api_error(502, "DINGDRIVE_DOWNLOAD_FAILED", "钉盘未返回合同下载地址")
+        response = requests.get(resource_urls[0], headers=headers or {}, stream=True, timeout=120)
+        response.raise_for_status()
+    except HTTPException:
+        raise
+    except requests.RequestException as exc:
+        raise api_error(502, "DINGDRIVE_DOWNLOAD_FAILED", "下载钉盘合同失败，请稍后重试", str(exc)) from exc
+    except RuntimeError as exc:
+        raise api_error(502, "DINGDRIVE_DOWNLOAD_FAILED", "获取钉盘合同下载信息失败", str(exc)) from exc
+
+    def iter_content() -> Any:
+        try:
+            for chunk in response.iter_content(chunk_size=1024 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            response.close()
+
+    encoded_name = quote(file_name)
+    return StreamingResponse(
+        iter_content(),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}"},
+    )
 
 
 async def agui_stream(input_data: dict[str, Any], request: Request, current_user: dict[str, Any]) -> AsyncGenerator[bytes, None]:

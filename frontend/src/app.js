@@ -644,56 +644,36 @@ function fileToDataUrl(file) {
   });
 }
 
-function fileTypeFromName(fileName) {
-  const parts = String(fileName || "").split(".");
-  return parts.length > 1 ? parts.pop().toLowerCase() : "";
-}
-
-function openUrlWithDingTalk(url) {
-  if (!url) return false;
-  if (window.dd?.openLink) {
-    window.dd.openLink({ url });
-    return true;
-  }
-  if (window.dd?.biz?.util?.openLink) {
-    window.dd.biz.util.openLink({ url });
-    return true;
-  }
-  window.open(url, "_blank", "noopener");
-  return true;
-}
-
-function openDingTalkPreview(payload, onFail) {
-  const preview = payload?.preview || {};
+async function downloadDingDriveContract(payload) {
   const dingDrive = payload?.dingDrive || {};
-  const url = preview.previewUrl || preview.openUrl || payload?.previewUrl || payload?.openUrl;
-  if (!url && !(dingDrive.spaceId && dingDrive.fileId)) throw new Error("未返回钉盘预览入口");
+  if (!dingDrive.spaceId || !dingDrive.fileId) throw new Error("未返回钉盘文件信息");
   const fileName = dingDrive.fileName || payload?.fileName || "合同.docx";
-  const previewOptions = {
-    corpId: authContext.corpId,
-    spaceId: dingDrive.spaceId,
-    fileId: dingDrive.fileId,
-    fileName,
-    fileSize: Number(dingDrive.fileSize || payload?.fileSize || 0) || undefined,
-    fileType: dingDrive.fileType || payload?.fileType || fileTypeFromName(fileName),
-  };
-  const nativePreview = window.dd?.biz?.cspace?.preview;
-  if (nativePreview && authContext.corpId && dingDrive.spaceId && dingDrive.fileId) {
-    try {
-      nativePreview({
-        ...previewOptions,
-        onFail: (err) => {
-          if (openUrlWithDingTalk(url)) return;
-          onFail?.(err || new Error("钉盘文件预览失败，请确认当前用户有文件预览权限"));
-        },
-      });
-      return;
-    } catch (error) {
-      if (!url) throw error;
-    }
+  const response = await fetchAgent("/api/dingdrive/download", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      spaceId: dingDrive.spaceId,
+      fileId: dingDrive.fileId,
+      fileName,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.message || body.detail || "下载合同失败");
   }
-  if (!url) throw new Error("未返回钉盘预览链接");
-  openUrlWithDingTalk(url);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = objectUrl;
+  link.download = fileName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+  return {
+    fileName,
+    savePathHint: payload?.download?.savePathHint || "文件将保存到浏览器或钉钉客户端的默认下载目录；如系统弹窗提示，请选择目标保存位置。",
+  };
 }
 
 function parseSseChunk(chunk) {
@@ -776,10 +756,9 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
       if (event.type === "RUN_FINISHED") finished = true;
     }
   }
-  const preview = generated?.preview || {};
-  const hasPreview = Boolean(preview.previewUrl || preview.openUrl || generated?.previewUrl || generated?.openUrl || generated?.dingDrive?.fileId);
-  if (!finished || !generated || !hasPreview) {
-    throw new Error("合同生成未返回钉盘预览入口，请重试。");
+  const hasDownload = Boolean(generated?.dingDrive?.spaceId && generated?.dingDrive?.fileId);
+  if (!finished || !generated || !hasDownload) {
+    throw new Error("合同生成未返回钉盘文件下载信息，请重试。");
   }
   return generated;
 }
@@ -1110,23 +1089,24 @@ function removeTask(taskId) {
 function createTaskDownloadNode(task) {
   if (!task.download) return null;
   const payload = task.download;
-  const url = payload.preview?.previewUrl || payload.preview?.openUrl || payload.previewUrl || payload.openUrl;
-  if (url || payload.dingDrive?.fileId) {
-    const button = createEl("button", "task-download", "预览钉盘合同");
+  if (payload.dingDrive?.fileId) {
+    const button = createEl("button", "task-download", "下载合同文件");
     button.type = "button";
-    button.addEventListener("click", (event) => {
+    button.addEventListener("click", async (event) => {
       event.stopPropagation();
-      const markPreviewFailed = (error) => {
+      const markDownloadFailed = (error) => {
         const message = formatError(error);
-        appendTaskLog(task, `预览失败：${message}\n`);
-        setStatus(`预览失败：${message}`, "error");
+        appendTaskLog(task, `下载失败：${message}\n`);
+        setStatus(`下载失败：${message}`, "error");
       };
       try {
-        setStatus("正在打开钉盘预览...");
-        openDingTalkPreview(payload, markPreviewFailed);
-        setStatus("已发起钉盘预览。", "success");
+        setStatus("正在准备合同下载...");
+        const result = await downloadDingDriveContract(payload);
+        const message = `合同已开始下载：${result.fileName}。${result.savePathHint}`;
+        appendTaskLog(task, `${message}\n`);
+        setStatus(message, "success");
       } catch (error) {
-        markPreviewFailed(error);
+        markDownloadFailed(error);
       }
     });
     return button;

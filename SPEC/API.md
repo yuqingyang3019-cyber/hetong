@@ -8,7 +8,7 @@
 | 文档版本 | V1.0 |
 | 创建日期 | 2026-05-23 |
 | 关联文档 | [PRD.md](./PRD.md)、[ARCHITECTURE.md](./ARCHITECTURE.md) |
-| 适用范围 | 前端 H5、BFF 鉴权协同、AgentRun 业务接口、钉盘预览交付 |
+| 适用范围 | 前端 H5、BFF 鉴权协同、AgentRun 业务接口、钉盘下载交付 |
 
 ## 2. 接口分层
 
@@ -16,7 +16,7 @@ V1 接口按职责拆分为三类：
 
 | 类型 | 域名 | 调用方 | 职责 |
 | --- | --- | --- | --- |
-| 钉钉客户端 JSAPI SDK | 钉钉客户端内置 | 前端 H5 | 获取免登授权码、打开钉盘合同预览 |
+| 钉钉客户端 JSAPI SDK | 钉钉客户端内置 | 前端 H5 | 获取免登授权码 |
 | BFF 鉴权接口 | 前端 H5 域名 | 前端 H5 | 提供公开配置、使用钉钉官方新版服务端 SDK 完成免登、维护 H5 会话、签发 AgentRun 短期访问凭证 |
 | AgentRun 业务接口 | AgentRun 域名 | 前端 H5 | 处理报价单上传、解析、字段识别、合同生成和钉盘上传 |
 
@@ -68,6 +68,7 @@ Content-Type: application/json
 | `LLM_FAILED` | 502 | 字段识别失败 |
 | `CONTRACT_GENERATE_FAILED` | 500 | 合同生成失败 |
 | `DINGDRIVE_UPLOAD_FAILED` | 502 | 钉盘上传失败 |
+| `DINGDRIVE_DOWNLOAD_FAILED` | 502 | 钉盘下载失败 |
 | `INTERNAL_ERROR` | 500 | 未分类服务端错误 |
 
 ## 4. 钉钉客户端 JSAPI SDK 能力
@@ -91,9 +92,9 @@ Content-Type: application/json
 
 前端不应把 `clientSecret`、服务端 access token 或任何第三方密钥放入页面。
 
-### 4.2 预览钉盘合同
+### 4.2 下载钉盘合同
 
-合同生成完成后，AgentRun 返回钉盘预览信息。前端优先使用钉钉客户端 JSAPI SDK 的文件预览能力打开合同；若当前客户端能力不可用，可降级打开 `openUrl`。
+合同生成完成后，AgentRun 返回钉盘文件信息。前端调用 AgentRun 下载接口，AgentRun 使用钉盘官方新版 SDK 获取文件下载信息并代理返回合同文件流。
 
 输入：
 
@@ -102,10 +103,9 @@ Content-Type: application/json
 | `spaceId` | AgentRun `contract_generated` 事件 | 钉盘空间 ID |
 | `fileId` | AgentRun `contract_generated` 事件 | 钉盘文件 ID |
 | `fileName` | AgentRun `contract_generated` 事件 | 合同文件名 |
-| `previewUrl` | AgentRun `contract_generated` 事件 | 优先预览链接 |
-| `openUrl` | AgentRun `contract_generated` 事件 | 兜底打开链接 |
+| `downloadUrl` | 前端内部接口 | AgentRun 下载接口路径 |
 
-预览页自带下载能力，前端不再默认代理下载文件流。
+前端下载完成后应提示用户文件会保存到浏览器或钉钉客户端默认下载目录；如系统弹窗提示，可选择目标保存位置。
 
 ## 5. BFF 鉴权接口
 
@@ -332,7 +332,7 @@ Authorization: Bearer <agentAccessToken>
 Accept: text/event-stream
 ```
 
-用途：前端提交用户确认后的字段数据，AgentRun 生成合同、使用钉盘官方新版 SDK 上传钉盘，并通过 SSE 返回过程事件。
+用途：前端提交用户确认后的字段数据，AgentRun 生成合同、使用钉盘官方新版 SDK 上传钉盘，并通过 SSE 返回过程事件和钉盘文件信息。
 
 请求关键字段：
 
@@ -387,6 +387,11 @@ data: {"type":"RUN_FINISHED"}
     "previewUrl": "https://...",
     "openUrl": "https://...",
     "downloadProvidedByPreview": true
+  },
+  "download": {
+    "type": "agent_proxy",
+    "fileName": "20260523_供应商A.docx",
+    "savePathHint": "文件将保存到浏览器或钉钉客户端的默认下载目录；如系统弹窗提示，请选择目标保存位置。"
   }
 }
 ```
@@ -394,14 +399,33 @@ data: {"type":"RUN_FINISHED"}
 约束：
 
 - `extractedData` 必须来自用户确认后的字段预览结果。
-- AgentRun 上传钉盘后只返回预览入口和必要文件元数据。
-- 前端使用钉钉客户端 JSAPI SDK 打开预览，不默认调用代理下载接口。
+- AgentRun 上传钉盘后返回必要文件元数据和下载提示信息。
+- 前端通过 `POST /api/dingdrive/download` 带 Bearer Token 下载合同文件，不直接暴露钉盘下载签名 URL 和 headers。
+
+### 6.5 下载钉盘合同
+
+```http
+POST /api/dingdrive/download
+Authorization: Bearer <agentAccessToken>
+```
+
+请求：
+
+```json
+{
+  "spaceId": "space_xxx",
+  "fileId": "file_xxx",
+  "fileName": "20260523_供应商A.docx"
+}
+```
+
+用途：AgentRun 调用钉盘 `GetFileDownloadInfo` 获取下载 URL 和 headers，并代理返回合同文件流。前端收到文件流后触发浏览器或钉钉客户端下载，并提示用户保存路径。
 
 ## 7. SDK 使用约束
 
-- 前端只使用钉钉客户端 JSAPI SDK 获取免登授权码和打开钉盘文件预览。
+- 前端只使用钉钉客户端 JSAPI SDK 获取免登授权码。
 - BFF 必须使用钉钉官方新版服务端 SDK 完成免登 code 换取、用户身份查询和必要的通讯录信息查询。
-- AgentRun 必须使用钉盘官方新版 SDK 上传合同、获取钉盘文件元数据和预览入口。
+- AgentRun 必须使用钉盘官方新版 SDK 上传合同、获取钉盘文件元数据和下载信息。
 - 新增实现不得继续引入旧版 OAPI/Storage API 手写 HTTP 调用；确需保留旧实现时，只能作为迁移期兼容路径，并必须在当前实现差距中标注。
 - SDK 抛出的异常必须转换为本文档定义的稳定错误码，不允许将 SDK 原始错误直接透传给前端。
 
@@ -411,8 +435,7 @@ data: {"type":"RUN_FINISHED"}
 
 | 接口 | 原因 |
 | --- | --- |
-| `POST /api/dingdrive/download` | 合同交付改为钉盘预览，预览页自带下载能力，前端不代理下载文件流 |
-| `GET /api/contracts/{contractId}/download` | 合同成功上传钉盘后只返回预览入口和必要元数据，不暴露本地合同下载 |
+| `GET /api/contracts/{contractId}/download` | 合同成功上传钉盘后通过钉盘文件信息下载，不暴露本地合同下载 |
 | `POST /api/contracts/generate` | H5 主路径统一使用 AG-UI SSE 生成合同 |
 | BFF 代理 `/api`、`/ag-ui` | 目标设计为前端带短期凭证直连 AgentRun 业务接口 |
 
@@ -422,5 +445,5 @@ data: {"type":"RUN_FINISHED"}
 | --- | --- | --- | --- |
 | 鉴权职责 | BFF 使用钉钉官方新版服务端 SDK 完成免登并签发 AgentRun 短期凭证 | 已迁移为 `/bff/auth/*` + AgentRun Bearer 鉴权，BFF 内部钉钉调用使用官方新版 SDK | 后续在真实钉钉环境验证新版 SDK 免登字段稳定性 |
 | 业务请求路径 | 前端直连 AgentRun | 已改为 `agentBaseUrl` + `Authorization: Bearer` | 部署时确保 AgentRun CORS 允许 H5 域名 |
-| 合同交付 | AgentRun 使用钉盘官方新版 SDK 返回钉盘预览链接，前端 JSAPI SDK 打开预览 | 已返回 `preview` 结构并由前端打开预览入口 | 继续确认钉盘新版 SDK 的稳定预览 URL 字段 |
+| 合同交付 | AgentRun 使用钉盘官方新版 SDK 返回钉盘文件信息，前端通过 AgentRun 下载合同 | 已返回 `dingDrive` 和 `download` 结构，并通过 `/api/dingdrive/download` 下载 | 继续确认钉盘下载信息接口在真实环境的权限配置 |
 | 图片 OCR | AgentRun 解析图片报价单 | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |
