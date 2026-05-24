@@ -32,6 +32,11 @@ const closeAccessModalButton = document.querySelector("#closeAccessModalButton")
 const taskDrawer = document.querySelector("#taskDrawer");
 const taskDrawerBackdrop = document.querySelector("#taskDrawerBackdrop");
 const closeTaskDrawerButton = document.querySelector("#closeTaskDrawerButton");
+const processingCard = document.querySelector("#processingCard");
+const processingTitle = document.querySelector("#processingTitle");
+const processingHint = document.querySelector("#processingHint");
+const drawerStepItems = Array.from(document.querySelectorAll("[data-drawer-step]"));
+const drawerDownloadAction = document.querySelector("#drawerDownloadAction");
 
 const MAX_TASKS = 5;
 const templateSchemaFiles = Object.freeze({
@@ -53,6 +58,7 @@ let agentAuth = { baseUrl: "", token: "", expiresAt: 0 };
 let sessionReady = false;
 let activeTaskId = null;
 let drawerOpen = false;
+let drawerLastFocus = null;
 
 function apiUrl(path) {
   return path;
@@ -156,6 +162,7 @@ function setStatus(message, tone = "info") {
   statusEl.textContent = message;
   statusEl.classList.toggle("is-error", tone === "error");
   statusEl.classList.toggle("is-success", tone === "success");
+  statusEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 function formatFileSize(size) {
@@ -213,6 +220,63 @@ function updateActionAvailability() {
   }
 }
 
+function drawerStepForTask(task) {
+  if (!task) return "";
+  if (task.status === "completed") return "done";
+  if (task.status === "needs_fields" || task.status === "generating") return "fields";
+  if (task.status === "needs_text" || task.status === "identifying") return "text";
+  return "parse";
+}
+
+function setDrawerStep(currentStep) {
+  const order = ["parse", "text", "fields", "done"];
+  const activeIndex = order.indexOf(currentStep);
+  drawerStepItems.forEach((item) => {
+    const itemIndex = order.indexOf(item.dataset.drawerStep);
+    item.classList.remove("is-active", "is-complete");
+    if (itemIndex >= 0 && itemIndex < activeIndex) item.classList.add("is-complete");
+    if (item.dataset.drawerStep === currentStep) item.classList.add("is-active");
+  });
+}
+
+function setDrawerBusy(task) {
+  if (!taskDrawer) return;
+  taskDrawer.setAttribute("aria-busy", taskIsBusy(task) ? "true" : "false");
+}
+
+function syncProcessingPanel(task) {
+  if (!processingCard) return;
+  const show = Boolean(task && (taskIsBusy(task) || (!task.quoteText && task.status === "failed")));
+  processingCard.hidden = !show;
+  if (!show) return;
+  const smartTitles = {
+    uploading: "智能助手正在接收报价单",
+    parsing: "AI 正在读取报价单内容",
+    identifying: "AI 正在匹配合同字段",
+    generating: "正在生成合同并交付钉盘",
+    failed: "智能处理遇到问题",
+  };
+  const smartHints = {
+    uploading: "正在安全上传文件，完成后会自动进入解析。",
+    parsing: "系统会先提取文字和表格，稍后请你确认识别结果是否准确。",
+    identifying: "系统会按所选模板整理字段，并把缺失项明确标出来。",
+    generating: "合同会根据你确认过的字段生成，完成后可直接下载。",
+    failed: "任务处理失败，请返回任务卡片重试或删除。",
+  };
+  if (processingTitle) processingTitle.textContent = smartTitles[task.status] || statusLabel(task.status);
+  if (processingHint) {
+    processingHint.textContent = smartHints[task.status] || task.message || "请稍候，系统正在处理当前报价单。";
+  }
+}
+
+function syncDrawerDownload(task) {
+  if (!drawerDownloadAction) return;
+  drawerDownloadAction.textContent = "";
+  const node = task?.status === "completed" ? createTaskDownloadNode(task) : null;
+  drawerDownloadAction.hidden = !node;
+  if (node) drawerDownloadAction.append(node);
+}
+
 function setInteractionEnabled(enabled) {
   sessionReady = enabled;
   renderTaskList();
@@ -237,6 +301,7 @@ function showAccessModal(message) {
   if (!accessModal) return;
   if (accessModalMessage) accessModalMessage.textContent = message;
   accessModal.hidden = false;
+  window.setTimeout(() => closeAccessModalButton?.focus(), 0);
 }
 
 function closeAccessModal() {
@@ -983,8 +1048,12 @@ function resetFieldPreviewUi() {
 }
 
 function clearActiveEditor() {
+  if (processingCard) processingCard.hidden = true;
   previewCard.hidden = true;
   resetFieldPreviewUi();
+  syncDrawerDownload(null);
+  setDrawerStep("");
+  setDrawerBusy(null);
   quoteTextPreview.value = "";
   if (extraInfoText) extraInfoText.value = "";
   syncDrawerVisibility(false);
@@ -1043,11 +1112,10 @@ function selectTask(taskId) {
 
 function closeTaskDrawer() {
   drawerOpen = false;
-  if (taskDrawer) {
-    taskDrawer.hidden = true;
-    taskDrawer.setAttribute("aria-hidden", "true");
-  }
-  if (taskDrawerBackdrop) taskDrawerBackdrop.hidden = true;
+  setDrawerBusy(null);
+  syncDrawerVisibility(false);
+  renderTaskList();
+  updateActionAvailability();
 }
 
 function openCreatePanel() {
@@ -1067,8 +1135,17 @@ function closeCreatePanel() {
 function syncDrawerVisibility(hasContent) {
   const open = Boolean(drawerOpen && hasContent);
   if (taskDrawer) {
+    const wasOpen = !taskDrawer.hidden;
     taskDrawer.hidden = !open;
     taskDrawer.setAttribute("aria-hidden", open ? "false" : "true");
+    if (open && !wasOpen) {
+      drawerLastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      window.setTimeout(() => closeTaskDrawerButton?.focus(), 0);
+    }
+    if (!open && wasOpen && drawerLastFocus && document.contains(drawerLastFocus)) {
+      drawerLastFocus.focus();
+      drawerLastFocus = null;
+    }
   }
   if (taskDrawerBackdrop) taskDrawerBackdrop.hidden = !open;
 }
@@ -1124,8 +1201,8 @@ function renderTaskList() {
   createCard.type = "button";
   createCard.disabled = !sessionReady || incompleteTaskCount() >= MAX_TASKS;
   createCard.append(
-    createEl("strong", "", "+ 新建合同任务"),
-    createEl("span", "", createCard.disabled ? "请先完成免登或释放任务额度" : "点击后选择模板并上传报价单"),
+    createEl("strong", "", "+ 让 AI 处理一份报价单"),
+    createEl("span", "", createCard.disabled ? "请先完成免登或释放任务额度" : "选择模板并上传，AI 会先解析字段"),
   );
   createCard.addEventListener("click", openCreatePanel);
 
@@ -1133,10 +1210,21 @@ function renderTaskList() {
     const card = createEl("article", [
       "task-card",
       task.id === activeTaskId ? "is-active" : "",
+      taskIsBusy(task) ? "is-busy" : "",
       task.status === "failed" ? "is-error" : "",
       task.status === "completed" ? "is-complete" : "",
     ].filter(Boolean).join(" "));
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-current", task.id === activeTaskId ? "true" : "false");
+    card.setAttribute("aria-busy", taskIsBusy(task) ? "true" : "false");
+    card.setAttribute("aria-label", `${index + 1}. ${task.fileName}，${statusLabel(task.status)}，${task.message || "等待处理"}`);
     card.addEventListener("click", () => selectTask(task.id));
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      selectTask(task.id);
+    });
 
     const header = createEl("div", "task-card-header");
     const title = createEl("div", "task-title");
@@ -1194,15 +1282,45 @@ function renderTaskList() {
 
 async function syncActiveTaskEditor() {
   const task = activeTask();
-  if (!task || !task.quoteText) {
+  if (!task) {
     clearActiveEditor();
-    syncDrawerVisibility(false);
     return;
   }
-  previewCard.hidden = false;
-  syncDrawerVisibility(true);
-  if (activeTaskTitle) activeTaskTitle.textContent = `${task.fileName} · 文本确认`;
-  if (activeTaskHint) activeTaskHint.textContent = `${task.templateName}。当前状态：${statusLabel(task.status)}。`;
+
+  const hasEditorContent = Boolean(task.quoteText);
+  const shouldOpenDrawer = hasEditorContent || taskIsBusy(task) || task.status === "failed" || task.status === "completed";
+  syncDrawerVisibility(shouldOpenDrawer);
+  setDrawerBusy(task);
+  setDrawerStep(drawerStepForTask(task));
+  syncProcessingPanel(task);
+  syncDrawerDownload(task);
+
+  if (activeTaskTitle) {
+    activeTaskTitle.textContent = `${task.fileName} · ${statusLabel(task.status)}`;
+  }
+  if (activeTaskHint) {
+    const helperHint = task.status === "needs_text"
+      ? "AI 已整理出报价单文本，请像核对聊天记录一样检查，有问题直接改。"
+      : task.status === "needs_fields"
+        ? "AI 已按模板匹配字段，红色内容代表还需要人工补充或确认。"
+        : task.message || "请按当前阶段继续处理任务。";
+    activeTaskHint.textContent = `${task.templateName}。${helperHint}`;
+  }
+  if (generateButton) {
+    generateButton.hidden = !hasEditorContent || task.status === "completed";
+    if (task.status === "generating") generateButton.textContent = "正在生成合同...";
+    else generateButton.textContent = "确认识别结果并生成合同";
+  }
+
+  previewCard.hidden = !hasEditorContent;
+  if (!hasEditorContent) {
+    quoteTextPreview.value = "";
+    if (extraInfoText) extraInfoText.value = "";
+    resetFieldPreviewUi();
+    updateActionAvailability();
+    return;
+  }
+
   quoteTextPreview.value = task.quoteText || "";
   if (extraInfoText) extraInfoText.value = task.extraInfo || "";
 
@@ -1211,6 +1329,7 @@ async function syncActiveTaskEditor() {
   } else {
     resetFieldPreviewUi();
   }
+  updateActionAvailability();
 }
 
 async function runParseTask(task) {
@@ -1248,10 +1367,10 @@ async function runIdentifyTask(task) {
     setTaskStatus(
       task,
       "needs_fields",
-      missing > 0 ? `字段识别完成，仍有 ${missing} 项待填写。` : "字段识别完成，未发现缺失字段。",
+      missing > 0 ? `AI 已识别字段，仍有 ${missing} 项需要人工确认。` : "AI 已识别字段，未发现缺失字段。",
     );
-    setStatus(missing > 0 ? "字段识别完成，请确认红色提示。" : "字段识别完成，未发现缺失字段。", missing > 0 ? "info" : "success");
-    setProgress("review", "active", "字段识别完成，请确认后生成合同。");
+    setStatus(missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。", missing > 0 ? "info" : "success");
+    setProgress("review", "active", "AI 已完成字段整理，请确认后生成合同。");
   } catch (error) {
     const message = formatError(error);
     setTaskStatus(task, "failed", `字段识别失败：${message}`, "identify");
@@ -1317,6 +1436,8 @@ quoteTextPreview.addEventListener("input", () => {
   if (task.status !== "failed") task.status = "needs_text";
   renderTaskList();
   resetFieldPreviewUi();
+  setDrawerStep("text");
+  setStatus("解析内容已修改，请重新识别合同字段。");
   updateActionAvailability();
 });
 
@@ -1328,6 +1449,8 @@ extraInfoText?.addEventListener("input", () => {
   if (task.status !== "failed") task.status = "needs_text";
   renderTaskList();
   resetFieldPreviewUi();
+  setDrawerStep("text");
+  setStatus("额外信息已修改，请重新识别合同字段。");
   updateActionAvailability();
 });
 
@@ -1393,6 +1516,14 @@ generateButton.addEventListener("click", async () => {
 closeTaskDrawerButton?.addEventListener("click", closeTaskDrawer);
 taskDrawerBackdrop?.addEventListener("click", closeTaskDrawer);
 closeAccessModalButton?.addEventListener("click", closeAccessModal);
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (taskDrawer && !taskDrawer.hidden) {
+    closeTaskDrawer();
+    return;
+  }
+  if (accessModal && !accessModal.hidden) closeAccessModal();
+});
 
 updateSelectedFile();
 renderTaskList();
