@@ -21,6 +21,10 @@ const userNameEl = document.querySelector("#userName");
 const userDeptEl = document.querySelector("#userDept");
 const userMobileEl = document.querySelector("#userMobile");
 const userTitleEl = document.querySelector("#userTitle");
+const userJobNumberEl = document.querySelector("#userJobNumber");
+const userEmailEl = document.querySelector("#userEmail");
+const userUseridEl = document.querySelector("#userUserid");
+const userUnionidEl = document.querySelector("#userUnionid");
 const loginHintEl = document.querySelector("#loginHint");
 const uploadDropzone = document.querySelector("#uploadDropzone");
 const fileNameText = document.querySelector("#fileNameText");
@@ -278,24 +282,21 @@ function showUserBar(user, hint) {
     const ids = user?.deptIds;
     if (Array.isArray(names) && names.length) {
       userDeptEl.textContent = `部门：${names.join("、")}`;
+      userDeptEl.classList.remove("muted");
     } else if (Array.isArray(ids) && ids.length) {
       userDeptEl.textContent = `部门 ID：${ids.join("、")}`;
+      userDeptEl.classList.remove("muted");
     } else {
-      userDeptEl.textContent = "部门：—";
+      userDeptEl.textContent = "部门：未返回";
+      userDeptEl.classList.add("muted");
     }
   }
-  if (userMobileEl) {
-    if (user?.mobile) {
-      userMobileEl.textContent = `手机：${user.mobile}`;
-      userMobileEl.classList.remove("muted");
-    } else {
-      userMobileEl.textContent = "手机：未返回（需在钉钉开放平台开通通讯录手机号权限）";
-      userMobileEl.classList.add("muted");
-    }
-  }
-  if (userTitleEl) {
-    userTitleEl.textContent = user?.title ? `职位：${user.title}` : "职位：—";
-  }
+  setUserDetail(userMobileEl, "手机", user?.mobile, "未返回（需通讯录手机号权限）");
+  setUserDetail(userTitleEl, "职位", user?.title);
+  setUserDetail(userJobNumberEl, "工号", user?.jobNumber);
+  setUserDetail(userEmailEl, "邮箱", user?.email, "未返回（需通讯录邮箱权限）");
+  setUserDetail(userUseridEl, "UserID", user?.userid);
+  setUserDetail(userUnionidEl, "UnionID", user?.unionid);
   if (loginHintEl && hint != null) {
     loginHintEl.textContent = hint;
   }
@@ -303,6 +304,18 @@ function showUserBar(user, hint) {
 
 function hideUserBar() {
   if (userBar) userBar.hidden = true;
+}
+
+function setUserDetail(el, label, value, emptyText = "未返回") {
+  if (!el) return;
+  const text = value == null ? "" : String(value).trim();
+  if (text) {
+    el.textContent = `${label}：${text}`;
+    el.classList.remove("muted");
+  } else {
+    el.textContent = `${label}：${emptyText}`;
+    el.classList.add("muted");
+  }
 }
 
 async function refreshAuthMe() {
