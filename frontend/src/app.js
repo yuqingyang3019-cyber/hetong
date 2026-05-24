@@ -33,6 +33,7 @@ const progressHint = document.querySelector("#progressHint");
 const progressSteps = Array.from(document.querySelectorAll("[data-step]"));
 const accessModal = document.querySelector("#accessModal");
 const accessModalMessage = document.querySelector("#accessModalMessage");
+const closeAccessModalButton = document.querySelector("#closeAccessModalButton");
 const taskDrawer = document.querySelector("#taskDrawer");
 const taskDrawerBackdrop = document.querySelector("#taskDrawerBackdrop");
 const closeTaskDrawerButton = document.querySelector("#closeTaskDrawerButton");
@@ -234,6 +235,10 @@ function showAccessModal(message) {
   if (!accessModal) return;
   if (accessModalMessage) accessModalMessage.textContent = message;
   accessModal.hidden = false;
+}
+
+function closeAccessModal() {
+  if (accessModal) accessModal.hidden = true;
 }
 
 function blockNonDingTalkAccess(message = "请在钉钉客户端内打开合同生成助手。") {
@@ -1351,6 +1356,7 @@ generateButton.addEventListener("click", async () => {
 
 closeTaskDrawerButton?.addEventListener("click", closeTaskDrawer);
 taskDrawerBackdrop?.addEventListener("click", closeTaskDrawer);
+closeAccessModalButton?.addEventListener("click", closeAccessModal);
 
 updateSelectedFile();
 renderTaskList();
