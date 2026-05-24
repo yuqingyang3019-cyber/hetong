@@ -250,6 +250,10 @@ def contract_download_payload(draft: dict[str, Any]) -> dict[str, Any]:
         payload["previewUrl"] = preview_url
     if ding_drive.get("filePath"):
         payload["filePath"] = ding_drive["filePath"]
+    if ding_drive.get("fileSize"):
+        payload["fileSize"] = ding_drive["fileSize"]
+    if ding_drive.get("fileType"):
+        payload["fileType"] = ding_drive["fileType"]
     return payload
 
 

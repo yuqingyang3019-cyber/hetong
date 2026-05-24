@@ -644,42 +644,56 @@ function fileToDataUrl(file) {
   });
 }
 
-function openDingTalkPreview(payload) {
+function fileTypeFromName(fileName) {
+  const parts = String(fileName || "").split(".");
+  return parts.length > 1 ? parts.pop().toLowerCase() : "";
+}
+
+function openUrlWithDingTalk(url) {
+  if (!url) return false;
+  if (window.dd?.openLink) {
+    window.dd.openLink({ url });
+    return true;
+  }
+  if (window.dd?.biz?.util?.openLink) {
+    window.dd.biz.util.openLink({ url });
+    return true;
+  }
+  window.open(url, "_blank", "noopener");
+  return true;
+}
+
+function openDingTalkPreview(payload, onFail) {
   const preview = payload?.preview || {};
   const dingDrive = payload?.dingDrive || {};
   const url = preview.previewUrl || preview.openUrl || payload?.previewUrl || payload?.openUrl;
   if (!url && !(dingDrive.spaceId && dingDrive.fileId)) throw new Error("未返回钉盘预览入口");
   const fileName = dingDrive.fileName || payload?.fileName || "合同.docx";
   const previewOptions = {
+    corpId: authContext.corpId,
     spaceId: dingDrive.spaceId,
     fileId: dingDrive.fileId,
     fileName,
-    url,
+    fileSize: Number(dingDrive.fileSize || payload?.fileSize || 0) || undefined,
+    fileType: dingDrive.fileType || payload?.fileType || fileTypeFromName(fileName),
   };
-  const nativePreview = window.dd?.biz?.cspace?.preview || window.dd?.biz?.util?.previewFile;
-  if (nativePreview && dingDrive.spaceId && dingDrive.fileId) {
+  const nativePreview = window.dd?.biz?.cspace?.preview;
+  if (nativePreview && authContext.corpId && dingDrive.spaceId && dingDrive.fileId) {
     try {
       nativePreview({
         ...previewOptions,
-        onFail: () => {
-          if (url) window.dd?.biz?.util?.openLink?.({ url }) || window.dd?.openLink?.({ url });
+        onFail: (err) => {
+          if (openUrlWithDingTalk(url)) return;
+          onFail?.(err || new Error("钉盘文件预览失败，请确认当前用户有文件预览权限"));
         },
       });
       return;
-    } catch {
-      if (!url) throw new Error("钉钉客户端无法打开钉盘文件预览");
+    } catch (error) {
+      if (!url) throw error;
     }
   }
   if (!url) throw new Error("未返回钉盘预览链接");
-  if (window.dd?.openLink) {
-    window.dd.openLink({ url });
-    return;
-  }
-  if (window.dd?.biz?.util?.openLink) {
-    window.dd.biz.util.openLink({ url });
-    return;
-  }
-  window.open(url, "_blank", "noopener");
+  openUrlWithDingTalk(url);
 }
 
 function parseSseChunk(chunk) {
@@ -1102,10 +1116,17 @@ function createTaskDownloadNode(task) {
     button.type = "button";
     button.addEventListener("click", (event) => {
       event.stopPropagation();
+      const markPreviewFailed = (error) => {
+        const message = formatError(error);
+        appendTaskLog(task, `预览失败：${message}\n`);
+        setStatus(`预览失败：${message}`, "error");
+      };
       try {
-        openDingTalkPreview(payload);
+        setStatus("正在打开钉盘预览...");
+        openDingTalkPreview(payload, markPreviewFailed);
+        setStatus("已发起钉盘预览。", "success");
       } catch (error) {
-        appendTaskLog(task, `预览失败：${formatError(error)}\n`);
+        markPreviewFailed(error);
       }
     });
     return button;

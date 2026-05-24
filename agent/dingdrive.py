@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import mimetypes
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +176,8 @@ def upload_contract_to_dingdrive(path: Path, file_name: str, current_user: dict[
         "parentId": parent_dentry_uuid,
         "fileId": file_id,
         "fileName": _get_value(dentry, "name", "fileName", "file_name") or file_name,
+        "fileSize": _get_value(dentry, "size", "fileSize", "file_size") or size,
+        "fileType": path.suffix.lower().lstrip(".") or (mimetypes.guess_extension(path.name) or "").lstrip("."),
         "filePath": file_path,
         "previewUrl": preview_url,
         "openUrl": open_url,
