@@ -1127,11 +1127,6 @@ function renderTaskList() {
     createEl("span", "", createCard.disabled ? "请先完成免登或释放任务额度" : "点击后选择模板并上传报价单"),
   );
   createCard.addEventListener("click", openCreatePanel);
-  taskList.append(createCard);
-  if (!tasks.length) {
-    updateActionAvailability();
-    return;
-  }
 
   tasks.forEach((task, index) => {
     const card = createEl("article", [
@@ -1192,6 +1187,7 @@ function renderTaskList() {
     }
     taskList.append(card);
   });
+  taskList.append(createCard);
   updateActionAvailability();
 }
 
