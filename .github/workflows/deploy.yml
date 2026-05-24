@@ -93,12 +93,6 @@ jobs:
         working-directory: frontend/dist
         run: npm ci --omit=dev --ignore-scripts
 
-      - name: Vendor Agent Python dependencies
-        run: |
-          rm -rf agent/python
-          python3 -m pip install --upgrade pip
-          python3 -m pip install --target agent/python -r agent/requirements.txt
-
       - name: Configure Aliyun credentials
         run: |
           s config add \
