@@ -84,29 +84,7 @@ body {
     max(var(--space-3), env(safe-area-inset-right))
     max(var(--space-5), env(safe-area-inset-bottom))
     max(var(--space-3), env(safe-area-inset-left));
-  padding-top: max(148px, calc(env(safe-area-inset-top) + var(--space-3)));
-}
-
-.hero {
-  overflow: hidden;
-  padding: var(--space-3);
-  position: relative;
-  border-radius: calc(var(--radius-lg) + 4px);
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.96) 0%, rgba(232, 241, 251, 0.9) 100%);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-md);
-}
-
-.hero::after {
-  background: rgba(15, 108, 189, 0.1);
-  border-radius: 999px;
-  content: "";
-  height: 120px;
-  position: absolute;
-  right: -42px;
-  top: -56px;
-  width: 120px;
+  padding-top: max(96px, calc(env(safe-area-inset-top) + var(--space-3)));
 }
 
 .eyebrow {
@@ -133,14 +111,14 @@ h2 {
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   display: grid;
-  gap: 10px;
-  max-height: min(76vh, 520px);
+  gap: 6px;
+  max-height: min(46vh, 320px);
   overflow: auto;
-  padding: 12px;
+  padding: 10px 12px;
   position: fixed;
   right: max(var(--space-3), env(safe-area-inset-right));
   top: max(var(--space-3), env(safe-area-inset-top));
-  width: min(320px, calc(100vw - 2 * var(--space-3)));
+  width: min(280px, calc(100vw - 2 * var(--space-3)));
   z-index: 30;
 }
 
@@ -171,85 +149,10 @@ h2 {
   margin: 0;
 }
 
-.user-detail-list {
-  display: grid;
-  gap: 6px;
-  grid-template-columns: 1fr;
-  min-width: 0;
-}
-
-.user-detail {
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(15, 108, 189, 0.12);
-  border-radius: var(--radius-sm);
-  color: #334155;
-  font-size: 0.8125rem;
-  font-weight: 700;
-  margin: 0;
-  overflow-wrap: anywhere;
-  padding: 6px 8px;
-  word-break: break-word;
-}
-
-.user-detail.muted {
-  color: #64748b;
-  font-size: 0.8125rem;
-}
-
 .login-hint {
   color: #64748b;
   font-size: 0.8125rem;
   margin: 0;
-}
-
-.identity-details {
-  display: grid;
-  gap: 6px;
-}
-
-.top-step-bar {
-  display: grid;
-  gap: var(--space-2);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-top: var(--space-2);
-  position: relative;
-  z-index: 1;
-}
-
-.top-step {
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  color: #64748b;
-  font-size: 0.8125rem;
-  font-weight: 800;
-  padding: 7px 9px;
-  text-align: center;
-}
-
-.top-step.is-active {
-  background: rgba(15, 108, 189, 0.1);
-  border-color: rgba(15, 108, 189, 0.24);
-  color: #0f548c;
-}
-
-.top-step.is-complete {
-  background: rgba(5, 150, 105, 0.09);
-  border-color: rgba(5, 150, 105, 0.2);
-  color: #047857;
-}
-
-.top-step.is-error {
-  background: rgba(220, 38, 38, 0.08);
-  border-color: rgba(220, 38, 38, 0.22);
-  color: #991b1b;
-}
-
-.hero-progress-hint,
-.hero-log-details {
-  margin-top: var(--space-2);
-  position: relative;
-  z-index: 1;
 }
 
 .card {
@@ -1147,35 +1050,13 @@ pre {
   white-space: pre-wrap;
 }
 
-.log-details {
-  border-top: 1px solid var(--color-border);
-  padding-top: var(--space-3);
-}
-
-.log-details summary {
-  color: var(--color-secondary);
-  cursor: pointer;
-  font-size: 0.875rem;
-  font-weight: 700;
-  min-height: 32px;
-}
-
-.log-details[open] summary {
-  margin-bottom: var(--space-2);
-}
-
 @media (min-width: 560px) {
   .page {
-    padding-top: max(132px, calc(env(safe-area-inset-top) + var(--space-4)));
+    padding-top: max(92px, calc(env(safe-area-inset-top) + var(--space-4)));
   }
 
-  .hero,
   .card {
     padding: var(--space-4);
-  }
-
-  .top-step-bar {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -1185,11 +1066,6 @@ pre {
     padding-bottom: var(--space-5);
     padding-left: 0;
     padding-right: 0;
-  }
-
-  .hero {
-    display: grid;
-    gap: var(--space-3);
   }
 
   .task-create-strip {
@@ -1238,10 +1114,9 @@ pre {
   .page {
     padding-left: max(14px, env(safe-area-inset-left));
     padding-right: max(14px, env(safe-area-inset-right));
-    padding-top: max(184px, calc(env(safe-area-inset-top) + var(--space-3)));
+    padding-top: max(116px, calc(env(safe-area-inset-top) + var(--space-3)));
   }
 
-  .hero,
   .card {
     border-radius: var(--radius-lg);
     padding: var(--space-3);
@@ -1259,7 +1134,7 @@ pre {
 
   .identity-panel {
     left: max(14px, env(safe-area-inset-left));
-    max-height: 44vh;
+    max-height: 28vh;
     padding: var(--space-2);
     right: max(14px, env(safe-area-inset-right));
     width: auto;
@@ -1274,14 +1149,6 @@ pre {
   .user-summary {
     display: grid;
     gap: 4px;
-  }
-
-  .user-detail-list {
-    width: 100%;
-  }
-
-  .user-detail {
-    border-radius: var(--radius-sm);
   }
 
   .drawer-shell {

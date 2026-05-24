@@ -20,12 +20,6 @@ const userBar = document.querySelector("#userBar");
 const userAvatar = document.querySelector("#userAvatar");
 const userNameEl = document.querySelector("#userName");
 const userDeptEl = document.querySelector("#userDept");
-const userMobileEl = document.querySelector("#userMobile");
-const userTitleEl = document.querySelector("#userTitle");
-const userJobNumberEl = document.querySelector("#userJobNumber");
-const userEmailEl = document.querySelector("#userEmail");
-const userUseridEl = document.querySelector("#userUserid");
-const userUnionidEl = document.querySelector("#userUnionid");
 const loginHintEl = document.querySelector("#loginHint");
 const uploadDropzone = document.querySelector("#uploadDropzone");
 const fileNameText = document.querySelector("#fileNameText");
@@ -121,6 +115,7 @@ async function fetchAgent(path, options = {}, retry = true) {
 }
 
 function appendSystemLog(text) {
+  if (!logEl) return;
   logEl.textContent += text;
   logEl.scrollTop = logEl.scrollHeight;
 }
@@ -150,6 +145,7 @@ function configState(value) {
 }
 
 function setStatus(message, tone = "info") {
+  if (!statusEl) return;
   if (!message) {
     statusEl.textContent = "";
     statusEl.hidden = true;
@@ -219,6 +215,7 @@ function updateActionAvailability() {
 
 function setInteractionEnabled(enabled) {
   sessionReady = enabled;
+  renderTaskList();
   updateActionAvailability();
 }
 
@@ -258,6 +255,7 @@ function blockNonDingTalkAccess(message = "请在钉钉客户端内打开合同�
 }
 
 function setProgress(currentStep, state = "active", message = "") {
+  if (!progressSteps.length && !progressHint) return;
   const order = ["auth", "upload", "review", "generate"];
   const activeIndex = order.indexOf(currentStep);
 
@@ -285,6 +283,7 @@ function setProgress(currentStep, state = "active", message = "") {
 }
 
 function setAuthReadyProgress(message = "") {
+  if (!progressSteps.length && !progressHint) return;
   progressSteps.forEach((step) => {
     step.classList.remove("is-active", "is-complete", "is-error");
     if (step.dataset.step === "auth") step.classList.add("is-complete");
@@ -314,24 +313,14 @@ function showUserBar(user, hint) {
   }
   if (userDeptEl) {
     const names = user?.deptNames;
-    const ids = user?.deptIds;
     if (Array.isArray(names) && names.length) {
       userDeptEl.textContent = `部门：${names.join("、")}`;
-      userDeptEl.classList.remove("muted");
-    } else if (Array.isArray(ids) && ids.length) {
-      userDeptEl.textContent = `部门 ID：${ids.join("、")}`;
       userDeptEl.classList.remove("muted");
     } else {
       userDeptEl.textContent = "部门：未返回";
       userDeptEl.classList.add("muted");
     }
   }
-  setUserDetail(userMobileEl, "手机", user?.mobile, "未返回（需通讯录手机号权限）");
-  setUserDetail(userTitleEl, "职位", user?.title);
-  setUserDetail(userJobNumberEl, "工号", user?.jobNumber);
-  setUserDetail(userEmailEl, "邮箱", user?.email, "未返回（需通讯录邮箱权限）");
-  setUserDetail(userUseridEl, "UserID", compactIdentity(user?.userid));
-  setUserDetail(userUnionidEl, "UnionID", compactIdentity(user?.unionid));
   if (loginHintEl && hint != null) {
     loginHintEl.textContent = hint;
   }
@@ -339,24 +328,6 @@ function showUserBar(user, hint) {
 
 function hideUserBar() {
   if (userBar) userBar.hidden = true;
-}
-
-function setUserDetail(el, label, value, emptyText = "未返回") {
-  if (!el) return;
-  const text = value == null ? "" : String(value).trim();
-  if (text) {
-    el.textContent = `${label}：${text}`;
-    el.classList.remove("muted");
-  } else {
-    el.textContent = `${label}：${emptyText}`;
-    el.classList.add("muted");
-  }
-}
-
-function compactIdentity(value) {
-  const text = String(value || "").trim();
-  if (text.length <= 18) return text;
-  return `${text.slice(0, 8)}…${text.slice(-6)}`;
 }
 
 async function refreshAuthMe() {
