@@ -11,35 +11,28 @@
   </head>
   <body>
     <main class="page">
-      <section class="hero">
-        <div class="hero-layout">
-          <div>
-            <h1>合同生成助手</h1>
-            <p>上传报价单 → 补充信息 → 确认字段 → 生成合同</p>
+      <section id="userBar" class="identity-panel" hidden>
+        <div class="identity-main">
+          <img id="userAvatar" class="user-avatar" alt="用户头像" width="40" height="40" hidden />
+          <div class="user-summary">
+            <p id="userName" class="user-name">—</p>
+            <p id="userDept" class="login-hint">部门：—</p>
           </div>
-          <section id="userBar" class="identity-panel" hidden>
-            <div class="identity-main">
-              <img id="userAvatar" class="user-avatar" alt="用户头像" width="40" height="40" hidden />
-              <div class="user-summary">
-                <p id="userName" class="user-name">—</p>
-                <p id="userDept" class="login-hint">部门：—</p>
-              </div>
-            </div>
-            <details class="identity-details">
-              <summary>查看身份详情</summary>
-              <div class="user-detail-list">
-                <p id="userMobile" class="user-detail">手机：—</p>
-                <p id="userTitle" class="user-detail">职位：—</p>
-                <p id="userJobNumber" class="user-detail">工号：—</p>
-                <p id="userEmail" class="user-detail">邮箱：—</p>
-                <p id="userUserid" class="user-detail">UserID：—</p>
-                <p id="userUnionid" class="user-detail">UnionID：—</p>
-              </div>
-            </details>
-            <p id="loginHint" class="hint login-hint"></p>
-          </section>
         </div>
+        <div class="identity-details">
+          <div class="user-detail-list">
+            <p id="userMobile" class="user-detail">手机：—</p>
+            <p id="userTitle" class="user-detail">职位：—</p>
+            <p id="userJobNumber" class="user-detail">工号：—</p>
+            <p id="userEmail" class="user-detail">邮箱：—</p>
+            <p id="userUserid" class="user-detail">UserID：—</p>
+            <p id="userUnionid" class="user-detail">UnionID：—</p>
+          </div>
+        </div>
+        <p id="loginHint" class="hint login-hint"></p>
+      </section>
 
+      <section class="hero">
         <div class="top-step-bar" id="progressSteps">
           <span class="top-step is-active" data-step="auth">钉钉免登</span>
           <span class="top-step" data-step="upload">上传解析</span>
