@@ -19,6 +19,7 @@ const h5SessionTtlSeconds = Number(process.env.H5_SESSION_TTL_SEC || 7 * 24 * 36
 const h5SessionCookieName = "hetong_h5_session";
 const bffPrefix = "/bff/auth";
 const dingtalkTokenCache = new Map();
+const dingtalkOapiEndpoint = "oapi.dingtalk.com";
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -148,6 +149,13 @@ function createContactClient() {
   return new dingtalkContact.default(createOpenApiConfig());
 }
 
+function createOapiClient() {
+  const config = new OpenApi.Config({});
+  config.protocol = "https";
+  config.endpoint = dingtalkOapiEndpoint;
+  return new OpenApi.default(config);
+}
+
 async function getDingtalkAccessToken(corpId) {
   const cached = dingtalkTokenCache.get(corpId);
   const now = Date.now() / 1000;
@@ -185,30 +193,87 @@ function parseDeptIds(raw) {
   return Number.isFinite(value) ? [value] : [];
 }
 
+function dingtalkErrorDetail(error) {
+  const parts = [
+    error?.code,
+    error?.requestId || error?.requestid,
+    error?.message,
+    error?.data?.message,
+    error?.data?.errmsg,
+    error?.data?.request_id,
+  ]
+    .map((item) => String(item || "").trim())
+    .filter(Boolean);
+  return parts.length ? parts.join(" | ") : "钉钉接口调用失败";
+}
+
+function isDingtalkAuthCodeError(error) {
+  const detail = dingtalkErrorDetail(error);
+  return /authCode\.notFound|invalidParameter\.authCode|40078|40079|41026|40091|不合法的临时授权码|不存在的临时授权码|缺少tmp_auth_code|免登授权码.*(无效|过期|使用|不存在)/i.test(detail);
+}
+
+function normalizeDingtalkAuthFailure(error) {
+  const detail = dingtalkErrorDetail(error);
+  if (isDingtalkAuthCodeError(error)) {
+    return {
+      message: "免登授权码无效或已过期，请重新从钉钉工作台打开应用。",
+      detail,
+    };
+  }
+  return {
+    message: "钉钉免登失败，请稍后重试或联系管理员。",
+    detail,
+  };
+}
+
+async function getDingtalkLogFreeUserInfo(code, appAccessToken) {
+  const request = new OpenApi.OpenApiRequest({
+    query: { access_token: appAccessToken },
+    body: { code },
+  });
+  const params = new OpenApi.Params({
+    action: "OapiV2UserGetuserinfo",
+    version: "topapi_2.0",
+    protocol: "HTTP",
+    pathname: "/topapi/v2/user/getuserinfo",
+    method: "POST",
+    authType: "Anonymous",
+    style: "ROA",
+    reqBodyType: "json",
+    bodyType: "json",
+  });
+  const response = await createOapiClient().execute(params, request, new Util.RuntimeOptions({}));
+  const body = response.body || response;
+  const errcode = Number(body.errcode || 0);
+  if (errcode !== 0) {
+    const error = new Error(body.errmsg || body.message || `钉钉接口返回 errcode=${body.errcode}`);
+    error.code = String(body.errcode || "");
+    error.requestId = body.request_id || body.requestid || "";
+    error.data = body;
+    throw error;
+  }
+  const result = body.result || body;
+  const userid = String(result.userid || result.userId || result.user_id || "").trim();
+  if (!userid) throw new Error("钉钉免登接口未返回 userid");
+  return result;
+}
+
 async function exchangeDingtalkCode(code, corpId) {
   if (!dingtalkConfigured()) throw new Error("未配置钉钉新版服务端 SDK 凭证");
   if (corpId !== dingtalkCorpId) throw new Error("corpId 与服务端配置不一致");
-  await getDingtalkAccessToken(corpId);
-  const userTokenRequest = new dingtalkOauth.GetUserTokenRequest({
-    clientId: dingtalkClientId,
-    clientSecret: dingtalkClientSecret,
-    code,
-    grantType: "authorization_code",
-  });
-  const userTokenResponse = await createOAuthClient().getUserToken(userTokenRequest);
-  const userTokenBody = userTokenResponse.body || userTokenResponse;
-  const userAccessToken = userTokenBody.accessToken || userTokenBody.access_token;
-  if (!userAccessToken) throw new Error("钉钉 OAuth2 SDK 未返回用户 access_token");
+  const appAccessToken = await getDingtalkAccessToken(corpId);
+  const loginInfo = await getDingtalkLogFreeUserInfo(code, appAccessToken);
+  const loginUserid = String(loginInfo.userid || loginInfo.userId || loginInfo.user_id || "").trim();
 
   const headers = new dingtalkContact.GetUserHeaders();
-  headers.xAcsDingtalkAccessToken = userAccessToken;
-  const userResponse = await createContactClient().getUserWithOptions("me", headers, new Util.RuntimeOptions({}));
+  headers.xAcsDingtalkAccessToken = appAccessToken;
+  const userResponse = await createContactClient().getUserWithOptions(loginUserid, headers, new Util.RuntimeOptions({}));
   const detail = userResponse.body || userResponse;
-  const userid = String(detail.userid || detail.userId || detail.user_id || "").trim();
+  const userid = String(detail.userid || detail.userId || detail.user_id || loginUserid).trim();
   if (!userid) throw new Error("钉钉用户详情未返回 userid");
   return {
     userid,
-    name: detail.name || detail.nick || userid,
+    name: detail.name || loginInfo.name || detail.nick || userid,
     nick: detail.nick || "",
     mobile: String(detail.mobile || ""),
     title: String(detail.title || ""),
@@ -217,7 +282,7 @@ async function exchangeDingtalkCode(code, corpId) {
     avatar: String(detail.avatar || ""),
     dept_ids: parseDeptIds(detail.deptIdList || detail.dept_id_list),
     dept_names: Array.isArray(detail.deptNames) ? detail.deptNames : [],
-    unionid: String(detail.unionid || detail.unionId || ""),
+    unionid: String(detail.unionid || detail.unionId || loginInfo.unionid || loginInfo.unionId || ""),
   };
 }
 
@@ -317,7 +382,8 @@ async function handleBff(req, res, pathname) {
         { "Set-Cookie": h5Cookie(sessionToken) },
       );
     } catch (error) {
-      sendJson(res, 502, makeError("DINGTALK_AUTH_FAILED", "钉钉免登失败", error.message));
+      const authError = normalizeDingtalkAuthFailure(error);
+      sendJson(res, 502, makeError("DINGTALK_AUTH_FAILED", authError.message, authError.detail));
     }
     return;
   }

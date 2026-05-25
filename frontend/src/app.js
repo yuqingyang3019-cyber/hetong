@@ -436,7 +436,7 @@ function waitForDingTalkReady(timeoutMs = 8000) {
   });
 }
 
-function requestDingTalkAuthCode(corpId, timeoutMs = 12000) {
+function requestDingTalkAuthCode(corpId, clientId = "", timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     appendStageLog("获取钉钉免登码", "开始调用 dd.runtime.permission.requestAuthCode");
     if (!isDingTalkClient()) {
@@ -463,7 +463,7 @@ function requestDingTalkAuthCode(corpId, timeoutMs = 12000) {
     };
 
     try {
-      window.dd.runtime.permission.requestAuthCode({
+      const requestParams = {
         corpId,
         onSuccess: finish((value) => {
           const code = value?.code || "";
@@ -475,6 +475,10 @@ function requestDingTalkAuthCode(corpId, timeoutMs = 12000) {
           appendStageLog("获取钉钉免登码失败", message);
           reject(new Error(`获取钉钉免登码失败：${message}`));
         }),
+      };
+      if (clientId) requestParams.clientId = clientId;
+      window.dd.runtime.permission.requestAuthCode({
+        ...requestParams,
       });
     } catch (error) {
       window.clearTimeout(timer);
@@ -601,7 +605,7 @@ async function initAuth() {
     `origin=${window.location.origin} corpId=${corpId} clientId=${clientId} jsapi=dd.runtime.permission.requestAuthCode`,
   );
 
-  await waitForDingTalkReady().then(() => requestDingTalkAuthCode(corpId)).then(async (result) => {
+  await waitForDingTalkReady().then(() => requestDingTalkAuthCode(corpId, clientId)).then(async (result) => {
     const code = result && result.code;
     if (!code) throw new Error("获取钉钉免登码失败：未获取到免登授权码");
     appendStageLog("免登码诊断", `length=${code.length}`);
@@ -619,7 +623,7 @@ async function initAuth() {
     }
     const body = await loginResponse.json().catch(() => ({}));
     if (!loginResponse.ok) {
-      const reason = body.detail || body.message || `HTTP ${loginResponse.status}`;
+      const reason = body.message || body.detail || `HTTP ${loginResponse.status}`;
       throw new Error(`提交免登码到 BFF 失败：${reason}`);
     }
     agentAuth = {
