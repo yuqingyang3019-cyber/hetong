@@ -258,17 +258,41 @@ async function getDingtalkLogFreeUserInfo(code, appAccessToken) {
   return result;
 }
 
+async function getDingtalkContactDetail(userid, appAccessToken) {
+  const headers = new dingtalkContact.GetUserHeaders();
+  headers.xAcsDingtalkAccessToken = appAccessToken;
+  try {
+    const userResponse = await createContactClient().getUserWithOptions(userid, headers, new Util.RuntimeOptions({}));
+    return userResponse.body || userResponse;
+  } catch (error) {
+    console.warn(
+      "[bff-auth] dingtalk-contact-detail-failed",
+      JSON.stringify({
+        userid,
+        detail: dingtalkErrorDetail(error),
+      }),
+    );
+    return null;
+  }
+}
+
 async function exchangeDingtalkCode(code, corpId) {
   if (!dingtalkConfigured()) throw new Error("未配置钉钉新版服务端 SDK 凭证");
   if (corpId !== dingtalkCorpId) throw new Error("corpId 与服务端配置不一致");
   const appAccessToken = await getDingtalkAccessToken(corpId);
   const loginInfo = await getDingtalkLogFreeUserInfo(code, appAccessToken);
   const loginUserid = String(loginInfo.userid || loginInfo.userId || loginInfo.user_id || "").trim();
+  console.log(
+    "[bff-auth] dingtalk-log-free-userinfo",
+    JSON.stringify({
+      corpId,
+      userid: loginUserid,
+      hasUnionid: Boolean(loginInfo.unionid || loginInfo.unionId),
+      hasName: Boolean(loginInfo.name),
+    }),
+  );
 
-  const headers = new dingtalkContact.GetUserHeaders();
-  headers.xAcsDingtalkAccessToken = appAccessToken;
-  const userResponse = await createContactClient().getUserWithOptions(loginUserid, headers, new Util.RuntimeOptions({}));
-  const detail = userResponse.body || userResponse;
+  const detail = (await getDingtalkContactDetail(loginUserid, appAccessToken)) || {};
   const userid = String(detail.userid || detail.userId || detail.user_id || loginUserid).trim();
   if (!userid) throw new Error("钉钉用户详情未返回 userid");
   return {
@@ -383,6 +407,13 @@ async function handleBff(req, res, pathname) {
       );
     } catch (error) {
       const authError = normalizeDingtalkAuthFailure(error);
+      console.error(
+        "[bff-auth] dingtalk-login-failed",
+        JSON.stringify({
+          message: authError.message,
+          detail: authError.detail,
+        }),
+      );
       sendJson(res, 502, makeError("DINGTALK_AUTH_FAILED", authError.message, authError.detail));
     }
     return;
