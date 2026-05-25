@@ -4,6 +4,7 @@ const { extname, join, normalize } = require("path");
 const crypto = require("crypto");
 const dingtalkOauth = require("@alicloud/dingtalk/oauth2_1_0");
 const dingtalkContact = require("@alicloud/dingtalk/contact_1_0");
+const GatewayDingtalk = require("@alicloud/gateway-dingtalk");
 const OpenApi = require("@alicloud/openapi-client");
 const Util = require("@alicloud/tea-util");
 
@@ -153,7 +154,9 @@ function createOapiClient() {
   const config = new OpenApi.Config({});
   config.protocol = "https";
   config.endpoint = dingtalkOapiEndpoint;
-  return new OpenApi.default(config);
+  const client = new OpenApi.default(config);
+  client.setGatewayClient(new GatewayDingtalk.default());
+  return client;
 }
 
 async function getDingtalkAccessToken(corpId) {
