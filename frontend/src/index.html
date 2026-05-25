@@ -11,69 +11,15 @@
   </head>
   <body>
     <main class="page">
-      <header class="app-hero">
-        <div class="hero-copy">
-          <p class="eyebrow">钉钉 H5 合同生成助手</p>
-          <h1>从报价单到合同，一页完成确认与生成</h1>
-          <p class="hero-description">AI 先帮你读报价单、整理合同字段，你只需要逐步确认。生成后的 Word 合同会存入钉盘并提供下载。</p>
-          <div class="ai-assist-panel" aria-label="智能助手能力">
-            <div class="ai-orb" aria-hidden="true">
-              <svg viewBox="0 0 24 24" role="img" focusable="false">
-                <path d="M12 3v3m0 12v3M4.9 4.9 7 7m10 10 2.1 2.1M3 12h3m12 0h3M4.9 19.1 7 17m10-10 2.1-2.1" />
-                <path d="M12 8.5 13.2 11l2.8 1-2.8 1L12 15.5 10.8 13 8 12l2.8-1L12 8.5Z" />
-              </svg>
-            </div>
-            <div>
-              <strong>智能解析助手</strong>
-              <p>自动提取文本、匹配模板字段、标记待补充项，适合不熟悉合同字段的业务同事。</p>
-            </div>
+      <section id="userBar" class="identity-panel" hidden>
+        <div class="identity-main">
+          <img id="userAvatar" class="user-avatar" alt="用户头像" width="40" height="40" hidden />
+          <div class="user-summary">
+            <p id="userName" class="user-name">—</p>
+            <p id="userDept" class="login-hint">部门：—</p>
           </div>
-          <ul class="ai-capability-list" aria-label="智能处理步骤">
-            <li>读报价单</li>
-            <li>找合同字段</li>
-            <li>提示缺失项</li>
-          </ul>
         </div>
-
-        <section id="userBar" class="identity-panel" aria-label="当前登录用户" hidden>
-          <div class="identity-main">
-            <img id="userAvatar" class="user-avatar" alt="用户头像" width="40" height="40" hidden />
-            <div class="user-summary">
-              <p id="userName" class="user-name">—</p>
-              <p id="userDept" class="login-hint">部门：—</p>
-            </div>
-          </div>
-          <p id="loginHint" class="hint login-hint"></p>
-        </section>
-      </header>
-
-      <section class="card progress-card" aria-label="合同处理进度">
-        <div class="progress-heading">
-          <div>
-            <p class="eyebrow">处理进度</p>
-            <h2>当前流程</h2>
-          </div>
-          <p id="progressHint" class="hint">正在检查钉钉免登状态...</p>
-        </div>
-        <ol class="progress-steps">
-          <li class="progress-step" data-step="auth">
-            <span class="progress-step-index">1</span>
-            <span>身份校验</span>
-          </li>
-          <li class="progress-step" data-step="upload">
-            <span class="progress-step-index">2</span>
-            <span>上传解析</span>
-          </li>
-          <li class="progress-step" data-step="review">
-            <span class="progress-step-index">3</span>
-            <span>确认字段</span>
-          </li>
-          <li class="progress-step" data-step="generate">
-            <span class="progress-step-index">4</span>
-            <span>生成交付</span>
-          </li>
-        </ol>
-        <p id="status" class="status" aria-live="polite" hidden></p>
+        <p id="loginHint" class="hint login-hint"></p>
       </section>
 
       <section class="card workbench-card">
@@ -118,37 +64,23 @@
           </label>
 
           <button id="parseButton" type="button" disabled>开始解析</button>
+          <p id="status" class="status" aria-live="polite" hidden></p>
         </div>
       </section>
 
       <div id="taskDrawerBackdrop" class="drawer-backdrop" hidden></div>
-      <aside id="taskDrawer" class="task-drawer" role="dialog" aria-modal="true" aria-labelledby="activeTaskTitle" aria-hidden="true" hidden>
+      <aside id="taskDrawer" class="task-drawer" aria-labelledby="activeTaskTitle" aria-hidden="true" hidden>
         <div class="drawer-shell">
-          <div class="drawer-grip" aria-hidden="true"></div>
           <header class="drawer-header">
             <div>
               <p class="eyebrow">当前任务</p>
               <h2 id="activeTaskTitle">确认解析文本并补充信息</h2>
               <p class="hint" id="activeTaskHint">请检查当前任务的报价单解析文本，必要时可直接修正；额外信息会和解析文本一起交给 LLM 识别合同字段。</p>
-              <div id="drawerStepRail" class="drawer-step-rail" aria-label="任务阶段">
-                <span data-drawer-step="parse">解析</span>
-                <span data-drawer-step="text">文本确认</span>
-                <span data-drawer-step="fields">字段确认</span>
-                <span data-drawer-step="done">交付</span>
-              </div>
             </div>
             <button id="closeTaskDrawerButton" class="drawer-close" type="button" aria-label="关闭任务详情">关闭</button>
           </header>
 
           <div class="drawer-content">
-            <section id="processingCard" class="drawer-panel processing-card" hidden>
-              <div class="processing-indicator" aria-hidden="true"></div>
-              <div>
-                <h3 id="processingTitle">任务处理中</h3>
-                <p id="processingHint" class="hint">请稍候，系统正在处理当前报价单。</p>
-              </div>
-            </section>
-
             <section id="previewCard" class="drawer-panel preview-card" hidden>
               <div class="drawer-section-heading">
                 <h3>报价单解析内容</h3>
@@ -176,7 +108,6 @@
           </div>
 
           <footer class="drawer-actions">
-            <div id="drawerDownloadAction" class="drawer-download-action" hidden></div>
             <button id="generateButton" type="button" disabled>确认识别结果并生成合同</button>
           </footer>
         </div>
