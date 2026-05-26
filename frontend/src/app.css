@@ -131,6 +131,31 @@ h1 {
   margin: 0;
 }
 
+.hero-title-row {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-2);
+}
+
+.hero-title-row h1 {
+  flex: 1;
+  min-width: 0;
+}
+
+.beta-badge {
+  background: rgba(180, 83, 9, 0.1);
+  border: 1px solid rgba(180, 83, 9, 0.22);
+  border-radius: 999px;
+  color: var(--color-warning);
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  margin-top: 0.35rem;
+  padding: 6px 9px;
+}
+
 .hero-description {
   color: var(--color-secondary);
   font-size: 0.9375rem;
