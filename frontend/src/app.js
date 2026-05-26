@@ -39,6 +39,7 @@ const drawerStepItems = Array.from(document.querySelectorAll("[data-drawer-step]
 const drawerDownloadAction = document.querySelector("#drawerDownloadAction");
 
 const MAX_TASKS = 5;
+const supportedQuoteFileExtensions = new Set([".pdf", ".xls", ".xlsx", ".jpg", ".jpeg", ".png"]);
 const templateSchemaFiles = Object.freeze({
   caigouhetong: "caigouhetong",
   nonStandardNoInstall: "non-standard-no-install",
@@ -59,6 +60,7 @@ let sessionReady = false;
 let activeTaskId = null;
 let drawerOpen = false;
 let drawerLastFocus = null;
+let uploadDragDepth = 0;
 
 function apiUrl(path) {
   return path;
@@ -171,12 +173,38 @@ function formatFileSize(size) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
+function quoteFileExtension(file) {
+  const name = file?.name || "";
+  const dotIndex = name.lastIndexOf(".");
+  return dotIndex >= 0 ? name.slice(dotIndex).toLowerCase() : "";
+}
+
+function validateQuoteFile(file) {
+  if (!file) return "请先选择报价单文件。";
+  if (file.size === 0) return "报价单文件为空，请重新选择文件。";
+  if (!supportedQuoteFileExtensions.has(quoteFileExtension(file))) return "仅支持 PDF、Excel、图片格式报价单。";
+  return "";
+}
+
+function assignQuoteFile(file) {
+  if (typeof DataTransfer === "undefined") {
+    setStatus("当前浏览器不支持拖拽读取文件，请点击选择报价单。", "error");
+    return false;
+  }
+  const transfer = new DataTransfer();
+  transfer.items.add(file);
+  quoteFile.files = transfer.files;
+  updateSelectedFile();
+  updateActionAvailability();
+  return true;
+}
+
 function updateSelectedFile() {
   const file = quoteFile.files?.[0];
   uploadDropzone?.classList.toggle("has-file", Boolean(file));
   if (!file) {
-    if (fileNameText) fileNameText.textContent = "点击选择报价单文件";
-    if (fileMetaText) fileMetaText.textContent = "支持 PDF、Excel、图片格式";
+    if (fileNameText) fileNameText.textContent = "拖拽或点击选择报价单文件";
+    if (fileMetaText) fileMetaText.textContent = "支持 PDF、Excel、图片格式，拖到这里即可上传";
     return;
   }
   if (fileNameText) fileNameText.textContent = file.name || "已选择报价单";
@@ -197,7 +225,9 @@ function incompleteTaskCount() {
 
 function updateActionAvailability() {
   const current = activeTask();
-  const hasFile = Boolean(quoteFile.files?.[0]);
+  const currentFile = quoteFile.files?.[0];
+  const hasFile = Boolean(currentFile);
+  const hasValidFile = hasFile && !validateQuoteFile(currentFile);
   const atLimit = incompleteTaskCount() >= MAX_TASKS;
   const controlsDisabled = !sessionReady;
   const activeBusy = taskIsBusy(current);
@@ -205,7 +235,7 @@ function updateActionAvailability() {
 
   quoteFile.disabled = controlsDisabled || atLimit;
   templateType.disabled = controlsDisabled || atLimit;
-  parseButton.disabled = controlsDisabled || !hasFile || atLimit;
+  parseButton.disabled = controlsDisabled || !hasValidFile || atLimit;
   uploadDropzone?.classList.toggle("is-disabled", controlsDisabled || atLimit);
 
   quoteTextPreview.disabled = !canEditCurrent || !current?.quoteText;
@@ -218,6 +248,57 @@ function updateActionAvailability() {
   if (taskQueueHint) {
     taskQueueHint.textContent = `未完成 ${incompleteTaskCount()} / ${MAX_TASKS}。点击任务卡片可切换编辑，已完成任务不占用额度。`;
   }
+}
+
+function setUploadDragging(isDragging) {
+  uploadDropzone?.classList.toggle("is-dragging", isDragging);
+}
+
+function handleUploadDragOver(event) {
+  event.preventDefault();
+  if (!event.dataTransfer) return;
+  event.dataTransfer.dropEffect = quoteFile.disabled ? "none" : "copy";
+}
+
+function handleUploadDragEnter(event) {
+  handleUploadDragOver(event);
+  if (quoteFile.disabled) return;
+  uploadDragDepth += 1;
+  setUploadDragging(true);
+}
+
+function handleUploadDragLeave(event) {
+  event.preventDefault();
+  uploadDragDepth = Math.max(0, uploadDragDepth - 1);
+  if (uploadDragDepth === 0) setUploadDragging(false);
+}
+
+function handleUploadDrop(event) {
+  event.preventDefault();
+  uploadDragDepth = 0;
+  setUploadDragging(false);
+
+  if (quoteFile.disabled) {
+    setStatus("请先完成免登或释放任务额度后再上传报价单。", "error");
+    return;
+  }
+
+  const files = Array.from(event.dataTransfer?.files || []);
+  if (files.length !== 1) {
+    setStatus("每次只能拖入一份报价单。", "error");
+    return;
+  }
+
+  const [file] = files;
+  const validationMessage = validateQuoteFile(file);
+  if (validationMessage) {
+    setStatus(validationMessage, "error");
+    return;
+  }
+
+  if (!assignQuoteFile(file)) return;
+  setStatus("文件已选择，可以创建任务。");
+  setProgress("upload", "active", "文件已选择，点击创建任务。");
 }
 
 function drawerStepForTask(task) {
@@ -860,6 +941,24 @@ function getByDotPath(data, key) {
   ), data);
 }
 
+function setByDotPath(data, key, value) {
+  if (!data || typeof data !== "object" || !key) return;
+  if (Object.prototype.hasOwnProperty.call(data, key) || !key.includes(".")) {
+    data[key] = value;
+    return;
+  }
+
+  const parts = key.split(".").filter(Boolean);
+  let current = data;
+  parts.slice(0, -1).forEach((part) => {
+    if (!current[part] || typeof current[part] !== "object" || Array.isArray(current[part])) {
+      current[part] = {};
+    }
+    current = current[part];
+  });
+  current[parts[parts.length - 1]] = value;
+}
+
 function isBlankField(value) {
   if (value == null) return true;
   if (typeof value === "string") return !value.trim();
@@ -868,8 +967,8 @@ function isBlankField(value) {
   return false;
 }
 
-function formatFieldValue(value) {
-  if (isBlankField(value)) return "待填写";
+function fieldValueForEditor(value) {
+  if (isBlankField(value)) return "";
   if (Array.isArray(value) || typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
@@ -915,6 +1014,43 @@ function markPreviewStat(stats, value) {
   else stats.recognized += 1;
 }
 
+function setRecognizedClass(element, value) {
+  const missing = isBlankField(value);
+  element.classList.toggle("is-missing", missing);
+  element.classList.toggle("is-recognized", !missing);
+}
+
+function calculatePreviewStats(schema, extractedData) {
+  const stats = { recognized: 0, missing: 0 };
+  const scalars = Array.isArray(schema?.scalars) ? schema.scalars : [];
+  scalars.forEach((field) => markPreviewStat(stats, getByDotPath(extractedData, field.key)));
+
+  Object.entries(schema?.tables || {}).forEach(([tableName, tableDef]) => {
+    const columns = Array.isArray(tableDef?.columns) ? tableDef.columns : [];
+    const rows = Array.isArray(extractedData?.[tableName]) ? extractedData[tableName] : [];
+    if (!rows.length) {
+      stats.missing += 1;
+      return;
+    }
+    rows.forEach((row) => {
+      columns.forEach((column) => markPreviewStat(stats, getByDotPath(row, column.key)));
+    });
+  });
+  return stats;
+}
+
+function syncFieldPreviewSummary(stats) {
+  if (!fieldPreviewSummary) return;
+  fieldPreviewSummary.className = `hint field-preview-summary${stats.missing ? " has-missing" : " all-recognized"}`;
+  fieldPreviewSummary.textContent = stats.missing
+    ? `按合同顺序展示：已识别 ${stats.recognized} 项，仍有 ${stats.missing} 项待填写。可直接修改字段，确认生成后空字段会在 Word 合同中留空。`
+    : `按合同顺序展示：已识别 ${stats.recognized} 项，没有待填写字段。可直接修改字段后生成合同。`;
+}
+
+function refreshFieldPreviewSummary(schema, extractedData) {
+  syncFieldPreviewSummary(calculatePreviewStats(schema, extractedData));
+}
+
 function createGhostParagraph(index) {
   const paragraph = createEl("p", "contract-preview-ghost");
   paragraph.append(
@@ -932,15 +1068,27 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
     missing ? "is-missing" : "is-recognized",
     options.autoFilled ? "is-auto-filled" : "",
   ].filter(Boolean).join(" "));
+  const editor = createEl("textarea", "contract-field-editor");
+  editor.rows = 2;
+  editor.value = fieldValueForEditor(value);
+  editor.placeholder = "待填写";
+  editor.disabled = Boolean(options.disabled);
+  editor.setAttribute("aria-label", `${prefix}${label}`);
+  editor.addEventListener("input", () => {
+    setByDotPath(options.extractedData, options.fieldKey, editor.value);
+    setRecognizedClass(field, editor.value);
+    refreshFieldPreviewSummary(options.schema, options.extractedData);
+  });
+
   field.append(
     createEl("span", "contract-field-label", `${prefix}${label}`),
-    createEl("span", "contract-field-value", formatFieldValue(value)),
+    editor,
   );
   if (options.autoFilled) field.append(createEl("span", "contract-field-badge", "系统自动填充"));
   return field;
 }
 
-function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys) {
+function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview) {
   const scalars = Array.isArray(schema?.scalars) ? schema.scalars : [];
   if (!scalars.length) return;
 
@@ -955,7 +1103,13 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
       getByDotPath(extractedData, field.key),
       stats,
       `${index + 1}. `,
-      { autoFilled: autoFilledKeys?.has(field.key) },
+      {
+        autoFilled: autoFilledKeys?.has(field.key),
+        extractedData,
+        fieldKey: field.key,
+        schema,
+        disabled: !canEditPreview,
+      },
     ));
   });
 
@@ -963,7 +1117,7 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
   paper.append(section);
 }
 
-function renderTablePreview(paper, schema, extractedData, stats) {
+function renderTablePreview(paper, schema, extractedData, stats, canEditPreview) {
   const tableEntries = Object.entries(schema?.tables || {});
   if (!tableEntries.length) return;
 
@@ -991,12 +1145,24 @@ function renderTablePreview(paper, schema, extractedData, stats) {
     table.append(thead);
 
     const tbody = createEl("tbody");
-    rows.forEach((row) => {
+    rows.forEach((row, rowIndex) => {
       const bodyRow = createEl("tr");
       columns.forEach((column) => {
-        const value = row && typeof row === "object" ? row[column.key] : null;
+        const value = row && typeof row === "object" ? getByDotPath(row, column.key) : null;
         markPreviewStat(stats, value);
-        const cell = createEl("td", isBlankField(value) ? "is-missing" : "is-recognized", formatFieldValue(value));
+        const cell = createEl("td", isBlankField(value) ? "is-missing" : "is-recognized");
+        const editor = createEl("textarea", "contract-table-editor");
+        editor.rows = 2;
+        editor.value = fieldValueForEditor(value);
+        editor.placeholder = "待填写";
+        editor.disabled = !canEditPreview;
+        editor.setAttribute("aria-label", `${tableDef?.label || tableName} 第 ${rowIndex + 1} 行 ${column.label || column.key}`);
+        editor.addEventListener("input", () => {
+          if (row && typeof row === "object") setByDotPath(row, column.key, editor.value);
+          setRecognizedClass(cell, editor.value);
+          refreshFieldPreviewSummary(schema, extractedData);
+        });
+        cell.append(editor);
         bodyRow.append(cell);
       });
       tbody.append(bodyRow);
@@ -1012,6 +1178,7 @@ async function renderFieldPreview(task) {
   const schema = await loadTemplateSchema(task.templateType);
   const extractedData = task.fieldPreview?.extractedData && typeof task.fieldPreview.extractedData === "object" ? task.fieldPreview.extractedData : {};
   const autoFilledKeys = applyAutoDateDefaults(extractedData);
+  const canEditPreview = !taskIsBusy(task) && task.status !== "completed";
   const stats = { recognized: 0, missing: 0 };
 
   if (contractPreviewEl) {
@@ -1021,21 +1188,16 @@ async function renderFieldPreview(task) {
     title.append(
       createEl("p", "contract-preview-kicker", "合同字段确认稿"),
       createEl("h3", "", task.templateName || schema?.template?.id || "合同模板"),
-      createEl("p", "contract-preview-muted", "以下内容按模板字段顺序生成，灰色文本为合同正文位置示意。"),
+      createEl("p", "contract-preview-muted", "以下内容按模板字段顺序生成，可直接修改后生成合同。"),
     );
     paper.append(title, createGhostParagraph(0));
-    renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys);
-    renderTablePreview(paper, schema, extractedData, stats);
+    renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview);
+    renderTablePreview(paper, schema, extractedData, stats, canEditPreview);
     paper.append(createGhostParagraph(1));
     contractPreviewEl.append(paper);
   }
 
-  if (fieldPreviewSummary) {
-    fieldPreviewSummary.className = `hint field-preview-summary${stats.missing ? " has-missing" : " all-recognized"}`;
-    fieldPreviewSummary.textContent = stats.missing
-      ? `按合同顺序展示：已识别 ${stats.recognized} 项，仍有 ${stats.missing} 项待填写。确认生成后，红色字段在 Word 合同中留空。`
-      : `按合同顺序展示：已识别 ${stats.recognized} 项，没有待填写字段。请确认预览后生成合同。`;
-  }
+  syncFieldPreviewSummary(stats);
   if (fieldPreviewCard) fieldPreviewCard.hidden = false;
 }
 
@@ -1043,7 +1205,7 @@ function resetFieldPreviewUi() {
   if (fieldPreviewCard) fieldPreviewCard.hidden = true;
   if (fieldPreviewSummary) {
     fieldPreviewSummary.className = "hint field-preview-summary";
-    fieldPreviewSummary.textContent = "请按合同字段顺序确认识别结果，红色字段生成到 Word 合同时会留空。";
+    fieldPreviewSummary.textContent = "请按合同字段顺序确认识别结果，可直接修改字段；空字段生成到 Word 合同时会留空。";
   }
   if (contractPreviewEl) {
     contractPreviewEl.textContent = "";
@@ -1306,7 +1468,7 @@ async function syncActiveTaskEditor() {
     const helperHint = task.status === "needs_text"
       ? "AI 已整理出报价单文本，请像核对聊天记录一样检查，有问题直接改。"
       : task.status === "needs_fields"
-        ? "AI 已按模板匹配字段，红色内容代表还需要人工补充或确认。"
+        ? "AI 已按模板匹配字段，红色内容代表还需要人工补充或确认，可直接修改。"
         : task.message || "请按当前阶段继续处理任务。";
     activeTaskHint.textContent = `${task.templateName}。${helperHint}`;
   }
@@ -1416,10 +1578,17 @@ function retryTask(task) {
   }
 }
 
+uploadDropzone?.addEventListener("dragenter", handleUploadDragEnter);
+uploadDropzone?.addEventListener("dragover", handleUploadDragOver);
+uploadDropzone?.addEventListener("dragleave", handleUploadDragLeave);
+uploadDropzone?.addEventListener("drop", handleUploadDrop);
+
 quoteFile.addEventListener("change", () => {
   updateSelectedFile();
-  setStatus(quoteFile.files?.[0] ? "文件已选择，可以创建任务。" : "");
-  if (quoteFile.files?.[0]) {
+  const file = quoteFile.files?.[0];
+  const validationMessage = validateQuoteFile(file);
+  setStatus(file ? validationMessage || "文件已选择，可以创建任务。" : "", validationMessage ? "error" : "info");
+  if (file && !validationMessage) {
     setProgress("upload", "active", "文件已选择，点击创建任务。");
   } else {
     setAuthReadyProgress("");
@@ -1460,12 +1629,9 @@ extraInfoText?.addEventListener("input", () => {
 
 parseButton.addEventListener("click", async () => {
   const file = quoteFile.files?.[0];
-  if (!file) {
-    setStatus("请先选择报价单文件。", "error");
-    return;
-  }
-  if (file.size === 0) {
-    setStatus("报价单文件为空，请重新选择文件。", "error");
+  const validationMessage = validateQuoteFile(file);
+  if (validationMessage) {
+    setStatus(validationMessage, "error");
     return;
   }
   if (incompleteTaskCount() >= MAX_TASKS) {

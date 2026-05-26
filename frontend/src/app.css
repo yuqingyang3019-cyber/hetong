@@ -529,8 +529,16 @@ textarea {
   width: 100%;
 }
 
-.upload-dropzone:hover {
+.upload-dropzone:hover,
+.upload-dropzone.is-dragging {
   box-shadow: 0 0 0 4px rgba(15, 108, 189, 0.1);
+}
+
+.upload-dropzone.is-dragging {
+  background:
+    linear-gradient(rgba(239, 246, 255, 0.95), rgba(239, 246, 255, 0.95)) padding-box,
+    linear-gradient(135deg, rgba(15, 108, 189, 0.72), rgba(5, 150, 105, 0.52)) border-box;
+  transform: translateY(-1px);
 }
 
 .upload-dropzone.has-file {
@@ -1263,16 +1271,42 @@ button:disabled {
   font-weight: 800;
 }
 
-.contract-field-value {
+.contract-field-editor,
+.contract-table-editor {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(148, 163, 184, 0.42);
   color: #047857;
   font-size: 0.9375rem;
   font-weight: 800;
+  line-height: 1.55;
+  min-height: 44px;
   overflow-wrap: anywhere;
+  padding: 9px 10px;
+  resize: vertical;
+  white-space: pre-wrap;
   word-break: break-word;
 }
 
-.contract-preview-field.is-missing .contract-field-value {
+.contract-preview-field.is-missing .contract-field-editor,
+.contract-preview-table td.is-missing .contract-table-editor {
   color: #991b1b;
+}
+
+.contract-table-editor {
+  border: 0;
+  border-radius: 8px;
+  box-shadow: none;
+  font-size: 0.8125rem;
+  min-height: 42px;
+  min-width: 180px;
+  padding: 6px 8px;
+}
+
+.contract-field-editor:disabled,
+.contract-table-editor:disabled {
+  background: rgba(248, 250, 252, 0.72);
+  cursor: not-allowed;
+  opacity: 0.72;
 }
 
 .contract-field-badge {
