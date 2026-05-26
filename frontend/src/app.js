@@ -328,19 +328,21 @@ function setDrawerBusy(task) {
 function syncProcessingPanel(task) {
   if (!processingCard) return;
   const show = Boolean(task && (taskIsBusy(task) || (!task.quoteText && task.status === "failed")));
+  processingCard.classList.remove("is-uploading", "is-parsing", "is-identifying", "is-generating", "is-failed");
   processingCard.hidden = !show;
   if (!show) return;
+  processingCard.classList.add(`is-${task.status}`);
   const smartTitles = {
     uploading: "智能助手正在接收报价单",
     parsing: "AI 正在读取报价单内容",
-    identifying: "AI 正在匹配合同字段",
+    identifying: "字段识别中，请稍候",
     generating: "正在生成合同并交付钉盘",
     failed: "智能处理遇到问题",
   };
   const smartHints = {
     uploading: "正在安全上传文件，完成后会自动进入解析。",
     parsing: "系统会先提取文字和表格，稍后请你确认识别结果是否准确。",
-    identifying: "系统会按所选模板整理字段，并把缺失项明确标出来。",
+    identifying: "AI 正在按所选合同模板匹配字段，请不要关闭页面；完成后会自动展示可编辑字段确认稿。",
     generating: "合同会根据你确认过的字段生成，完成后可直接下载。",
     failed: "任务处理失败，请返回任务卡片重试或删除。",
   };
@@ -1222,6 +1224,7 @@ function clearActiveEditor() {
   setDrawerBusy(null);
   quoteTextPreview.value = "";
   if (extraInfoText) extraInfoText.value = "";
+  if (identifyFieldsButton) identifyFieldsButton.textContent = "识别当前任务字段";
   syncDrawerVisibility(false);
 }
 
@@ -1477,6 +1480,9 @@ async function syncActiveTaskEditor() {
     if (task.status === "generating") generateButton.textContent = "正在生成合同...";
     else generateButton.textContent = "确认识别结果并生成合同";
   }
+  if (identifyFieldsButton) {
+    identifyFieldsButton.textContent = task.status === "identifying" ? "字段识别中，请稍候..." : "识别当前任务字段";
+  }
 
   previewCard.hidden = !hasEditorContent;
   if (!hasEditorContent) {
@@ -1526,7 +1532,9 @@ async function runIdentifyTask(task) {
   try {
     task.extraInfo = extraInfoText?.value.trim() || task.extraInfo || "";
     task.fieldPreview = null;
-    setTaskStatus(task, "identifying", "正在结合报价单文本和额外信息识别字段...");
+    setTaskStatus(task, "identifying", "字段识别中：AI 正在结合报价单文本和额外信息匹配合同字段...");
+    setStatus("字段识别中，请稍候。AI 会识别合同字段并标出缺失项。");
+    setProgress("review", "active", "字段识别中，请等待结果展示。");
     task.fieldPreview = await previewQuoteFields(task.upload.id, task.quoteText.trim(), task.extraInfo, task.templateType);
     await renderFieldPreview(task);
     const missing = task.fieldPreview.missingFields?.length || 0;

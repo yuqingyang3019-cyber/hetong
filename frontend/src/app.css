@@ -987,10 +987,21 @@ button:disabled {
   grid-template-columns: auto minmax(0, 1fr);
 }
 
+.processing-card.is-identifying {
+  background: linear-gradient(135deg, rgba(15, 108, 189, 0.14), rgba(5, 150, 105, 0.1));
+  border-color: rgba(15, 108, 189, 0.28);
+  box-shadow: 0 0 0 4px rgba(15, 108, 189, 0.08);
+}
+
 .processing-card h3 {
   color: var(--color-primary);
   font-size: 1rem;
   margin: 0 0 4px;
+}
+
+.processing-card.is-identifying h3 {
+  color: #0f548c;
+  font-size: 1.08rem;
 }
 
 .processing-indicator {
@@ -1002,6 +1013,14 @@ button:disabled {
   border-radius: 999px;
   height: 42px;
   width: 42px;
+}
+
+.processing-card.is-identifying .processing-indicator {
+  animation: processing-pulse 0.75s ease-in-out infinite alternate;
+  background:
+    radial-gradient(circle, rgba(255, 255, 255, 0.88) 0 34%, transparent 36%),
+    rgba(15, 108, 189, 0.16);
+  border-color: rgba(15, 108, 189, 0.34);
 }
 
 .processing-indicator::after {
