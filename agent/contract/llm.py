@@ -151,16 +151,33 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_
             tableCount=len(config.table_bindings),
         ),
     )
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds, max_retries=max_retries)
-    completion = client.chat.completions.create(
-        model=model,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-        ],
-        extra_body={"enable_thinking": True} if enable_thinking else None,
-    )
+    try:
+        client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds, max_retries=max_retries)
+        completion = client.chat.completions.create(
+            model=model,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+            ],
+            extra_body={"enable_thinking": True} if enable_thinking else None,
+        )
+    except Exception as exc:
+        logger.exception(
+            "%s%s",
+            "dashscope request failed",
+            log_meta(
+                model=model,
+                baseUrlHost=base_url_host(base_url),
+                enableThinking=enable_thinking,
+                timeoutSeconds=timeout_seconds,
+                maxRetries=max_retries,
+                templateType=config.type,
+                elapsedMs=elapsed_ms(start),
+                error=str(exc),
+            ),
+        )
+        raise
     content = completion.choices[0].message.content
     logger.info(
         "%s%s",

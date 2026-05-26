@@ -861,19 +861,57 @@ async def preview_quote_fields_api(
         uploadId=upload_id,
         templateType=template_type,
         quoteTextProvided=bool(quote_text),
+        quoteTextLength=len(quote_text or ""),
         extraInfoLength=len(extra_info or ""),
         dingtalkUserId=current_user.get("userid"),
     )
     try:
+        context_start = time.perf_counter()
+        log_info(
+            "field preview stage",
+            stage="load_context_start",
+            uploadId=upload_id,
+            templateType=template_type,
+        )
         config = get_template_config(template_type)
         upload = load_upload(upload_id, current_user)
+        log_info(
+            "field preview stage",
+            stage="context_loaded",
+            uploadId=upload_id,
+            templateType=config.type,
+            templateName=config.display_name,
+            fileName=upload.get("fileName"),
+            originalName=upload.get("originalName"),
+            mimeType=upload.get("mimeType"),
+            size=upload.get("size"),
+            quoteTextSource="request" if quote_text else "upload_extract",
+            elapsedMs=elapsed_ms(context_start),
+        )
     except HTTPException:
         raise
     except ValueError as exc:
         raise api_error(400, "INVALID_ARGUMENT", str(exc)) from exc
     if not quote_text:
         try:
+            extract_start = time.perf_counter()
+            log_info(
+                "field preview stage",
+                stage="quote_extract_start",
+                uploadId=upload_id,
+                templateType=config.type,
+                fileName=upload.get("fileName"),
+            )
             upload, quote_text, _parser = extract_quote_text(upload_id, current_user)
+            log_info(
+                "field preview stage",
+                stage="quote_extract_finished",
+                uploadId=upload_id,
+                templateType=config.type,
+                parser=_parser,
+                quoteTextLength=len(quote_text),
+                elapsedMs=elapsed_ms(extract_start),
+            )
         except HTTPException:
             raise
         except ValueError as exc:
@@ -886,11 +924,45 @@ async def preview_quote_fields_api(
 
     llm_start = time.perf_counter()
     try:
+        log_info(
+            "field preview stage",
+            stage="llm_start",
+            uploadId=upload_id,
+            templateType=config.type,
+            quoteTextLength=len(quote_text),
+            extraInfoLength=len(extra_info or ""),
+            scalarCount=len(config.scalar_keys),
+            tableCount=len(config.table_bindings),
+        )
         extracted = extract_template_render_data(quote_text, config, extra_info)
+        log_info(
+            "field preview stage",
+            stage="llm_finished",
+            uploadId=upload_id,
+            templateType=config.type,
+            tableRowCounts=table_row_counts(extracted),
+            elapsedMs=elapsed_ms(llm_start),
+        )
     except Exception as exc:
         log_exception("field preview llm failed", exc, uploadId=upload_id, templateType=config.type, elapsedMs=elapsed_ms(llm_start))
         raise api_error(502, "LLM_FAILED", "字段识别失败，请检查报价单文本或补充说明后重试", str(exc)) from exc
+    classify_start = time.perf_counter()
+    log_info(
+        "field preview stage",
+        stage="classify_start",
+        uploadId=upload_id,
+        templateType=config.type,
+    )
     field_summary = classify_extracted_fields(extracted, config)
+    log_info(
+        "field preview stage",
+        stage="classify_finished",
+        uploadId=upload_id,
+        templateType=config.type,
+        recognizedCount=len(field_summary["recognizedFields"]),
+        missingCount=len(field_summary["missingFields"]),
+        elapsedMs=elapsed_ms(classify_start),
+    )
     log_info(
         "field preview request finished",
         clientHost=client_host,
