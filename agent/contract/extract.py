@@ -41,25 +41,49 @@ def _rows_to_html(rows: list[list[str]], name: str, attr: str = "sheet") -> str:
     return "\n".join(lines)
 
 
+def _response_to_map(response: Any) -> dict[str, Any]:
+    if hasattr(response, "to_map"):
+        value = response.to_map()
+        return value if isinstance(value, dict) else {}
+    if isinstance(response, dict):
+        return response
+    return {}
+
+
+def _flatten_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, dict):
+        return "\n".join(part for part in (_flatten_text(item) for item in value.values()) if part)
+    if isinstance(value, list):
+        return "\n".join(part for part in (_flatten_text(item) for item in value) if part)
+    return ""
+
+
 def extract_excel_text(path: Path) -> str:
     suffix = path.suffix.lower()
     sheets: list[tuple[str, list[list[str]]]] = []
-    if suffix == ".xlsx":
-        from openpyxl import load_workbook
+    try:
+        if suffix == ".xlsx":
+            from openpyxl import load_workbook
 
-        workbook = load_workbook(path, data_only=True, read_only=True)
-        for sheet in workbook.worksheets:
-            rows = [[_normalize_cell(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
-            sheets.append((sheet.title, _trim_empty_edges(rows)))
-    elif suffix == ".xls":
-        import xlrd
+            workbook = load_workbook(path, data_only=True, read_only=True)
+            for sheet in workbook.worksheets:
+                rows = [[_normalize_cell(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
+                sheets.append((sheet.title, _trim_empty_edges(rows)))
+        elif suffix == ".xls":
+            import xlrd
 
-        workbook = xlrd.open_workbook(str(path))
-        for sheet in workbook.sheets():
-            rows = [[_normalize_cell(sheet.cell_value(r, c)) for c in range(sheet.ncols)] for r in range(sheet.nrows)]
-            sheets.append((sheet.name, _trim_empty_edges(rows)))
-    else:
-        raise ValueError(f"不支持的 Excel 扩展名：{suffix}")
+            workbook = xlrd.open_workbook(str(path))
+            for sheet in workbook.sheets():
+                rows = [[_normalize_cell(sheet.cell_value(r, c)) for c in range(sheet.ncols)] for r in range(sheet.nrows)]
+                sheets.append((sheet.name, _trim_empty_edges(rows)))
+        else:
+            raise ValueError(f"不支持的 Excel 扩展名：{suffix}")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("Excel 报价单格式不正确或文件已损坏，请重新上传") from exc
 
     parts: list[str] = []
     for sheet_name, rows in sheets:
@@ -134,7 +158,6 @@ def extract_image_text(path: Path) -> str:
     except ImportError as exc:
         raise ValueError("未安装阿里云 OCR SDK，无法识别图片报价单") from exc
 
-    import base64
     import os
 
     access_key_id = (os.getenv("ALIYUN_ACCESS_KEY_ID") or "").strip()
@@ -151,18 +174,17 @@ def extract_image_text(path: Path) -> str:
         region_id=region_id,
     )
     client = OcrClient(config)
-    body = base64.b64encode(path.read_bytes()).decode("ascii")
-    request = ocr_models.RecognizeGeneralRequest(body=body)
-    response = client.recognize_general_with_options(request, util_models.RuntimeOptions())
-    raw = response.to_map() if hasattr(response, "to_map") else {}
+    try:
+        with path.open("rb") as body:
+            request = ocr_models.RecognizeAllTextRequest(type="General", body=body)
+            response = client.recognize_all_text_with_options(request, util_models.RuntimeOptions())
+    except Exception as exc:
+        raise ValueError(f"图片 OCR 识别失败：{exc}") from exc
+
+    raw = _response_to_map(response)
     data = raw.get("body") if isinstance(raw.get("body"), dict) else raw
     content = data.get("Data") or data.get("data") or data.get("content") if isinstance(data, dict) else None
-    if isinstance(content, str):
-        text = content.strip()
-    elif isinstance(content, dict):
-        text = "\n".join(str(value).strip() for value in content.values() if str(value).strip())
-    else:
-        text = ""
+    text = _flatten_text(content.get("Content") if isinstance(content, dict) and content.get("Content") else content)
     if not text:
         raise ValueError("图片 OCR 未识别到有效文本")
     return text

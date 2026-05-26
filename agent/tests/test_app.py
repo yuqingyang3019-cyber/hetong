@@ -2,6 +2,8 @@ from pathlib import Path
 import base64
 import json
 import os
+import sys
+import types
 from unittest.mock import ANY, Mock, patch
 
 import pytest
@@ -15,6 +17,7 @@ from agent.main import app, contract_download_payload, generate_contract, sign_s
 os.environ.setdefault("APP_SESSION_SECRET", "test-session-secret-123456789012")
 
 client = TestClient(app)
+PNG_BYTES = b"\x89PNG\r\n\x1a\nquote-image"
 
 
 def agent_auth_header(userid: str = "uid1", unionid: str = "union-x") -> dict[str, str]:
@@ -99,6 +102,24 @@ def test_upload_rejects_txt() -> None:
     assert body["code"] == "UNSUPPORTED_FILE_TYPE"
 
 
+def test_upload_rejects_mismatched_file_signature() -> None:
+    response = client.post(
+        "/api/uploads",
+        headers=agent_auth_header(),
+        json={
+            "originalName": "quote.xls",
+            "mimeType": "application/vnd.ms-excel",
+            "size": len(PNG_BYTES),
+            "data": base64.b64encode(PNG_BYTES).decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "INVALID_ARGUMENT"
+    assert "文件内容与格式不匹配" in body["message"]
+
+
 def test_upload_owner_cannot_access_other_user_upload() -> None:
     upload_body = upload_quote()
     response = client.post(
@@ -117,8 +138,8 @@ def test_parse_uploaded_quote_image_text() -> None:
         json={
             "originalName": "quote.png",
             "mimeType": "image/png",
-            "size": len(b"image-bytes"),
-            "data": base64.b64encode(b"image-bytes").decode("ascii"),
+            "size": len(PNG_BYTES),
+            "data": base64.b64encode(PNG_BYTES).decode("ascii"),
         },
     )
     assert upload.status_code == 200
@@ -147,8 +168,8 @@ def test_parse_uploaded_image_uses_ocr() -> None:
         json={
             "originalName": "quote.png",
             "mimeType": "image/png",
-            "size": len(b"image-bytes"),
-            "data": base64.b64encode(b"image-bytes").decode("ascii"),
+            "size": len(PNG_BYTES),
+            "data": base64.b64encode(PNG_BYTES).decode("ascii"),
         },
     )
     assert upload.status_code == 200
@@ -165,6 +186,91 @@ def test_parse_uploaded_image_uses_ocr() -> None:
     body = response.json()
     assert body["quoteText"] == "OCR 报价单文本"
     assert body["parser"] == {"type": "image", "ocrUsed": True}
+
+
+def test_parse_uploaded_image_ocr_error_returns_ocr_failed() -> None:
+    upload_body = upload_quote(original_name="quote.png", mime_type="image/png", content=PNG_BYTES)
+
+    with patch("agent.contract.extract.extract_image_text", side_effect=ValueError("图片 OCR 识别失败：ocrServiceNotOpen")):
+        response = client.post(
+            f"/api/uploads/{upload_body['id']}/quote-text",
+            headers=agent_auth_header(),
+            json={"templateType": "caigouhetong"},
+        )
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["code"] == "OCR_FAILED"
+
+
+def test_extract_image_text_uses_recognize_all_text(tmp_path: Path) -> None:
+    from agent.contract.extract import extract_image_text
+
+    image_path = tmp_path / "quote.png"
+    image_path.write_bytes(PNG_BYTES)
+    calls: dict[str, bool] = {"all_text": False, "general": False}
+
+    class FakeOcrClient:
+        def __init__(self, config: object) -> None:
+            self.config = config
+
+        def recognize_all_text_with_options(self, request: object, runtime: object) -> object:
+            calls["all_text"] = True
+            assert getattr(request, "type") == "General"
+            assert getattr(request, "body").read().startswith(b"\x89PNG")
+
+            class Response:
+                def to_map(self) -> dict:
+                    return {"body": {"Data": {"Content": "报价单文本"}}}
+
+            return Response()
+
+        def recognize_general_with_options(self, request: object, runtime: object) -> object:
+            calls["general"] = True
+            raise AssertionError("should not call RecognizeGeneral")
+
+    class FakeRecognizeAllTextRequest:
+        def __init__(self, **kwargs: object) -> None:
+            self.__dict__.update(kwargs)
+
+    class FakeConfig:
+        def __init__(self, **kwargs: object) -> None:
+            self.__dict__.update(kwargs)
+
+    class FakeRuntimeOptions:
+        pass
+
+    fake_ocr_root = types.ModuleType("alibabacloud_ocr_api20210707")
+    fake_ocr_client = types.ModuleType("alibabacloud_ocr_api20210707.client")
+    fake_ocr_models = types.ModuleType("alibabacloud_ocr_api20210707.models")
+    fake_openapi = types.ModuleType("alibabacloud_tea_openapi")
+    fake_openapi_models = types.ModuleType("alibabacloud_tea_openapi.models")
+    fake_util = types.ModuleType("alibabacloud_tea_util")
+    fake_util_models = types.ModuleType("alibabacloud_tea_util.models")
+
+    fake_ocr_client.Client = FakeOcrClient
+    fake_ocr_models.RecognizeAllTextRequest = FakeRecognizeAllTextRequest
+    fake_ocr_root.models = fake_ocr_models
+    fake_openapi.models = fake_openapi_models
+    fake_openapi_models.Config = FakeConfig
+    fake_util.models = fake_util_models
+    fake_util_models.RuntimeOptions = FakeRuntimeOptions
+
+    with patch.dict(
+        sys.modules,
+        {
+            "alibabacloud_ocr_api20210707": fake_ocr_root,
+            "alibabacloud_ocr_api20210707.client": fake_ocr_client,
+            "alibabacloud_ocr_api20210707.models": fake_ocr_models,
+            "alibabacloud_tea_openapi": fake_openapi,
+            "alibabacloud_tea_openapi.models": fake_openapi_models,
+            "alibabacloud_tea_util": fake_util,
+            "alibabacloud_tea_util.models": fake_util_models,
+        },
+    ), patch.dict(os.environ, {"ALIYUN_ACCESS_KEY_ID": "ak", "ALIYUN_ACCESS_KEY_SECRET": "sk"}):
+        assert extract_image_text(image_path) == "报价单文本"
+
+    assert calls == {"all_text": True, "general": False}
 
 
 def test_upload_rejects_empty_file() -> None:

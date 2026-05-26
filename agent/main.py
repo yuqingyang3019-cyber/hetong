@@ -273,6 +273,43 @@ SUPPORTED_QUOTE_MIME_TYPES = {
     "image/jpeg",
     "image/png",
 }
+QUOTE_FILE_SIGNATURE_ERROR = "文件内容与格式不匹配，请重新上传 PDF、Excel 或 JPG/PNG 图片报价单"
+
+
+def _normalized_mime_type(mime_type: str) -> str:
+    return (mime_type or "").split(";", 1)[0].strip().lower()
+
+
+def _quote_file_kind(original_name: str, mime_type: str) -> str | None:
+    suffix = Path(original_name).suffix.lower()
+    normalized_mime = _normalized_mime_type(mime_type)
+    if suffix == ".xlsx" or normalized_mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+        return "xlsx"
+    if suffix == ".xls" or normalized_mime == "application/vnd.ms-excel":
+        return "xls"
+    if suffix == ".pdf" or normalized_mime == "application/pdf":
+        return "pdf"
+    if suffix in {".jpg", ".jpeg"} or normalized_mime == "image/jpeg":
+        return "jpeg"
+    if suffix == ".png" or normalized_mime == "image/png":
+        return "png"
+    return None
+
+
+def validate_quote_file_signature(content: bytes, original_name: str, mime_type: str) -> None:
+    kind = _quote_file_kind(original_name, mime_type)
+    if kind is None:
+        return
+    signatures = {
+        "xlsx": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+        "xls": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
+        "pdf": (b"%PDF",),
+        "jpeg": (b"\xff\xd8\xff",),
+        "png": (b"\x89PNG\r\n\x1a\n",),
+    }
+    expected = signatures[kind]
+    if not content.startswith(expected):
+        raise api_error(400, "INVALID_ARGUMENT", QUOTE_FILE_SIGNATURE_ERROR)
 
 
 def _user_resource_owner(current_user: dict[str, Any] | None) -> dict[str, str]:
@@ -304,7 +341,7 @@ def public_upload_record(record: dict[str, Any]) -> dict[str, Any]:
 
 def validate_supported_quote_file(original_name: str, mime_type: str) -> None:
     suffix = Path(original_name).suffix.lower()
-    normalized_mime = (mime_type or "").split(";", 1)[0].strip().lower()
+    normalized_mime = _normalized_mime_type(mime_type)
     if suffix in SUPPORTED_QUOTE_EXTENSIONS:
         return
     if normalized_mime in SUPPORTED_QUOTE_MIME_TYPES:
@@ -515,6 +552,9 @@ def extract_agui_attachment(input_data: dict[str, Any], current_user: dict[str, 
             parse_start = time.perf_counter()
             content_bytes, parsed_mime = parse_data_source(source.get("value", ""), mime_type)
             validate_supported_quote_file(file_name, parsed_mime)
+            if not content_bytes:
+                raise api_error(400, "INVALID_ARGUMENT", "上传文件为空，请重新选择报价单文件")
+            validate_quote_file_signature(content_bytes, file_name, parsed_mime)
             log_info(
                 "agui attachment decoded",
                 fileName=file_name,
@@ -716,6 +756,7 @@ async def upload_file(
                 elapsedMs=elapsed_ms(start),
             )
             raise api_error(400, "INVALID_ARGUMENT", "上传文件为空，请重新选择报价单文件")
+        validate_quote_file_signature(content, original_name, mime_type)
         if declared_size is not None and declared_size != len(content):
             log_warning(
                 "upload size mismatch",
