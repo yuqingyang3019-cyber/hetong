@@ -342,7 +342,7 @@ function syncProcessingPanel(task) {
   const smartHints = {
     uploading: "正在安全上传文件，完成后会自动进入解析。",
     parsing: "系统会先提取文字和表格，稍后请你确认识别结果是否准确。",
-    identifying: "AI 正在按所选合同模板匹配字段，请不要关闭页面；完成后会自动展示可编辑字段确认稿。",
+    identifying: "AI 正在按所选合同模板匹配字段。你可以关闭当前任务详情去新建任务，不用停在这里等待；完成后回来查看即可。",
     generating: "合同会根据你确认过的字段生成，完成后可直接下载。",
     failed: "任务处理失败，请返回任务卡片重试或删除。",
   };
@@ -1481,7 +1481,7 @@ async function syncActiveTaskEditor() {
     else generateButton.textContent = "确认识别结果并生成合同";
   }
   if (identifyFieldsButton) {
-    identifyFieldsButton.textContent = task.status === "identifying" ? "字段识别中，请稍候..." : "识别当前任务字段";
+    identifyFieldsButton.textContent = task.status === "identifying" ? "字段识别中，可先处理其他任务" : "识别当前任务字段";
   }
 
   previewCard.hidden = !hasEditorContent;
@@ -1532,9 +1532,9 @@ async function runIdentifyTask(task) {
   try {
     task.extraInfo = extraInfoText?.value.trim() || task.extraInfo || "";
     task.fieldPreview = null;
-    setTaskStatus(task, "identifying", "字段识别中：AI 正在结合报价单文本和额外信息匹配合同字段...");
-    setStatus("字段识别中，请稍候。AI 会识别合同字段并标出缺失项。");
-    setProgress("review", "active", "字段识别中，请等待结果展示。");
+    setTaskStatus(task, "identifying", "字段识别中：AI 正在匹配合同字段，可关闭当前任务详情并新建其他任务。");
+    setStatus("字段识别中，可关闭当前任务详情去新建任务，不用停在这里等待。");
+    setProgress("review", "active", "字段识别中，可先处理其他任务。");
     task.fieldPreview = await previewQuoteFields(task.upload.id, task.quoteText.trim(), task.extraInfo, task.templateType);
     await renderFieldPreview(task);
     const missing = task.fieldPreview.missingFields?.length || 0;
