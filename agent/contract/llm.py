@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import time
 from typing import Any
+from urllib.parse import urlparse
 
 from openai import OpenAI
 
 from .config import TemplateConfig
+
+logger = logging.getLogger("agentrun")
 
 
 SYSTEM_PROMPT = """你是合同占位符字段匹配助手。你的任务是根据用户提供的报价单解析文本和用户补充信息，理解采购内容与表格结构，再按「合同模板字段契约」输出 JSON。
@@ -26,6 +31,51 @@ def require_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"缺少环境变量 {name}")
     return value
+
+
+def env_float(name: str, default: float) -> float:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"环境变量 {name} 必须是数字") from exc
+    if value <= 0:
+        raise RuntimeError(f"环境变量 {name} 必须大于 0")
+    return value
+
+
+def env_int(name: str, default: int) -> int:
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"环境变量 {name} 必须是整数") from exc
+    if value < 0:
+        raise RuntimeError(f"环境变量 {name} 不能小于 0")
+    return value
+
+
+def log_meta(**meta: Any) -> str:
+    clean = {key: value for key, value in meta.items() if value is not None}
+    if not clean:
+        return ""
+    try:
+        return " " + json.dumps(clean, ensure_ascii=False, default=str)
+    except Exception:
+        return " [meta_unserializable]"
+
+
+def base_url_host(base_url: str) -> str:
+    parsed = urlparse(base_url)
+    return parsed.netloc or parsed.path or "unknown"
+
+
+def elapsed_ms(start: float) -> int:
+    return int((time.perf_counter() - start) * 1000)
 
 
 def _set_by_dot_path(target: dict[str, Any], dot_path: str, value: Any) -> None:
@@ -72,6 +122,8 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_
     model = require_env("DASHSCOPE_MODEL")
     base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1").strip()
     enable_thinking = os.getenv("DASHSCOPE_ENABLE_THINKING", "true").lower() != "false"
+    timeout_seconds = env_float("DASHSCOPE_TIMEOUT_SECONDS", 25.0)
+    max_retries = env_int("DASHSCOPE_MAX_RETRIES", 0)
     output_shape = build_output_shape(config)
     user_payload = {
         "quoteText": quote_text,
@@ -82,7 +134,24 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_
         },
         "outputShapeExample": output_shape,
     }
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    start = time.perf_counter()
+    logger.info(
+        "%s%s",
+        "dashscope request start",
+        log_meta(
+            model=model,
+            baseUrlHost=base_url_host(base_url),
+            enableThinking=enable_thinking,
+            timeoutSeconds=timeout_seconds,
+            maxRetries=max_retries,
+            templateType=config.type,
+            quoteTextLength=len(quote_text),
+            extraInfoLength=len(user_payload["extraInfo"]),
+            scalarCount=len(config.scalar_keys),
+            tableCount=len(config.table_bindings),
+        ),
+    )
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds, max_retries=max_retries)
     completion = client.chat.completions.create(
         model=model,
         response_format={"type": "json_object"},
@@ -93,6 +162,16 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_
         extra_body={"enable_thinking": True} if enable_thinking else None,
     )
     content = completion.choices[0].message.content
+    logger.info(
+        "%s%s",
+        "dashscope request finished",
+        log_meta(
+            model=model,
+            templateType=config.type,
+            contentLength=len(content or ""),
+            elapsedMs=elapsed_ms(start),
+        ),
+    )
     if not content or not content.strip():
         raise RuntimeError("百炼模型返回内容为空")
     parsed = json.loads(content)

@@ -34,6 +34,8 @@ resources:
           DASHSCOPE_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
           DASHSCOPE_MODEL: ${env("DASHSCOPE_MODEL")}
           DASHSCOPE_ENABLE_THINKING: "true"
+          DASHSCOPE_TIMEOUT_SECONDS: ${env("DASHSCOPE_TIMEOUT_SECONDS", "25")}
+          DASHSCOPE_MAX_RETRIES: ${env("DASHSCOPE_MAX_RETRIES", "0")}
           ALIYUN_ACCESS_KEY_ID: ${env("ALIYUN_ACCESS_KEY_ID")}
           ALIYUN_ACCESS_KEY_SECRET: ${env("ALIYUN_ACCESS_KEY_SECRET")}
           ALIYUN_OCR_ENDPOINT: ocr-api.cn-hangzhou.aliyuncs.com
