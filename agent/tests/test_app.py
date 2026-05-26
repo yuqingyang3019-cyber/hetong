@@ -544,6 +544,7 @@ def test_agui_requires_login_when_enforced(monkeypatch) -> None:
 def test_agent_bearer_token_allows_upload_when_enforced(monkeypatch) -> None:
     monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
     isolated = TestClient(app)
+    content = b"%PDF-1.4 hello quote"
 
     upload = isolated.post(
         "/api/uploads",
@@ -551,8 +552,8 @@ def test_agent_bearer_token_allows_upload_when_enforced(monkeypatch) -> None:
         json={
             "originalName": "quote.pdf",
             "mimeType": "application/pdf",
-            "size": len(b"hello quote"),
-            "data": base64.b64encode(b"hello quote").decode("ascii"),
+            "size": len(content),
+            "data": base64.b64encode(content).decode("ascii"),
         },
     )
     assert upload.status_code == 200
