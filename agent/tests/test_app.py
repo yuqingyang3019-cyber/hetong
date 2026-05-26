@@ -344,6 +344,26 @@ def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
     assert body["tableRowCounts"] == {"items": 1}
 
 
+def test_field_preview_timeout_returns_retryable_message() -> None:
+    upload_id = upload_quote()["id"]
+
+    with patch("agent.main.extract_template_render_data", side_effect=TimeoutError("Request timed out.")):
+        response = client.post(
+            f"/api/uploads/{upload_id}/field-preview",
+            headers=agent_auth_header(),
+            json={
+                "templateType": "caigouhetong",
+                "quoteText": "用户确认报价单文本",
+            },
+        )
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["code"] == "LLM_FAILED"
+    assert body["message"] == "字段识别超时，请稍后重试；如报价单内容较长，可先删减无关文本后再识别"
+    assert "Traceback" not in json.dumps(body, ensure_ascii=False)
+
+
 def test_generate_contract_reuses_confirmed_extracted_data() -> None:
     upload_id = upload_quote()["id"]
     extracted = {"supplierName": "供应商A", "items": []}

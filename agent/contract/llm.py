@@ -7,7 +7,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 
-from openai import OpenAI
+from openai import APITimeoutError, OpenAI
 
 from .config import TemplateConfig
 
@@ -78,6 +78,14 @@ def elapsed_ms(start: float) -> int:
     return int((time.perf_counter() - start) * 1000)
 
 
+def is_timeout_error(exc: BaseException) -> bool:
+    if isinstance(exc, (APITimeoutError, TimeoutError)):
+        return True
+    class_name = exc.__class__.__name__.lower()
+    message = str(exc).lower()
+    return "timeout" in class_name or "timed out" in message or "timeout" in message
+
+
 def _set_by_dot_path(target: dict[str, Any], dot_path: str, value: Any) -> None:
     parts = dot_path.split(".")
     current = target
@@ -121,9 +129,9 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_
     api_key = require_env("DASHSCOPE_API_KEY")
     model = require_env("DASHSCOPE_MODEL")
     base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1").strip()
-    enable_thinking = os.getenv("DASHSCOPE_ENABLE_THINKING", "true").lower() != "false"
-    timeout_seconds = env_float("DASHSCOPE_TIMEOUT_SECONDS", 25.0)
-    max_retries = env_int("DASHSCOPE_MAX_RETRIES", 0)
+    enable_thinking = os.getenv("DASHSCOPE_ENABLE_THINKING", "false").lower() == "true"
+    timeout_seconds = env_float("DASHSCOPE_TIMEOUT_SECONDS", 60.0)
+    max_retries = env_int("DASHSCOPE_MAX_RETRIES", 1)
     output_shape = build_output_shape(config)
     user_payload = {
         "quoteText": quote_text,
@@ -160,9 +168,10 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
             ],
-            extra_body={"enable_thinking": True} if enable_thinking else None,
+            extra_body={"enable_thinking": enable_thinking},
         )
     except Exception as exc:
+        error_type = "timeout" if is_timeout_error(exc) else exc.__class__.__name__
         logger.exception(
             "%s%s",
             "dashscope request failed",
@@ -174,6 +183,7 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_
                 maxRetries=max_retries,
                 templateType=config.type,
                 elapsedMs=elapsed_ms(start),
+                errorType=error_type,
                 error=str(exc),
             ),
         )

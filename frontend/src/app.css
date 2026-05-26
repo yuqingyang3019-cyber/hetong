@@ -108,9 +108,7 @@ h2 {
 }
 
 .app-hero {
-  align-items: stretch;
-  display: grid;
-  gap: var(--space-3);
+  display: block;
 }
 
 .hero-copy {
@@ -120,26 +118,36 @@ h2 {
   border: 1px solid rgba(15, 108, 189, 0.14);
   border-radius: calc(var(--radius-lg) + 4px);
   box-shadow: var(--shadow-sm);
-  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
 }
 
 h1 {
   color: var(--color-primary);
-  font-size: clamp(1.8rem, 8vw, 3.25rem);
-  letter-spacing: -0.045em;
-  line-height: 1.08;
+  font-size: clamp(1.45rem, 5vw, 2.3rem);
+  letter-spacing: -0.04em;
+  line-height: 1.12;
   margin: 0;
 }
 
-.hero-title-row {
-  align-items: flex-start;
-  display: flex;
-  gap: var(--space-2);
+h1 .user-name {
+  color: inherit;
+  display: inline;
+  font-size: inherit;
+  font-weight: inherit;
 }
 
-.hero-title-row h1 {
-  flex: 1;
-  min-width: 0;
+.hero-title-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  justify-content: space-between;
+}
+
+.hero-title-row .eyebrow {
+  margin: 0;
 }
 
 .beta-badge {
@@ -160,88 +168,19 @@ h1 {
   color: var(--color-secondary);
   font-size: 0.9375rem;
   line-height: 1.7;
-  margin: var(--space-2) 0 0;
-  max-width: 760px;
-}
-
-.ai-assist-panel {
-  align-items: center;
-  background: rgba(255, 255, 255, 0.76);
-  border: 1px solid rgba(15, 108, 189, 0.18);
-  border-radius: var(--radius-lg);
-  display: grid;
-  gap: var(--space-2);
-  grid-template-columns: auto minmax(0, 1fr);
-  margin-top: var(--space-3);
-  padding: var(--space-2);
-}
-
-.ai-assist-panel strong {
-  color: var(--color-primary);
-  display: block;
-  font-size: 0.9375rem;
-}
-
-.ai-assist-panel p {
-  color: var(--color-secondary);
-  font-size: 0.8125rem;
-  line-height: 1.55;
-  margin: 2px 0 0;
-}
-
-.ai-orb {
-  align-items: center;
-  background:
-    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.8), transparent 38%),
-    linear-gradient(135deg, rgba(15, 108, 189, 0.16), rgba(5, 150, 105, 0.14));
-  border: 1px solid rgba(15, 108, 189, 0.2);
-  border-radius: 999px;
-  color: var(--color-accent);
-  display: inline-flex;
-  height: 44px;
-  justify-content: center;
-  width: 44px;
-}
-
-.ai-orb svg {
-  fill: none;
-  height: 22px;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.8;
-  width: 22px;
-}
-
-.ai-capability-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  list-style: none;
-  margin: var(--space-2) 0 0;
-  padding: 0;
-}
-
-.ai-capability-list li {
-  background: rgba(15, 108, 189, 0.08);
-  border: 1px solid rgba(15, 108, 189, 0.14);
-  border-radius: 999px;
-  color: #0f548c;
-  font-size: 0.75rem;
-  font-weight: 800;
-  padding: 5px 9px;
+  margin: 0;
+  max-width: 720px;
 }
 
 .identity-panel {
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(15, 108, 189, 0.14);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(15, 108, 189, 0.12);
+  border-radius: var(--radius-md);
   display: grid;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
   overflow: auto;
-  padding: var(--space-2);
+  padding: 10px 12px;
 }
 
 .identity-main {
@@ -287,104 +226,19 @@ h1 {
   padding: var(--space-3);
 }
 
-.progress-card {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.94)),
-    var(--color-card);
-}
-
-.progress-heading {
-  align-items: start;
-  display: grid;
-  gap: var(--space-2);
-}
-
-.progress-heading h2,
-.progress-heading .eyebrow {
-  margin: 0;
-}
-
-.progress-steps {
-  counter-reset: step;
-  display: grid;
-  gap: var(--space-2);
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.progress-step {
-  align-items: center;
-  background: #f8fafc;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  color: #64748b;
-  display: flex;
-  font-size: 0.8125rem;
-  font-weight: 800;
-  gap: 8px;
-  min-height: 44px;
-  padding: 8px 10px;
-}
-
-.progress-step-index {
-  align-items: center;
-  background: #e2e8f0;
-  border-radius: 999px;
-  color: var(--color-secondary);
-  display: inline-flex;
-  flex: 0 0 24px;
-  height: 24px;
-  justify-content: center;
-  width: 24px;
-}
-
-.progress-step.is-complete {
-  background: rgba(5, 150, 105, 0.08);
-  border-color: rgba(5, 150, 105, 0.22);
-  color: #047857;
-}
-
-.progress-step.is-active {
-  background: rgba(15, 108, 189, 0.08);
-  border-color: rgba(15, 108, 189, 0.24);
-  color: #0f548c;
-  box-shadow: 0 0 0 4px rgba(15, 108, 189, 0.08);
-}
-
-.progress-step.is-error {
-  background: rgba(220, 38, 38, 0.08);
-  border-color: rgba(220, 38, 38, 0.22);
-  color: #991b1b;
-}
-
-.progress-step.is-complete .progress-step-index {
-  background: rgba(5, 150, 105, 0.16);
-  color: #047857;
-}
-
-.progress-step.is-active .progress-step-index {
-  background: var(--color-accent);
-  color: var(--color-on-primary);
-}
-
-.progress-step.is-error .progress-step-index {
-  background: var(--color-destructive);
-  color: var(--color-on-primary);
-}
-
 .workbench-card {
   gap: var(--space-3);
 }
 
 .task-create-strip {
-  background: rgba(248, 250, 252, 0.78);
-  border: 1px solid rgba(226, 232, 240, 0.9);
-  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(248, 250, 252, 0.86)),
+    var(--color-card);
+  border: 1px solid rgba(15, 108, 189, 0.16);
+  border-radius: calc(var(--radius-lg) + 2px);
   display: grid;
-  gap: var(--space-4);
-  padding: var(--space-3);
+  gap: var(--space-3);
+  padding: var(--space-4);
 }
 
 .task-queue-panel {
@@ -518,10 +372,10 @@ textarea {
   border-radius: var(--radius-md);
   cursor: pointer;
   display: flex;
-  gap: var(--space-2);
-  min-height: 56px;
+  gap: var(--space-3);
+  min-height: 156px;
   min-width: 0;
-  padding: 8px 12px;
+  padding: var(--space-4);
   transition:
     border-color var(--duration) var(--ease-out),
     box-shadow var(--duration) var(--ease-out),
@@ -558,20 +412,20 @@ textarea {
   border-radius: 999px;
   color: var(--color-accent);
   display: inline-flex;
-  flex: 0 0 34px;
-  height: 34px;
+  flex: 0 0 54px;
+  height: 54px;
   justify-content: center;
-  width: 34px;
+  width: 54px;
 }
 
 .upload-mark svg {
   fill: none;
-  height: 18px;
+  height: 28px;
   stroke: currentColor;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-width: 2;
-  width: 18px;
+  width: 28px;
 }
 
 .upload-copy {
@@ -581,6 +435,9 @@ textarea {
 }
 
 .upload-title {
+  color: var(--color-primary);
+  font-size: 1.05rem;
+  font-weight: 800;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -588,7 +445,7 @@ textarea {
 
 .upload-meta {
   color: #64748b;
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
 }
 
@@ -604,7 +461,7 @@ button {
 }
 
 .task-create-strip > button {
-  display: block;
+  display: none;
   margin: 0;
   width: 100%;
   white-space: nowrap;
@@ -921,6 +778,28 @@ button:disabled {
   width: auto;
 }
 
+.drawer-footer-status {
+  background: rgba(15, 108, 189, 0.06);
+  border: 1px solid rgba(15, 108, 189, 0.14);
+  border-radius: var(--radius-md);
+  color: var(--color-secondary);
+  display: grid;
+  gap: 2px;
+  margin-right: auto;
+  max-width: 560px;
+  padding: 9px 12px;
+}
+
+.drawer-footer-status strong {
+  color: var(--color-primary);
+  font-size: 0.8125rem;
+}
+
+.drawer-footer-status .hint {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+}
+
 .drawer-download-action {
   margin-right: auto;
 }
@@ -980,69 +859,6 @@ button:disabled {
   display: grid;
   gap: var(--space-3);
   padding: var(--space-4);
-}
-
-.processing-card {
-  align-items: center;
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.processing-card.is-identifying {
-  background: linear-gradient(135deg, rgba(15, 108, 189, 0.14), rgba(5, 150, 105, 0.1));
-  border-color: rgba(15, 108, 189, 0.28);
-  box-shadow: 0 0 0 4px rgba(15, 108, 189, 0.08);
-}
-
-.processing-card h3 {
-  color: var(--color-primary);
-  font-size: 1rem;
-  margin: 0 0 4px;
-}
-
-.processing-card.is-identifying h3 {
-  color: #0f548c;
-  font-size: 1.08rem;
-}
-
-.processing-indicator {
-  animation: processing-pulse 1s ease-in-out infinite alternate;
-  background:
-    radial-gradient(circle, rgba(15, 108, 189, 0.2) 0 42%, transparent 44%),
-    rgba(15, 108, 189, 0.08);
-  border: 1px solid rgba(15, 108, 189, 0.18);
-  border-radius: 999px;
-  height: 42px;
-  width: 42px;
-}
-
-.processing-card.is-identifying .processing-indicator {
-  animation: processing-pulse 0.75s ease-in-out infinite alternate;
-  background:
-    radial-gradient(circle, rgba(255, 255, 255, 0.88) 0 34%, transparent 36%),
-    rgba(15, 108, 189, 0.16);
-  border-color: rgba(15, 108, 189, 0.34);
-}
-
-.processing-indicator::after {
-  background: rgba(15, 108, 189, 0.72);
-  border-radius: 999px;
-  box-shadow:
-    11px 0 0 rgba(5, 150, 105, 0.72),
-    22px 0 0 rgba(15, 108, 189, 0.4);
-  content: "";
-  display: block;
-  height: 5px;
-  margin: 18px 0 0 8px;
-  width: 5px;
-}
-
-@keyframes processing-pulse {
-  from {
-    transform: scale(0.96);
-  }
-  to {
-    transform: scale(1.04);
-  }
 }
 
 .drawer-section-heading {
@@ -1422,14 +1238,9 @@ pre {
     padding: var(--space-4);
   }
 
-  .progress-heading,
   .task-queue-heading {
     align-items: end;
     grid-template-columns: minmax(0, 1fr) minmax(240px, 0.85fr);
-  }
-
-  .progress-steps {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 }
 
@@ -1439,17 +1250,6 @@ pre {
     padding-bottom: var(--space-5);
     padding-left: 0;
     padding-right: 0;
-  }
-
-  .app-hero {
-    align-items: stretch;
-    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
-  }
-
-  .identity-panel {
-    align-self: stretch;
-    align-content: center;
-    padding: var(--space-3);
   }
 
   .task-drawer {
@@ -1465,15 +1265,8 @@ pre {
   }
 
   .task-create-strip {
-    align-items: end;
-    grid-template-columns: minmax(220px, 0.9fr) minmax(360px, 1.3fr) minmax(120px, 140px);
-  }
-
-  .task-create-strip > button {
-    margin: 0;
-    max-width: 140px;
-    min-width: 120px;
-    width: min(100%, 140px);
+    align-items: stretch;
+    grid-template-columns: minmax(240px, 0.72fr) minmax(420px, 1.28fr);
   }
 
   .field-preview-card {
@@ -1529,6 +1322,7 @@ pre {
 
   .upload-dropzone {
     align-items: flex-start;
+    min-height: 132px;
   }
 
   .hero-copy {
@@ -1564,6 +1358,12 @@ pre {
   .drawer-actions {
     align-items: stretch;
     display: grid;
+  }
+
+  .drawer-footer-status {
+    margin-right: 0;
+    max-width: none;
+    width: 100%;
   }
 
   .drawer-actions button,

@@ -30,7 +30,7 @@ try:
         safe_file_name,
     )
     from .contract.extract import extract_text_from_file, parser_metadata_for_file
-    from .contract.llm import extract_template_render_data
+    from .contract.llm import extract_template_render_data, is_timeout_error
     from .contract.render import merge_render_data, render_contract
 except ImportError:
     from contract.config import (
@@ -41,7 +41,7 @@ except ImportError:
         safe_file_name,
     )
     from contract.extract import extract_text_from_file, parser_metadata_for_file
-    from contract.llm import extract_template_render_data
+    from contract.llm import extract_template_render_data, is_timeout_error
     from contract.render import merge_render_data, render_contract
 
 try:
@@ -945,6 +945,12 @@ async def preview_quote_fields_api(
         )
     except Exception as exc:
         log_exception("field preview llm failed", exc, uploadId=upload_id, templateType=config.type, elapsedMs=elapsed_ms(llm_start))
+        if is_timeout_error(exc):
+            raise api_error(
+                502,
+                "LLM_FAILED",
+                "字段识别超时，请稍后重试；如报价单内容较长，可先删减无关文本后再识别",
+            ) from exc
         raise api_error(502, "LLM_FAILED", "字段识别失败，请检查报价单文本或补充说明后重试", str(exc)) from exc
     classify_start = time.perf_counter()
     log_info(
