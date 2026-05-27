@@ -1,6 +1,4 @@
 const statusEl = document.querySelector("#status");
-const logEl = document.querySelector("#log");
-const parseButton = document.querySelector("#parseButton");
 const generateButton = document.querySelector("#generateButton");
 const identifyFieldsButton = document.querySelector("#identifyFieldsButton");
 const quoteFile = document.querySelector("#quoteFile");
@@ -121,9 +119,7 @@ async function fetchAgent(path, options = {}, retry = true) {
 }
 
 function appendSystemLog(text) {
-  if (!logEl) return;
-  logEl.textContent += text;
-  logEl.scrollTop = logEl.scrollHeight;
+  if (window.console?.debug) console.debug(text.trim());
 }
 
 function appendTaskLog(task, text) {
@@ -162,7 +158,7 @@ function setStatus(message, tone = "info") {
   statusEl.textContent = message;
   statusEl.classList.toggle("is-error", tone === "error");
   statusEl.classList.toggle("is-success", tone === "success");
-  statusEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  if (!drawerOpen) statusEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
 }
 
 function formatFileSize(size) {
@@ -210,9 +206,6 @@ function incompleteTaskCount() {
 
 function updateActionAvailability() {
   const current = activeTask();
-  const currentFile = quoteFile.files?.[0];
-  const hasFile = Boolean(currentFile);
-  const hasValidFile = hasFile && !validateQuoteFile(currentFile);
   const atLimit = incompleteTaskCount() >= MAX_TASKS;
   const controlsDisabled = !sessionReady;
   const activeBusy = taskIsBusy(current);
@@ -220,7 +213,6 @@ function updateActionAvailability() {
 
   quoteFile.disabled = controlsDisabled || atLimit;
   templateType.disabled = controlsDisabled || atLimit;
-  parseButton.disabled = controlsDisabled || !hasValidFile || atLimit;
   uploadDropzone?.classList.toggle("is-disabled", controlsDisabled || atLimit);
 
   quoteTextPreview.disabled = !canEditCurrent || !current?.quoteText;
@@ -231,7 +223,7 @@ function updateActionAvailability() {
   generateButton.disabled = !canEditCurrent || !current?.fieldPreview?.extractedData;
 
   if (taskQueueHint) {
-    taskQueueHint.textContent = `未完成 ${incompleteTaskCount()} / ${MAX_TASKS}。点击任务卡片可切换编辑，已完成任务不占用额度。`;
+    taskQueueHint.textContent = `未完成 ${incompleteTaskCount()} / ${MAX_TASKS}。点击“查看详情”可切换编辑，已完成任务不占用额度。`;
   }
 }
 
@@ -288,16 +280,17 @@ function drawerStepForTask(task) {
 
 function setDrawerStep(currentStep) {
   const order = ["upload", "review", "generate"];
-  const activeIndex = order.indexOf(currentStep);
+  const normalizedStep = !currentStep ? "" : currentStep === "done" || order.includes(currentStep) ? currentStep : "review";
+  const activeIndex = order.indexOf(normalizedStep);
   drawerStepItems.forEach((item) => {
     const itemIndex = order.indexOf(item.dataset.drawerStep);
     item.classList.remove("is-active", "is-complete");
-    if (currentStep === "done") {
+    if (normalizedStep === "done") {
       item.classList.add("is-complete");
       return;
     }
     if (itemIndex >= 0 && itemIndex < activeIndex) item.classList.add("is-complete");
-    if (item.dataset.drawerStep === currentStep) item.classList.add("is-active");
+    if (item.dataset.drawerStep === normalizedStep) item.classList.add("is-active");
   });
 }
 
@@ -1154,7 +1147,11 @@ function clearActiveEditor() {
   setDrawerBusy(null);
   quoteTextPreview.value = "";
   if (extraInfoText) extraInfoText.value = "";
-  if (identifyFieldsButton) identifyFieldsButton.textContent = "识别当前任务字段";
+  if (identifyFieldsButton) {
+    identifyFieldsButton.hidden = true;
+    identifyFieldsButton.textContent = "识别当前任务字段";
+  }
+  if (generateButton) generateButton.hidden = true;
   syncDrawerVisibility(false);
 }
 
@@ -1250,15 +1247,9 @@ function openCreatePanel() {
   updateActionAvailability();
 }
 
-function closeCreatePanel() {
-  quoteFile.value = "";
-  updateSelectedFile();
-  setStatus("");
-  updateActionAvailability();
-}
-
 function syncDrawerVisibility(hasContent) {
   const open = Boolean(drawerOpen && hasContent);
+  document.body.classList.toggle("drawer-open", open);
   if (taskDrawer) {
     const wasOpen = !taskDrawer.hidden;
     taskDrawer.hidden = !open;
@@ -1292,10 +1283,9 @@ function createTaskDownloadNode(task) {
   if (!task.download) return null;
   const payload = task.download;
   if (payload.dingDrive?.fileId) {
-    const button = createEl("button", "task-download", "下载合同文件");
+    const button = createEl("button", "btn-download task-download", "下载合同文件");
     button.type = "button";
-    button.addEventListener("click", async (event) => {
-      event.stopPropagation();
+    button.addEventListener("click", async () => {
       const markDownloadFailed = (error) => {
         const message = formatError(error);
         appendTaskLog(task, `下载失败：${message}\n`);
@@ -1339,17 +1329,8 @@ function renderTaskList() {
       task.status === "failed" ? "is-error" : "",
       task.status === "completed" ? "is-complete" : "",
     ].filter(Boolean).join(" "));
-    card.tabIndex = 0;
-    card.setAttribute("role", "button");
     card.setAttribute("aria-current", task.id === activeTaskId ? "true" : "false");
     card.setAttribute("aria-busy", taskIsBusy(task) ? "true" : "false");
-    card.setAttribute("aria-label", `${index + 1}. ${task.fileName}，${statusLabel(task.status)}，${task.message || "等待处理"}`);
-    card.addEventListener("click", () => selectTask(task.id));
-    card.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      selectTask(task.id);
-    });
 
     const header = createEl("div", "task-card-header");
     const title = createEl("div", "task-title");
@@ -1362,29 +1343,26 @@ function renderTaskList() {
     const message = createEl("p", "task-message", task.message || "等待处理");
     const meta = createEl("p", "task-file-path", `${task.templateName} · ${task.fileName}`);
     const actions = createEl("div", "task-actions");
-    const selectButton = createEl("button", "task-secondary-button", task.id === activeTaskId && drawerOpen ? "正在查看" : "查看详情");
+    const selectButton = createEl("button", "btn-secondary task-secondary-button", task.id === activeTaskId && drawerOpen ? "正在查看" : "查看详情");
     selectButton.type = "button";
-    selectButton.addEventListener("click", (event) => {
-      event.stopPropagation();
+    selectButton.addEventListener("click", () => {
       selectTask(task.id);
     });
     actions.append(selectButton);
 
     if (task.status === "failed") {
-      const retryButton = createEl("button", "task-secondary-button", "重试");
+      const retryButton = createEl("button", "btn-secondary task-secondary-button", "重试");
       retryButton.type = "button";
-      retryButton.addEventListener("click", (event) => {
-        event.stopPropagation();
+      retryButton.addEventListener("click", () => {
         retryTask(task);
       });
       actions.append(retryButton);
     }
 
-    const deleteButton = createEl("button", "task-secondary-button is-danger", "删除");
+    const deleteButton = createEl("button", "btn-danger task-secondary-button", "删除");
     deleteButton.type = "button";
     deleteButton.disabled = taskIsBusy(task);
-    deleteButton.addEventListener("click", (event) => {
-      event.stopPropagation();
+    deleteButton.addEventListener("click", () => {
       removeTask(task.id);
     });
     actions.append(deleteButton);
@@ -1395,12 +1373,6 @@ function renderTaskList() {
     if (task.log) {
       const details = createEl("details", "task-log");
       details.open = Boolean(task.logOpen);
-      details.addEventListener("click", (event) => {
-        event.stopPropagation();
-      });
-      details.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-      });
       details.addEventListener("toggle", () => {
         task.logOpen = details.open;
       });
@@ -1442,12 +1414,12 @@ async function syncActiveTaskEditor() {
     activeTaskHint.textContent = `${task.templateName}。${helperHint}`;
   }
   if (generateButton) {
-    generateButton.hidden = !hasEditorContent || task.status === "completed";
-    if (task.status === "generating") generateButton.textContent = "正在生成合同...";
-    else generateButton.textContent = "确认识别结果并生成合同";
+    generateButton.hidden = !(hasEditorContent && task.status === "needs_fields");
+    generateButton.textContent = "确认识别结果并生成合同";
   }
   if (identifyFieldsButton) {
-    identifyFieldsButton.textContent = task.status === "identifying" ? "字段识别中，可先处理其他任务" : "识别当前任务字段";
+    identifyFieldsButton.hidden = !(hasEditorContent && task.status === "needs_text");
+    identifyFieldsButton.textContent = "识别当前任务字段";
   }
 
   previewCard.hidden = !hasEditorContent;
@@ -1570,7 +1542,7 @@ quoteTextPreview.addEventListener("input", () => {
   if (task.status !== "failed") task.status = "needs_text";
   renderTaskList();
   resetFieldPreviewUi();
-  setDrawerStep("text");
+  setDrawerStep("review");
   setStatus("解析内容已修改，请重新识别合同字段。");
   updateActionAvailability();
 });
@@ -1583,14 +1555,9 @@ extraInfoText?.addEventListener("input", () => {
   if (task.status !== "failed") task.status = "needs_text";
   renderTaskList();
   resetFieldPreviewUi();
-  setDrawerStep("text");
+  setDrawerStep("review");
   setStatus("额外信息已修改，请重新识别合同字段。");
   updateActionAvailability();
-});
-
-parseButton.addEventListener("click", async () => {
-  const file = quoteFile.files?.[0];
-  startTaskFromFile(file);
 });
 
 identifyFieldsButton?.addEventListener("click", async () => {

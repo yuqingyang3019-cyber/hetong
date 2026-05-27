@@ -18,7 +18,7 @@
             <span class="beta-badge" title="当前处于内测版本">内测版</span>
           </div>
           <h1><span id="userName" class="user-name">你好</span>，我是合同助手</h1>
-          <p class="hero-description">可以帮你读取报价单、整理合同字段，确认后生成 Word 合同并存入钉盘。</p>
+          <p class="hero-description">读取报价单、整理合同字段，确认后生成 Word 合同并存入钉盘。</p>
 
           <section id="userBar" class="identity-panel" aria-label="当前登录用户" hidden>
             <div class="identity-main">
@@ -28,11 +28,7 @@
                 <p id="loginHint" class="hint login-hint"></p>
               </div>
             </div>
-            <div class="identity-next-step" aria-label="当前建议">
-              <span>当前建议</span>
-              <strong>先选择模板，再上传报价单</strong>
-              <p>拖入文件后会自动开始解析，字段缺失时会在任务详情里提示。</p>
-            </div>
+            <p class="identity-next-step">先选择模板，再上传报价单；字段缺失会在任务详情里提示。</p>
           </section>
         </div>
       </header>
@@ -68,8 +64,6 @@
             </span>
             <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png" />
           </label>
-
-          <button id="parseButton" class="fallback-parse-button" type="button" disabled hidden>手动开始解析</button>
         </div>
 
         <div id="taskQueueCard" class="task-queue-panel">
@@ -78,7 +72,7 @@
               <p class="eyebrow">任务队列</p>
               <h2>合同生成任务</h2>
             </div>
-            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务，点击任务卡片可切换编辑。</p>
+            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务，点击“查看详情”可切换编辑。</p>
           </div>
           <div id="taskList" class="task-list"></div>
         </div>
@@ -99,7 +93,7 @@
                 <span data-drawer-step="generate">3 生成交付</span>
               </div>
             </div>
-            <button id="closeTaskDrawerButton" class="drawer-close" type="button" aria-label="关闭任务详情">关闭</button>
+            <button id="closeTaskDrawerButton" class="btn-secondary drawer-close" type="button" aria-label="关闭任务详情">关闭</button>
           </header>
 
           <div class="drawer-content">
@@ -117,7 +111,6 @@
                 <textarea id="extraInfoText" class="textarea-compact" rows="5" placeholder="例如：付款比例、交货地点、联系人、开户行、税号、签约主体等报价单中没有的信息。"></textarea>
                 <span class="field-help">识别字段时会同时读取“解析内容”和“额外信息”，补充信息优先用于填补缺失字段。</span>
               </label>
-              <button id="identifyFieldsButton" type="button" disabled>识别当前任务字段</button>
             </section>
 
             <section id="fieldPreviewCard" class="drawer-panel field-preview-card" hidden>
@@ -135,7 +128,8 @@
               <p id="processingHint" class="hint">请稍候，系统正在处理当前报价单。</p>
             </div>
             <div id="drawerDownloadAction" class="drawer-download-action" hidden></div>
-            <button id="generateButton" type="button" disabled>确认识别结果并生成合同</button>
+            <button id="identifyFieldsButton" class="btn-primary drawer-primary-action" type="button" disabled>识别当前任务字段</button>
+            <button id="generateButton" class="btn-primary drawer-primary-action" type="button" disabled>确认识别结果并生成合同</button>
           </footer>
         </div>
       </aside>
@@ -153,7 +147,7 @@
           <h2 id="accessModalTitle">请在钉钉客户端内打开</h2>
           <p id="accessModalMessage" class="hint">合同生成助手仅支持从钉钉微应用访问，网页环境无法完成免登。</p>
         </div>
-        <button id="closeAccessModalButton" class="modal-close-button" type="button">关闭</button>
+        <button id="closeAccessModalButton" class="btn-secondary modal-close-button" type="button">关闭</button>
       </section>
     </div>
 
