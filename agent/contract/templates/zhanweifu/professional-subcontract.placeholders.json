@@ -24,35 +24,35 @@
     },
     {
       "key": "supplierName",
-      "label": "分包方名称"
+      "label": "乙方名称"
     },
     {
       "key": "supplierAddress",
-      "label": "分包方联系地址"
+      "label": "乙方联系地址"
     },
     {
       "key": "supplierBank",
-      "label": "分包方开户银行"
+      "label": "乙方开户银行"
     },
     {
       "key": "supplierAccount",
-      "label": "分包方银行账号"
+      "label": "乙方银行账号"
     },
     {
       "key": "supplierTaxNo",
-      "label": "分包方税号"
+      "label": "乙方税号"
     },
     {
       "key": "supplierPhone",
-      "label": "分包方电话"
+      "label": "乙方电话"
     },
     {
       "key": "supplierFax",
-      "label": "分包方传真"
+      "label": "乙方传真"
     },
     {
       "key": "projectName",
-      "label": "工程名称"
+      "label": "项目名称"
     },
     {
       "key": "engineeringLocation",

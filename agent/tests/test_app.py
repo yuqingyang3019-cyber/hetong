@@ -2,14 +2,16 @@ from pathlib import Path
 import base64
 import json
 import os
+import re
 import sys
 import types
 from unittest.mock import ANY, Mock, patch
+from zipfile import ZipFile
 
 import pytest
 from fastapi.testclient import TestClient
 
-from agent.contract.config import DRAFTS_DIR, UPLOADS_DIR, get_template_config
+from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent.contract.render import build_docxtpl_context
 from agent.main import app, contract_download_payload, generate_contract, sign_session_payload
 
@@ -526,6 +528,47 @@ def test_agui_passes_confirmed_extracted_data() -> None:
 def test_templates_exist() -> None:
     assert Path("agent/contract/templates/zhanweifu/caigouhetong.docx").exists()
     assert Path("agent/contract/templates/zhanweifu/caigouhetong.placeholders.json").exists()
+
+
+def test_template_placeholders_match_schema() -> None:
+    required_equipment_item_columns = {"index", "name", "spec", "unit", "quantity", "unitPrice", "totalPrice", "tagNo"}
+    equipment_templates = {"caigouhetong", "nonStandardNoInstall", "nonStandardWithInstall"}
+
+    for template_type in TEMPLATE_BASENAME:
+        config = get_template_config(template_type)
+        with ZipFile(template_docx_path(template_type)) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+
+        placeholders = set(re.findall(r"\{\{\s*([^}]+?)\s*\}\}", xml))
+        loop_bindings = dict(re.findall(r"\{%\s*for\s+(\w+)\s+in\s+(\w+)\s*%\}", xml))
+        assert placeholders, f"{template_type} should contain docxtpl placeholders"
+
+        scalar_keys = set(config.scalar_keys)
+        table_columns = {
+            table_name: set(columns)
+            for table_name, columns in config.table_bindings.items()
+        }
+        scalar_placeholders: set[str] = set()
+        table_placeholders: dict[str, set[str]] = {table_name: set() for table_name in table_columns}
+
+        for placeholder in placeholders:
+            if "." not in placeholder:
+                assert placeholder in scalar_keys, f"{template_type}: unknown scalar placeholder {placeholder}"
+                scalar_placeholders.add(placeholder)
+                continue
+            loop_var, column = placeholder.split(".", 1)
+            table_name = loop_bindings.get(loop_var)
+            assert table_name, f"{template_type}: placeholder {placeholder} is missing a loop binding"
+            assert table_name in table_columns, f"{template_type}: unknown table {table_name}"
+            assert column in table_columns[table_name], f"{template_type}: unknown table column {placeholder}"
+            table_placeholders[table_name].add(column)
+
+        assert scalar_keys <= scalar_placeholders, f"{template_type}: schema scalars are not all rendered"
+        for table_name, columns in table_columns.items():
+            assert columns <= table_placeholders[table_name], f"{template_type}: schema table {table_name} is not fully rendered"
+
+        if template_type in equipment_templates:
+            assert required_equipment_item_columns <= table_placeholders["items"]
 
 
 def test_upload_requires_login_when_enforced(monkeypatch) -> None:

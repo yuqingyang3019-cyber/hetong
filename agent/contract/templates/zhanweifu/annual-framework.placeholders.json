@@ -28,11 +28,11 @@
     },
     {
       "key": "supplierAddress",
-      "label": "乙方地址"
+      "label": "乙方联系地址"
     },
     {
       "key": "supplierAccount",
-      "label": "乙方银行帐号"
+      "label": "乙方银行账号"
     },
     {
       "key": "supplierTaxNo",
