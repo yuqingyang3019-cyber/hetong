@@ -34,6 +34,8 @@ frontend/dist/
 /zhanweifu/
 /generate_*.py
 /quote_pdf_table_agent.py
-/scripts/
+/scripts/*
+!/scripts/
+!/scripts/yonyou_vendor_probe.py
 /合同模板/
 /报价单/
