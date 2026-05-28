@@ -684,6 +684,7 @@ button:disabled {
 
 .task-title strong,
 .task-title small,
+.task-stage,
 .task-message,
 .task-file-path {
   overflow-wrap: anywhere;
@@ -728,10 +729,20 @@ button:disabled {
 }
 
 .task-message,
+.task-stage,
 .task-file-path {
   color: var(--color-secondary);
   font-size: 0.875rem;
   margin: 0;
+}
+
+.task-stage {
+  background: rgba(15, 108, 189, 0.06);
+  border: 1px solid rgba(15, 108, 189, 0.12);
+  border-radius: var(--radius-sm);
+  color: #0f548c;
+  font-weight: 700;
+  padding: 8px 10px;
 }
 
 .task-actions {
@@ -754,6 +765,16 @@ button:disabled {
   text-align: center;
   text-decoration: none;
   width: auto;
+}
+
+.task-download.is-loading {
+  opacity: 0.82;
+}
+
+.task-download.is-downloaded {
+  background: rgba(5, 150, 105, 0.08);
+  border-color: rgba(5, 150, 105, 0.28);
+  color: #047857;
 }
 
 .drawer-backdrop {
@@ -857,6 +878,19 @@ button:disabled {
 
 .drawer-download-action {
   margin-right: auto;
+}
+
+.drawer-action-hint {
+  background: rgba(15, 108, 189, 0.06);
+  border: 1px solid rgba(15, 108, 189, 0.12);
+  border-radius: var(--radius-md);
+  margin-right: auto;
+  max-width: 420px;
+  padding: 8px 10px;
+}
+
+.drawer-action-hint[hidden] {
+  display: none;
 }
 
 .drawer-primary-action {
@@ -1007,8 +1041,12 @@ button:disabled {
 }
 
 .field-preview-summary {
+  align-items: center;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   padding: 10px 12px;
 }
 
@@ -1022,6 +1060,15 @@ button:disabled {
   background: rgba(220, 38, 38, 0.08);
   border-color: rgba(220, 38, 38, 0.22);
   color: #991b1b;
+}
+
+.field-preview-jump {
+  background: rgba(255, 255, 255, 0.88);
+  border-color: rgba(220, 38, 38, 0.22);
+  color: #991b1b;
+  font-size: 0.8125rem;
+  min-height: 36px;
+  padding: 6px 10px;
 }
 
 .contract-preview-shell {
@@ -1135,6 +1182,7 @@ button:disabled {
   background: rgba(254, 242, 242, 0.72);
   border-color: rgba(220, 38, 38, 0.22);
   border-left-color: var(--color-destructive);
+  scroll-margin: 96px;
 }
 
 .contract-preview-field.is-auto-filled {
@@ -1247,6 +1295,7 @@ button:disabled {
 .contract-preview-table-empty.is-missing {
   color: #991b1b;
   font-weight: 800;
+  scroll-margin: 96px;
 }
 
 .contract-preview-table-empty {
@@ -1408,6 +1457,12 @@ pre {
   }
 
   .drawer-footer-status {
+    margin-right: 0;
+    max-width: none;
+    width: 100%;
+  }
+
+  .drawer-action-hint {
     margin-right: 0;
     max-width: none;
     width: 100%;

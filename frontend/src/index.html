@@ -59,7 +59,7 @@
               </span>
               <span class="upload-copy">
                 <span id="fileNameText" class="upload-title">拖拽或点击选择报价单文件</span>
-                <span id="fileMetaText" class="upload-meta">支持 PDF、Excel、图片格式；放进来后自动开始解析</span>
+                <span id="fileMetaText" class="upload-meta">支持 PDF、Excel、图片格式；上传后自动进入解析队列</span>
               </span>
             </span>
             <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png" />
@@ -72,7 +72,7 @@
               <p class="eyebrow">任务队列</p>
               <h2>合同生成任务</h2>
             </div>
-            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务，点击“查看详情”可切换编辑。</p>
+            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务；处理中可关闭详情继续处理下一份。</p>
           </div>
           <div id="taskList" class="task-list"></div>
         </div>
@@ -128,6 +128,7 @@
               <p id="processingHint" class="hint">请稍候，系统正在处理当前报价单。</p>
             </div>
             <div id="drawerDownloadAction" class="drawer-download-action" hidden></div>
+            <p id="drawerActionHint" class="drawer-action-hint hint" aria-live="polite"></p>
             <button id="identifyFieldsButton" class="btn-primary drawer-primary-action" type="button" disabled>识别当前任务字段</button>
             <button id="generateButton" class="btn-primary drawer-primary-action" type="button" disabled>确认识别结果并生成合同</button>
           </footer>
