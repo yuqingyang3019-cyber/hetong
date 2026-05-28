@@ -191,7 +191,7 @@ function quoteFileExtension(file) {
 function validateQuoteFile(file) {
   if (!file) return "请先选择报价单文件。";
   if (file.size === 0) return "报价单文件为空，请重新选择文件。";
-  if (!supportedQuoteFileExtensions.has(quoteFileExtension(file))) return "仅支持 PDF、Excel、图片格式报价单。";
+  if (!supportedQuoteFileExtensions.has(quoteFileExtension(file))) return "仅支持 PDF、Excel 和常见图片格式报价单。";
   return "";
 }
 
@@ -213,7 +213,7 @@ function syncUploadPrompt() {
   uploadDropzone?.setAttribute("aria-disabled", disabledReason ? "true" : "false");
   if (!file) {
     if (fileNameText) fileNameText.textContent = disabledReason ? "暂不可上传报价单" : "拖拽或点击选择报价单文件";
-    if (fileMetaText) fileMetaText.textContent = disabledReason || "支持 PDF、Excel、图片格式；上传后自动进入解析队列";
+    if (fileMetaText) fileMetaText.textContent = disabledReason || "支持 PDF、Excel 和常见图片格式；上传后自动进入解析队列";
     return;
   }
   if (fileNameText) fileNameText.textContent = file.name || "已选择报价单";
@@ -304,11 +304,12 @@ function drawerStepForTask(task) {
   if (task.status === "completed") return "done";
   if (task.status === "generating") return "generate";
   if (task.status === "identifying" || task.status === "needs_fields") return "review";
+  if (task.status === "needs_text") return "text";
   return "upload";
 }
 
 function setDrawerStep(currentStep) {
-  const order = ["upload", "review", "generate"];
+  const order = ["upload", "text", "review", "generate"];
   const normalizedStep = !currentStep ? "" : currentStep === "done" || order.includes(currentStep) ? currentStep : "review";
   const activeIndex = order.indexOf(normalizedStep);
   drawerStepItems.forEach((item) => {
@@ -352,12 +353,12 @@ function taskNextAction(task) {
   if (!task) return "";
   if (task.status === "uploading") return "正在上传，可关闭详情继续新建任务。";
   if (task.status === "parsing") return "正在解析，完成后请确认文本。";
-  if (task.status === "needs_text") return "下一步：核对解析文本，并点击识别字段。";
+  if (task.status === "needs_text") return "下一步：核对解析文本，必要时补充说明，再识别字段。";
   if (task.status === "identifying") return "正在按模板匹配字段，完成后回来确认。";
   if (task.status === "needs_fields") return "下一步：补齐红色字段，确认后生成合同。";
   if (task.status === "generating") return "正在生成合同并上传钉盘。";
   if (task.status === "completed") {
-    return task.downloadState === "downloaded" ? "合同已触发下载，也可再次下载。" : "合同已生成，可下载到本机。";
+    return task.downloadState === "downloaded" ? "已触发下载，请查看浏览器或钉钉默认下载目录。" : "合同已生成，可触发下载。";
   }
   if (task.status === "failed") return `失败环节：${failedStepLabel(task.failedStep)}。请查看日志后重试。`;
   return task.message || "等待处理。";
@@ -1190,7 +1191,16 @@ function syncFieldPreviewSummary(stats) {
     const jumpButton = createEl("button", "field-preview-jump", "定位第一个待填写字段");
     jumpButton.type = "button";
     jumpButton.addEventListener("click", scrollToFirstMissingField);
-    fieldPreviewSummary.append(jumpButton);
+    const filterButton = createEl(
+      "button",
+      "field-preview-filter",
+      contractPreviewEl?.classList.contains("show-missing-only") ? "查看全部字段" : "只看待补字段",
+    );
+    filterButton.type = "button";
+    filterButton.addEventListener("click", toggleMissingOnlyPreview);
+    fieldPreviewSummary.append(jumpButton, filterButton);
+  } else {
+    contractPreviewEl?.classList.remove("show-missing-only");
   }
 }
 
@@ -1209,6 +1219,20 @@ function scrollToFirstMissingField() {
   target.scrollIntoView({ behavior: "smooth", block: "center" });
   const focusable = target.querySelector?.("textarea, input, button");
   window.setTimeout(() => focusable?.focus?.({ preventScroll: true }), 220);
+}
+
+function toggleMissingOnlyPreview() {
+  if (!contractPreviewEl) return;
+  contractPreviewEl.classList.toggle("show-missing-only");
+  const stats = activeTask()?.fieldPreview?.extractedData
+    ? calculatePreviewStats(templateSchemaCache.get(templateSchemaFiles[activeTask().templateType] || templateSchemaFiles.caigouhetong), activeTask().fieldPreview.extractedData)
+    : null;
+  const filterButton = fieldPreviewSummary?.querySelector(".field-preview-filter");
+  if (filterButton) {
+    filterButton.textContent = contractPreviewEl.classList.contains("show-missing-only") ? "查看全部字段" : "只看待补字段";
+  }
+  if (contractPreviewEl.classList.contains("show-missing-only")) scrollToFirstMissingField();
+  if (stats) syncFieldPreviewSummary(stats);
 }
 
 function createGhostParagraph(index) {
@@ -1269,7 +1293,6 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
   const scalarEditors = new Map();
 
   scalars.forEach((field, index) => {
-    if (index > 0 && index % 8 === 0) body.append(createGhostParagraph(index));
     body.append(createContractField(
       field.label || field.key,
       getByDotPath(extractedData, field.key),
@@ -1369,10 +1392,9 @@ async function renderFieldPreview(task) {
       createEl("h3", "", task.templateName || schema?.template?.id || "合同模板"),
       createEl("p", "contract-preview-muted", "以下内容按模板字段顺序生成，可直接修改后生成合同。"),
     );
-    paper.append(title, createGhostParagraph(0));
+    paper.append(title);
     renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview);
     renderTablePreview(paper, schema, extractedData, stats, canEditPreview);
-    paper.append(createGhostParagraph(1));
     contractPreviewEl.append(paper);
   }
 
@@ -1543,7 +1565,7 @@ function createTaskDownloadNode(task) {
     const button = createEl(
       "button",
       `btn-download task-download${isDownloading ? " is-loading" : ""}${isDownloaded ? " is-downloaded" : ""}`,
-      isDownloading ? "正在准备下载..." : isDownloaded ? "再次下载合同" : "下载合同文件",
+      isDownloading ? "正在准备下载..." : isDownloaded ? "再次触发下载" : "下载合同文件",
     );
     button.type = "button";
     button.disabled = isDownloading;
@@ -1564,7 +1586,7 @@ function createTaskDownloadNode(task) {
         updateActionAvailability();
         setStatus("正在准备合同下载...");
         const result = await downloadDingDriveContract(payload);
-        const message = `合同已开始下载：${result.fileName}。${result.savePathHint}`;
+        const message = `已触发下载：${result.fileName}。${result.savePathHint}`;
         task.downloadState = "downloaded";
         appendTaskLog(task, `${message}\n`);
         setStatus(message, "success");
@@ -1578,9 +1600,9 @@ function createTaskDownloadNode(task) {
     return button;
   }
   if (payload.filePath || payload.dingDrive?.filePath) {
-    return createEl("p", "task-file-path", `已存入钉盘：${payload.filePath || payload.dingDrive.filePath}`);
+    return createEl("p", "task-file-path", `合同已存入钉盘：${payload.filePath || payload.dingDrive.filePath}`);
   }
-  return createEl("p", "task-file-path", "合同已存入钉盘。");
+    return createEl("p", "task-file-path", "合同已存入钉盘，可在钉盘目录查看。");
 }
 
 function renderTaskList() {
@@ -1682,7 +1704,7 @@ async function syncActiveTaskEditor() {
   }
   if (activeTaskHint) {
     const helperHint = task.status === "needs_text"
-      ? "AI 已整理出报价单文本，请像核对聊天记录一样检查，有问题直接改。"
+      ? "AI 已整理出报价单文本，请先校对识别内容；有问题直接修改，再识别字段。"
       : task.status === "needs_fields"
         ? "AI 已按模板匹配字段，红色内容代表还需要人工补充或确认，可直接修改。"
         : task.message || "请按当前阶段继续处理任务。";
@@ -1818,7 +1840,7 @@ quoteTextPreview.addEventListener("input", () => {
   if (task.status !== "failed") task.status = "needs_text";
   renderTaskList();
   resetFieldPreviewUi();
-  setDrawerStep("upload");
+  setDrawerStep("text");
   setStatus("解析内容已修改，请重新识别合同字段。");
   updateActionAvailability();
 });
@@ -1831,7 +1853,7 @@ extraInfoText?.addEventListener("input", () => {
   if (task.status !== "failed") task.status = "needs_text";
   renderTaskList();
   resetFieldPreviewUi();
-  setDrawerStep("upload");
+  setDrawerStep("text");
   setStatus("额外信息已修改，请重新识别合同字段。");
   updateActionAvailability();
 });

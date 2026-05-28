@@ -14,11 +14,18 @@
       <header class="app-hero">
         <div class="hero-copy">
           <div class="hero-title-row">
-            <p class="eyebrow">钉钉 H5 合同生成助手</p>
+            <p class="eyebrow">钉钉 H5 合同工作台</p>
             <span class="beta-badge" title="当前处于内测版本">内测版</span>
           </div>
-          <h1><span id="userName" class="user-name">你好</span>，我是合同助手</h1>
-          <p class="hero-description">读取报价单、整理合同字段，确认后生成 Word 合同并存入钉盘。</p>
+          <h1><span id="userName" class="user-name">你好</span>，先上传报价单</h1>
+          <p class="hero-description">系统会解析报价单、整理合同字段，确认后生成 Word 合同并存入钉盘。</p>
+
+          <div class="hero-steps" aria-label="合同生成流程">
+            <span>1 选模板</span>
+            <span>2 传报价单</span>
+            <span>3 补字段</span>
+            <span>4 生成下载</span>
+          </div>
 
           <section id="userBar" class="identity-panel" aria-label="当前登录用户" hidden>
             <div class="identity-main">
@@ -28,7 +35,7 @@
                 <p id="loginHint" class="hint login-hint"></p>
               </div>
             </div>
-            <p class="identity-next-step">先选择模板，再上传报价单；字段缺失会在任务详情里提示。</p>
+            <p class="identity-next-step">先选模板并上传报价单；字段缺失会在确认稿中提示。</p>
           </section>
         </div>
       </header>
@@ -37,40 +44,48 @@
         <p id="status" class="status" aria-live="polite" hidden></p>
 
         <div id="taskCreatePanel" class="task-create-strip">
-          <label class="field">
-            <span class="field-label">合同模板</span>
-            <select id="templateType">
-              <option value="caigouhetong">采购合同（通用设备）</option>
-              <option value="nonStandardNoInstall">设备采购合同（不含安装）</option>
-              <option value="nonStandardWithInstall">设备采购合同（含安装）</option>
-              <option value="annualFramework">年度采购框架合同</option>
-              <option value="professionalSubcontract">专业工程分包合同</option>
-              <option value="laborSubcontract">劳务分包合同（清包工）</option>
-            </select>
-          </label>
+          <div class="create-panel-heading">
+            <p class="eyebrow">新建合同任务</p>
+            <h2>选择模板，上传报价单</h2>
+            <p class="hint">上传后会自动解析文本。你可以关闭任务详情继续处理下一份，解析完成后回来确认。</p>
+          </div>
 
-          <label class="field file-field" for="quoteFile">
-            <span class="field-label">报价单文件</span>
-            <span class="upload-dropzone" id="uploadDropzone">
-              <span class="upload-mark" aria-hidden="true">
-                <svg viewBox="0 0 24 24" role="img" focusable="false">
-                  <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
-                </svg>
+          <div class="create-panel-controls">
+            <label class="field template-field">
+              <span class="field-label">合同模板</span>
+              <select id="templateType">
+                <option value="caigouhetong">采购合同（通用设备）</option>
+                <option value="nonStandardNoInstall">设备采购合同（不含安装）</option>
+                <option value="nonStandardWithInstall">设备采购合同（含安装）</option>
+                <option value="annualFramework">年度采购框架合同</option>
+                <option value="professionalSubcontract">专业工程分包合同</option>
+                <option value="laborSubcontract">劳务分包合同（清包工）</option>
+              </select>
+            </label>
+
+            <label class="field file-field" for="quoteFile">
+              <span class="field-label">报价单文件</span>
+              <span class="upload-dropzone" id="uploadDropzone">
+                <span class="upload-mark" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" role="img" focusable="false">
+                    <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
+                  </svg>
+                </span>
+                <span class="upload-copy">
+                  <span id="fileNameText" class="upload-title">拖拽或点击选择报价单文件</span>
+                  <span id="fileMetaText" class="upload-meta">支持 PDF、Excel 和常见图片格式；上传后自动进入解析队列</span>
+                </span>
               </span>
-              <span class="upload-copy">
-                <span id="fileNameText" class="upload-title">拖拽或点击选择报价单文件</span>
-                <span id="fileMetaText" class="upload-meta">支持 PDF、Excel、图片格式；上传后自动进入解析队列</span>
-              </span>
-            </span>
-            <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png,.bmp,.gif,.tif,.tiff,.webp" />
-          </label>
+              <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png,.bmp,.gif,.tif,.tiff,.webp" />
+            </label>
+          </div>
         </div>
 
         <div id="taskQueueCard" class="task-queue-panel">
           <div class="task-queue-heading">
             <div>
               <p class="eyebrow">任务队列</p>
-              <h2>合同生成任务</h2>
+              <h2>任务看板</h2>
             </div>
             <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务；处理中可关闭详情继续处理下一份。</p>
           </div>
@@ -89,8 +104,9 @@
               <p class="hint" id="activeTaskHint">请检查当前任务的报价单解析文本，必要时可直接修正；额外信息会和解析文本一起交给 LLM 识别合同字段。</p>
               <div id="drawerStepRail" class="drawer-step-rail" aria-label="任务阶段">
                 <span data-drawer-step="upload">1 上传解析</span>
-                <span data-drawer-step="review">2 确认字段</span>
-                <span data-drawer-step="generate">3 生成交付</span>
+                <span data-drawer-step="text">2 确认文本</span>
+                <span data-drawer-step="review">3 确认字段</span>
+                <span data-drawer-step="generate">4 生成下载</span>
               </div>
             </div>
             <button id="closeTaskDrawerButton" class="btn-secondary drawer-close" type="button" aria-label="关闭任务详情">关闭</button>
@@ -100,7 +116,7 @@
             <section id="previewCard" class="drawer-panel preview-card" hidden>
               <div class="drawer-section-heading">
                 <h3>报价单解析内容</h3>
-                <p class="hint">左侧对照原报价单，当前版本先展示可编辑文本。</p>
+                <p class="hint">先校对解析文本，必要时补充付款、交付、签约主体等信息。</p>
               </div>
               <label class="field">
                 <span class="field-label">解析内容</span>
@@ -115,7 +131,7 @@
 
             <section id="fieldPreviewCard" class="drawer-panel field-preview-card" hidden>
               <div class="drawer-section-heading">
-                <h3>合同式字段预览</h3>
+                <h3>合同字段确认稿</h3>
                 <p class="hint" id="fieldPreviewSummary">请按合同字段顺序确认识别结果，可直接修改字段；空字段生成到 Word 合同时会留空。</p>
               </div>
               <div id="contractPreview" class="contract-preview-shell"></div>
