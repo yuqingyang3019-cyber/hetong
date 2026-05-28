@@ -271,15 +271,67 @@ def contract_download_payload(draft: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-SUPPORTED_QUOTE_EXTENSIONS = {".xlsx", ".xls", ".pdf", ".jpg", ".jpeg", ".png"}
+SUPPORTED_QUOTE_EXTENSIONS = {
+    ".xlsx",
+    ".xls",
+    ".pdf",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".gif",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
 SUPPORTED_QUOTE_MIME_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "application/vnd.ms-excel",
     "application/pdf",
     "image/jpeg",
     "image/png",
+    "image/bmp",
+    "image/gif",
+    "image/tiff",
+    "image/webp",
 }
-QUOTE_FILE_SIGNATURE_ERROR = "文件内容与格式不匹配，请重新上传 PDF、Excel 或 JPG/PNG 图片报价单"
+QUOTE_FILE_SIGNATURE_ERROR = "文件内容与格式不匹配，请重新上传 PDF、Excel 或常见图片格式报价单"
+QUOTE_IMAGE_KINDS = {"jpeg", "png", "bmp", "gif", "tiff", "webp"}
+QUOTE_FILE_KIND_BY_EXTENSION = {
+    ".xlsx": "xlsx",
+    ".xls": "xls",
+    ".pdf": "pdf",
+    ".jpg": "jpeg",
+    ".jpeg": "jpeg",
+    ".png": "png",
+    ".bmp": "bmp",
+    ".gif": "gif",
+    ".tif": "tiff",
+    ".tiff": "tiff",
+    ".webp": "webp",
+}
+QUOTE_FILE_KIND_BY_MIME = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "application/vnd.ms-excel": "xls",
+    "application/pdf": "pdf",
+    "image/jpeg": "jpeg",
+    "image/png": "png",
+    "image/bmp": "bmp",
+    "image/gif": "gif",
+    "image/tiff": "tiff",
+    "image/webp": "webp",
+}
+QUOTE_MIME_BY_KIND = {
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "pdf": "application/pdf",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "bmp": "image/bmp",
+    "gif": "image/gif",
+    "tiff": "image/tiff",
+    "webp": "image/webp",
+}
 
 
 def _normalized_mime_type(mime_type: str) -> str:
@@ -289,33 +341,40 @@ def _normalized_mime_type(mime_type: str) -> str:
 def _quote_file_kind(original_name: str, mime_type: str) -> str | None:
     suffix = Path(original_name).suffix.lower()
     normalized_mime = _normalized_mime_type(mime_type)
-    if suffix == ".xlsx" or normalized_mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-        return "xlsx"
-    if suffix == ".xls" or normalized_mime == "application/vnd.ms-excel":
-        return "xls"
-    if suffix == ".pdf" or normalized_mime == "application/pdf":
-        return "pdf"
-    if suffix in {".jpg", ".jpeg"} or normalized_mime == "image/jpeg":
-        return "jpeg"
-    if suffix == ".png" or normalized_mime == "image/png":
-        return "png"
+    if suffix in QUOTE_FILE_KIND_BY_EXTENSION:
+        return QUOTE_FILE_KIND_BY_EXTENSION[suffix]
+    if normalized_mime in QUOTE_FILE_KIND_BY_MIME:
+        return QUOTE_FILE_KIND_BY_MIME[normalized_mime]
     return None
 
 
-def validate_quote_file_signature(content: bytes, original_name: str, mime_type: str) -> None:
-    kind = _quote_file_kind(original_name, mime_type)
-    if kind is None:
-        return
-    signatures = {
-        "xlsx": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
-        "xls": (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",),
-        "pdf": (b"%PDF",),
-        "jpeg": (b"\xff\xd8\xff",),
-        "png": (b"\x89PNG\r\n\x1a\n",),
-    }
-    expected = signatures[kind]
-    if not content.startswith(expected):
+def _quote_file_kind_from_content(content: bytes) -> str | None:
+    signatures = (
+        ("xlsx", (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")),
+        ("xls", (b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",)),
+        ("pdf", (b"%PDF",)),
+        ("jpeg", (b"\xff\xd8\xff",)),
+        ("png", (b"\x89PNG\r\n\x1a\n",)),
+        ("bmp", (b"BM",)),
+        ("gif", (b"GIF87a", b"GIF89a")),
+        ("tiff", (b"II*\x00", b"MM\x00*")),
+    )
+    for kind, expected in signatures:
+        if content.startswith(expected):
+            return kind
+    if len(content) >= 12 and content.startswith(b"RIFF") and content[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def validate_quote_file_signature(content: bytes, original_name: str, mime_type: str) -> str:
+    declared_kind = _quote_file_kind(original_name, mime_type)
+    content_kind = _quote_file_kind_from_content(content)
+    if declared_kind is None or content_kind is None:
         raise api_error(400, "INVALID_ARGUMENT", QUOTE_FILE_SIGNATURE_ERROR)
+    if declared_kind != content_kind and not (declared_kind in QUOTE_IMAGE_KINDS and content_kind in QUOTE_IMAGE_KINDS):
+        raise api_error(400, "INVALID_ARGUMENT", QUOTE_FILE_SIGNATURE_ERROR)
+    return QUOTE_MIME_BY_KIND[content_kind]
 
 
 def _user_resource_owner(current_user: dict[str, Any] | None) -> dict[str, str]:
@@ -673,7 +732,7 @@ def extract_agui_attachment(input_data: dict[str, Any], current_user: dict[str, 
             validate_supported_quote_file(file_name, parsed_mime)
             if not content_bytes:
                 raise api_error(400, "INVALID_ARGUMENT", "上传文件为空，请重新选择报价单文件")
-            validate_quote_file_signature(content_bytes, file_name, parsed_mime)
+            parsed_mime = validate_quote_file_signature(content_bytes, file_name, parsed_mime)
             log_info(
                 "agui attachment decoded",
                 fileName=file_name,
@@ -891,7 +950,7 @@ async def upload_file(
                 elapsedMs=elapsed_ms(start),
             )
             raise api_error(400, "INVALID_ARGUMENT", "上传文件为空，请重新选择报价单文件")
-        validate_quote_file_signature(content, original_name, mime_type)
+        mime_type = validate_quote_file_signature(content, original_name, mime_type)
         if declared_size is not None and declared_size != len(content):
             log_warning(
                 "upload size mismatch",

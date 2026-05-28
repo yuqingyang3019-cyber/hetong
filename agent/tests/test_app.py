@@ -21,6 +21,11 @@ os.environ.setdefault("APP_SESSION_SECRET", "test-session-secret-123456789012")
 
 client = TestClient(app)
 PNG_BYTES = b"\x89PNG\r\n\x1a\nquote-image"
+JPEG_BYTES = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00quote-image"
+BMP_BYTES = b"BMquote-image"
+GIF_BYTES = b"GIF89aquote-image"
+TIFF_BYTES = b"II*\x00quote-image"
+WEBP_BYTES = b"RIFF\x0c\x00\x00\x00WEBPquote-image"
 
 
 def agent_auth_header(userid: str = "uid1", unionid: str = "union-x") -> dict[str, str]:
@@ -89,6 +94,37 @@ def test_upload_json_base64_pdf() -> None:
     assert body["ok"] is True
 
 
+@pytest.mark.parametrize(
+    ("original_name", "mime_type", "content", "expected_mime_type"),
+    [
+        ("quote.jpg", "image/jpeg", JPEG_BYTES, "image/jpeg"),
+        ("quote.png", "image/png", PNG_BYTES, "image/png"),
+        ("quote.bmp", "image/bmp", BMP_BYTES, "image/bmp"),
+        ("quote.gif", "image/gif", GIF_BYTES, "image/gif"),
+        ("quote.tif", "image/tiff", TIFF_BYTES, "image/tiff"),
+        ("quote.webp", "image/webp", WEBP_BYTES, "image/webp"),
+    ],
+)
+def test_upload_accepts_common_image_formats(
+    original_name: str,
+    mime_type: str,
+    content: bytes,
+    expected_mime_type: str,
+) -> None:
+    body = upload_quote(original_name=original_name, mime_type=mime_type, content=content)
+
+    assert body["ok"] is True
+    assert body["mimeType"] == expected_mime_type
+    assert upload_record(body["id"])["mimeType"] == expected_mime_type
+
+
+def test_upload_accepts_mismatched_supported_image_extension() -> None:
+    body = upload_quote(original_name="quote.jpg", mime_type="image/jpeg", content=PNG_BYTES)
+
+    assert body["ok"] is True
+    assert body["mimeType"] == "image/png"
+
+
 def test_upload_rejects_txt() -> None:
     response = client.post(
         "/api/uploads",
@@ -103,6 +139,24 @@ def test_upload_rejects_txt() -> None:
     assert response.status_code == 400
     body = response.json()
     assert body["code"] == "UNSUPPORTED_FILE_TYPE"
+
+
+def test_upload_rejects_unknown_image_signature() -> None:
+    response = client.post(
+        "/api/uploads",
+        headers=agent_auth_header(),
+        json={
+            "originalName": "quote.webp",
+            "mimeType": "image/webp",
+            "size": len(b"not-an-image"),
+            "data": base64.b64encode(b"not-an-image").decode("ascii"),
+        },
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "INVALID_ARGUMENT"
+    assert "文件内容与格式不匹配" in body["message"]
 
 
 def test_upload_rejects_mismatched_file_signature() -> None:

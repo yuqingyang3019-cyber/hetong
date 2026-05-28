@@ -36,7 +36,19 @@ const drawerDownloadAction = document.querySelector("#drawerDownloadAction");
 const drawerActionHint = document.querySelector("#drawerActionHint");
 
 const MAX_TASKS = 5;
-const supportedQuoteFileExtensions = new Set([".pdf", ".xls", ".xlsx", ".jpg", ".jpeg", ".png"]);
+const supportedQuoteFileExtensions = new Set([
+  ".pdf",
+  ".xls",
+  ".xlsx",
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".bmp",
+  ".gif",
+  ".tif",
+  ".tiff",
+  ".webp",
+]);
 const templateSchemaFiles = Object.freeze({
   caigouhetong: "caigouhetong",
   nonStandardNoInstall: "non-standard-no-install",

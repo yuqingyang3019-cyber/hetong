@@ -255,6 +255,11 @@ JSON Base64 请求：
 - `.jpg`
 - `.jpeg`
 - `.png`
+- `.bmp`
+- `.gif`
+- `.tif`
+- `.tiff`
+- `.webp`
 
 ### 6.2 解析报价单文本
 
