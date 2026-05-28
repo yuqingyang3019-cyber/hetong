@@ -45,6 +45,7 @@ const templateSchemaFiles = Object.freeze({
   laborSubcontract: "labor-subcontract",
 });
 const autoDateFieldKeys = Object.freeze(["signYear", "signMonth", "signDay", "signatureYear", "signatureMonth", "signatureDay"]);
+const taxCalculationFieldKeys = Object.freeze(["totalAmount", "amountWithoutTax", "taxAmount", "taxRate"]);
 const busyStatuses = new Set(["uploading", "parsing", "identifying", "generating"]);
 const completedStatuses = new Set(["completed"]);
 const templateSchemaCache = new Map();
@@ -898,6 +899,99 @@ function fieldValueForEditor(value) {
   return String(value);
 }
 
+function parseDecimalField(value) {
+  if (value == null) return null;
+  const text = String(value).trim();
+  if (!text) return null;
+  const normalized = text.replace(/[,\s，￥¥元%]/g, "");
+  if (!normalized) return null;
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : null;
+}
+
+function parseTaxRateField(value) {
+  const number = parseDecimalField(value);
+  if (number == null) return null;
+  return Math.abs(number) > 1 ? number / 100 : number;
+}
+
+function formatCalculatedAmount(value) {
+  if (!Number.isFinite(value)) return "";
+  return String(Math.round((value + Number.EPSILON) * 100) / 100);
+}
+
+function schemaHasScalar(schema, key) {
+  return Array.isArray(schema?.scalars) && schema.scalars.some((field) => field?.key === key);
+}
+
+function firstPresentAmountField(extractedData) {
+  return ["totalAmount", "amountWithoutTax", "taxAmount"].find((key) => parseDecimalField(extractedData?.[key]) != null) || "";
+}
+
+function applyTaxCalculations(extractedData, changedKey = "", options = {}) {
+  if (!extractedData || typeof extractedData !== "object") return new Set();
+  const changed = new Set();
+  if (options.defaultTaxRate && isBlankField(extractedData.taxRate)) {
+    extractedData.taxRate = "13";
+    changed.add("taxRate");
+  }
+
+  const rate = parseTaxRateField(extractedData.taxRate);
+  if (rate == null || rate < 0) return changed;
+
+  const amountKeys = new Set(["totalAmount", "amountWithoutTax", "taxAmount"]);
+  let sourceKey = amountKeys.has(changedKey) && parseDecimalField(extractedData[changedKey]) != null
+    ? changedKey
+    : firstPresentAmountField(extractedData);
+  if (!sourceKey) return changed;
+
+  const sourceValue = parseDecimalField(extractedData[sourceKey]);
+  if (sourceValue == null) return changed;
+
+  let totalAmount;
+  let amountWithoutTax;
+  let taxAmount;
+  if (sourceKey === "totalAmount") {
+    totalAmount = sourceValue;
+    amountWithoutTax = totalAmount / (1 + rate);
+    taxAmount = amountWithoutTax * rate;
+  } else if (sourceKey === "amountWithoutTax") {
+    amountWithoutTax = sourceValue;
+    taxAmount = amountWithoutTax * rate;
+    totalAmount = amountWithoutTax + taxAmount;
+  } else if (rate > 0) {
+    taxAmount = sourceValue;
+    amountWithoutTax = taxAmount / rate;
+    totalAmount = amountWithoutTax + taxAmount;
+  } else {
+    return changed;
+  }
+
+  [
+    ["totalAmount", totalAmount],
+    ["amountWithoutTax", amountWithoutTax],
+    ["taxAmount", taxAmount],
+  ].forEach(([key, value]) => {
+    if (key === sourceKey) return;
+    const formatted = formatCalculatedAmount(value);
+    if (formatted && extractedData[key] !== formatted) {
+      extractedData[key] = formatted;
+      changed.add(key);
+    }
+  });
+  return changed;
+}
+
+function syncCalculatedScalarEditors(editors, extractedData, changedKeys) {
+  if (!editors || !changedKeys?.size) return;
+  changedKeys.forEach((key) => {
+    const entry = editors.get(key);
+    if (!entry) return;
+    entry.editor.value = fieldValueForEditor(getByDotPath(extractedData, key));
+    setRecognizedClass(entry.field, entry.editor.value);
+  });
+}
+
 function currentShanghaiDateParts() {
   const parts = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
@@ -999,8 +1093,15 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
   editor.placeholder = "待填写";
   editor.disabled = Boolean(options.disabled);
   editor.setAttribute("aria-label", `${prefix}${label}`);
+  if (options.scalarEditors && options.fieldKey) {
+    options.scalarEditors.set(options.fieldKey, { editor, field });
+  }
   editor.addEventListener("input", () => {
     setByDotPath(options.extractedData, options.fieldKey, editor.value);
+    if (taxCalculationFieldKeys.includes(options.fieldKey)) {
+      const changedKeys = applyTaxCalculations(options.extractedData, options.fieldKey);
+      syncCalculatedScalarEditors(options.scalarEditors, options.extractedData, changedKeys);
+    }
     setRecognizedClass(field, editor.value);
     refreshFieldPreviewSummary(options.schema, options.extractedData);
   });
@@ -1020,6 +1121,7 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
   const section = createEl("section", "contract-preview-section");
   section.append(createEl("h4", "", "合同条款字段"));
   const body = createEl("div", "contract-preview-flow");
+  const scalarEditors = new Map();
 
   scalars.forEach((field, index) => {
     if (index > 0 && index % 8 === 0) body.append(createGhostParagraph(index));
@@ -1032,6 +1134,7 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
         autoFilled: autoFilledKeys?.has(field.key),
         extractedData,
         fieldKey: field.key,
+        scalarEditors,
         schema,
         disabled: !canEditPreview,
       },
@@ -1103,6 +1206,9 @@ async function renderFieldPreview(task) {
   const schema = await loadTemplateSchema(task.templateType);
   const extractedData = task.fieldPreview?.extractedData && typeof task.fieldPreview.extractedData === "object" ? task.fieldPreview.extractedData : {};
   const autoFilledKeys = applyAutoDateDefaults(extractedData);
+  if (schemaHasScalar(schema, "taxRate")) {
+    applyTaxCalculations(extractedData, "taxRate", { defaultTaxRate: true }).forEach((key) => autoFilledKeys.add(key));
+  }
   const canEditPreview = !taskIsBusy(task) && task.status !== "completed";
   const stats = { recognized: 0, missing: 0 };
 

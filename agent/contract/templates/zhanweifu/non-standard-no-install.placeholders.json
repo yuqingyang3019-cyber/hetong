@@ -67,6 +67,10 @@
       "label": "合同总金额大写"
     },
     {
+      "key": "taxRate",
+      "label": "税率（%）"
+    },
+    {
       "key": "amountWithoutTax",
       "label": "不含税金额"
     },

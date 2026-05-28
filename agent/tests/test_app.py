@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 
 from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent.contract.render import build_docxtpl_context
-from agent.main import app, contract_download_payload, generate_contract, sign_session_payload
+from agent.main import app, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
 
 
 os.environ.setdefault("APP_SESSION_SECRET", "test-session-secret-123456789012")
@@ -384,6 +384,38 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
     assert draft["extractedData"] == extracted
     assert draft["extraInfoLength"] == len("补充信息")
     assert draft["dingDrive"]["fileId"] == "file1"
+
+
+def test_tax_fields_are_calculated_from_total_amount() -> None:
+    config = get_template_config("caigouhetong")
+    extracted = {"totalAmount": "113", "taxRate": "13"}
+
+    changed = apply_tax_calculations(extracted, config)
+
+    assert changed == {"amountWithoutTax", "taxAmount"}
+    assert extracted["amountWithoutTax"] == "100"
+    assert extracted["taxAmount"] == "13"
+
+
+def test_generate_contract_backfills_confirmed_tax_fields() -> None:
+    upload_id = upload_quote()["id"]
+    extracted = {"supplierName": "供应商A", "totalAmount": "113", "taxRate": "13", "items": []}
+
+    with patch("agent.main.extract_template_render_data") as llm, patch(
+        "agent.main.render_contract",
+        return_value=Path("agent/storage/contracts/tax.docx"),
+    ) as render_contract_mock, patch(
+        "agent.main.upload_contract_to_dingdrive",
+        return_value={"spaceId": "space1", "fileId": "file1", "fileName": "tax.docx", "filePath": "/tax.docx"},
+    ):
+        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"})
+
+    llm.assert_not_called()
+    render_data = render_contract_mock.call_args.args[0]
+    assert render_data["amountWithoutTax"] == "100"
+    assert render_data["taxAmount"] == "13"
+    assert draft["extractedData"]["amountWithoutTax"] == "100"
+    assert draft["extractedData"]["taxAmount"] == "13"
 
 
 def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None:

@@ -13,6 +13,7 @@ import sys
 import time
 import uuid
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 from urllib.parse import quote
@@ -448,6 +449,79 @@ def table_row_counts(data: dict[str, Any]) -> dict[str, int]:
     return {key: len(value) for key, value in data.items() if isinstance(value, list)}
 
 
+def _decimal_from_field(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    cleaned = (
+        text.replace(",", "")
+        .replace("，", "")
+        .replace("￥", "")
+        .replace("¥", "")
+        .replace("元", "")
+        .replace("%", "")
+        .strip()
+    )
+    try:
+        return Decimal(cleaned)
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _tax_rate_from_field(value: Any) -> Decimal | None:
+    raw = _decimal_from_field(value)
+    if raw is None:
+        return None
+    if raw.copy_abs() > 1:
+        return raw / Decimal("100")
+    return raw
+
+
+def _format_money(value: Decimal) -> str:
+    rounded = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return format(rounded.normalize(), "f")
+
+
+def apply_tax_calculations(extracted: dict[str, Any], config: Any) -> set[str]:
+    scalar_keys = set(getattr(config, "scalar_keys", []))
+    required = {"taxRate", "totalAmount", "amountWithoutTax", "taxAmount"}
+    if not required <= scalar_keys:
+        return set()
+    rate = _tax_rate_from_field(extracted.get("taxRate"))
+    if rate is None:
+        extracted["taxRate"] = "13"
+        rate = Decimal("0.13")
+    if rate < 0:
+        return set()
+
+    total = _decimal_from_field(extracted.get("totalAmount"))
+    amount_without_tax = _decimal_from_field(extracted.get("amountWithoutTax"))
+    tax_amount = _decimal_from_field(extracted.get("taxAmount"))
+    changed: set[str] = set()
+
+    if total is not None and amount_without_tax is None:
+        amount_without_tax = total / (Decimal("1") + rate)
+        extracted["amountWithoutTax"] = _format_money(amount_without_tax)
+        changed.add("amountWithoutTax")
+    if amount_without_tax is not None and tax_amount is None:
+        tax_amount = amount_without_tax * rate
+        extracted["taxAmount"] = _format_money(tax_amount)
+        changed.add("taxAmount")
+    if total is None and amount_without_tax is not None:
+        total = amount_without_tax * (Decimal("1") + rate)
+        extracted["totalAmount"] = _format_money(total)
+        changed.add("totalAmount")
+    if amount_without_tax is None and tax_amount is not None and rate != 0:
+        amount_without_tax = tax_amount / rate
+        extracted["amountWithoutTax"] = _format_money(amount_without_tax)
+        extracted["totalAmount"] = _format_money(amount_without_tax + tax_amount)
+        changed.update({"amountWithoutTax", "totalAmount"})
+
+    return changed
+
+
 def _get_by_dot_path(data: dict[str, Any], key: str) -> Any:
     if key in data:
         return data.get(key)
@@ -655,6 +729,14 @@ def generate_contract(
                 elapsedMs=elapsed_ms(llm_start),
             )
 
+        computed_tax_fields = apply_tax_calculations(extracted, config)
+        if computed_tax_fields:
+            log_info(
+                "tax fields calculated",
+                uploadId=upload_id,
+                templateType=config.type,
+                fields=sorted(computed_tax_fields),
+            )
         render_data = merge_render_data(extracted, config)
         contract_id = new_id("contract")
         file_name = contract_file_name(render_data)
@@ -935,12 +1017,14 @@ async def preview_quote_fields_api(
             tableCount=len(config.table_bindings),
         )
         extracted = extract_template_render_data(quote_text, config, extra_info)
+        computed_tax_fields = apply_tax_calculations(extracted, config)
         log_info(
             "field preview stage",
             stage="llm_finished",
             uploadId=upload_id,
             templateType=config.type,
             tableRowCounts=table_row_counts(extracted),
+            computedTaxFields=sorted(computed_tax_fields),
             elapsedMs=elapsed_ms(llm_start),
         )
     except Exception as exc:
