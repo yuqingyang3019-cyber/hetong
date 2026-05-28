@@ -186,11 +186,11 @@ function updateSelectedFile() {
   uploadDropzone?.classList.toggle("has-file", Boolean(file));
   if (!file) {
     if (fileNameText) fileNameText.textContent = "拖拽或点击选择报价单文件";
-    if (fileMetaText) fileMetaText.textContent = "支持 PDF、Excel、图片格式；上传后进入 AI 解析队列";
+    if (fileMetaText) fileMetaText.textContent = "支持 PDF、Excel、图片格式，拖到这里即可上传";
     return;
   }
   if (fileNameText) fileNameText.textContent = file.name || "已选择报价单";
-  if (fileMetaText) fileMetaText.textContent = `${formatFileSize(file.size)} · 已选择，系统会自动创建任务`;
+  if (fileMetaText) fileMetaText.textContent = `${formatFileSize(file.size)} · 已选择，点击可更换`;
 }
 
 function activeTask() {
@@ -224,7 +224,7 @@ function updateActionAvailability() {
   generateButton.disabled = !canEditCurrent || !current?.fieldPreview?.extractedData;
 
   if (taskQueueHint) {
-    taskQueueHint.textContent = `未完成 ${incompleteTaskCount()} / ${MAX_TASKS}。处理中可关闭详情继续新建，已完成任务不占用额度。`;
+    taskQueueHint.textContent = `未完成 ${incompleteTaskCount()} / ${MAX_TASKS}。点击“查看详情”可切换编辑，已完成任务不占用额度。`;
   }
 }
 
@@ -1274,14 +1274,6 @@ function statusLabel(status) {
   }[status] || "等待中";
 }
 
-function taskStageLabel(status) {
-  if (status === "uploading" || status === "parsing") return "01 上传解析";
-  if (status === "needs_text" || status === "identifying" || status === "needs_fields") return "02 字段确认";
-  if (status === "generating" || status === "completed") return "03 生成交付";
-  if (status === "failed") return "需要处理";
-  return "准备中";
-}
-
 function setTaskStatus(task, status, message = "", failedStep = null) {
   task.status = status;
   task.message = message;
@@ -1430,8 +1422,8 @@ function renderTaskList() {
   createCard.type = "button";
   createCard.disabled = !sessionReady || incompleteTaskCount() >= MAX_TASKS;
   createCard.append(
-    createEl("strong", "", "+ 新建报价单任务"),
-    createEl("span", "", createCard.disabled ? "请先完成免登或释放任务额度" : "选择模板，上传文件，进入合同工作流"),
+    createEl("strong", "", "+ 让 AI 处理一份报价单"),
+    createEl("span", "", createCard.disabled ? "请先完成免登或释放任务额度" : "选择模板并上传，AI 会先解析字段"),
   );
   createCard.addEventListener("click", openCreatePanel);
 
@@ -1455,7 +1447,7 @@ function renderTaskList() {
     header.append(title, createEl("span", `task-status status-${task.status}`, statusLabel(task.status)));
 
     const message = createEl("p", "task-message", task.message || "等待处理");
-    const meta = createEl("p", "task-file-path", `${taskStageLabel(task.status)} · ${task.templateName}`);
+    const meta = createEl("p", "task-file-path", `${task.templateName} · ${task.fileName}`);
     const actions = createEl("div", "task-actions");
     const selectButton = createEl("button", "btn-secondary task-secondary-button", task.id === activeTaskId && drawerOpen ? "正在查看" : "查看详情");
     selectButton.type = "button";

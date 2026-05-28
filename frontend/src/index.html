@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f2747" />
+    <meta name="theme-color" content="#f8fafc" />
     <title>合同生成助手（内测版）</title>
     <link rel="stylesheet" href="/app.css" />
     <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.41/dingtalk.open.js"></script>
@@ -14,26 +14,11 @@
       <header class="app-hero">
         <div class="hero-copy">
           <div class="hero-title-row">
-            <p class="eyebrow">DingTalk Contract Cockpit</p>
+            <p class="eyebrow">钉钉 H5 合同生成助手</p>
             <span class="beta-badge" title="当前处于内测版本">内测版</span>
           </div>
-          <h1><span id="userName" class="user-name">你好</span>，把报价单交给合同助手</h1>
-          <p class="hero-description">从报价单解析、字段确认到 Word 合同生成和钉盘交付，在一个可信的 H5 工作台里完成。</p>
-
-          <div class="hero-metrics" aria-label="核心处理能力">
-            <div>
-              <strong>6</strong>
-              <span>合同模板</span>
-            </div>
-            <div>
-              <strong>PDF / Excel / OCR</strong>
-              <span>报价单解析</span>
-            </div>
-            <div>
-              <strong>钉盘</strong>
-              <span>生成后交付</span>
-            </div>
-          </div>
+          <h1><span id="userName" class="user-name">你好</span>，我是合同助手</h1>
+          <p class="hero-description">读取报价单、整理合同字段，确认后生成 Word 合同并存入钉盘。</p>
 
           <section id="userBar" class="identity-panel" aria-label="当前登录用户" hidden>
             <div class="identity-main">
@@ -43,24 +28,8 @@
                 <p id="loginHint" class="hint login-hint"></p>
               </div>
             </div>
-            <p class="identity-next-step">下一步：选择模板并上传报价单，缺失字段会在确认稿中高亮。</p>
+            <p class="identity-next-step">先选择模板，再上传报价单；字段缺失会在任务详情里提示。</p>
           </section>
-        </div>
-        <div class="hero-orbit" aria-hidden="true">
-          <div class="document-stack">
-            <span class="doc-card doc-card-back"></span>
-            <span class="doc-card doc-card-front">
-              <span></span>
-              <span></span>
-              <span></span>
-            </span>
-          </div>
-          <div class="hero-flow">
-            <span>上传</span>
-            <span>解析</span>
-            <span>确认</span>
-            <span>交付</span>
-          </div>
         </div>
       </header>
 
@@ -68,50 +37,42 @@
         <p id="status" class="status" aria-live="polite" hidden></p>
 
         <div id="taskCreatePanel" class="task-create-strip">
-          <div class="create-panel-heading">
-            <p class="eyebrow">新建合同任务</p>
-            <h2>选择模板，上传报价单</h2>
-            <p class="hint">上传后自动解析文本。你只需要确认识别结果，系统会把合同文件生成到钉盘。</p>
-          </div>
+          <label class="field">
+            <span class="field-label">合同模板</span>
+            <select id="templateType">
+              <option value="caigouhetong">采购合同（通用设备）</option>
+              <option value="nonStandardNoInstall">设备采购合同（不含安装）</option>
+              <option value="nonStandardWithInstall">设备采购合同（含安装）</option>
+              <option value="annualFramework">年度采购框架合同</option>
+              <option value="professionalSubcontract">专业工程分包合同</option>
+              <option value="laborSubcontract">劳务分包合同（清包工）</option>
+            </select>
+          </label>
 
-          <div class="create-panel-controls">
-            <label class="field">
-              <span class="field-label">合同模板</span>
-              <select id="templateType">
-                <option value="caigouhetong">采购合同（通用设备）</option>
-                <option value="nonStandardNoInstall">设备采购合同（不含安装）</option>
-                <option value="nonStandardWithInstall">设备采购合同（含安装）</option>
-                <option value="annualFramework">年度采购框架合同</option>
-                <option value="professionalSubcontract">专业工程分包合同</option>
-                <option value="laborSubcontract">劳务分包合同（清包工）</option>
-              </select>
-            </label>
-
-            <label class="field file-field" for="quoteFile">
-              <span class="field-label">报价单文件</span>
-              <span class="upload-dropzone" id="uploadDropzone">
-                <span class="upload-mark" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" role="img" focusable="false">
-                    <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
-                  </svg>
-                </span>
-                <span class="upload-copy">
-                  <span id="fileNameText" class="upload-title">拖拽或点击选择报价单文件</span>
-                  <span id="fileMetaText" class="upload-meta">支持 PDF、Excel、图片格式；放进来后自动开始解析</span>
-                </span>
+          <label class="field file-field" for="quoteFile">
+            <span class="field-label">报价单文件</span>
+            <span class="upload-dropzone" id="uploadDropzone">
+              <span class="upload-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" role="img" focusable="false">
+                  <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
+                </svg>
               </span>
-              <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png" />
-            </label>
-          </div>
+              <span class="upload-copy">
+                <span id="fileNameText" class="upload-title">拖拽或点击选择报价单文件</span>
+                <span id="fileMetaText" class="upload-meta">支持 PDF、Excel、图片格式；放进来后自动开始解析</span>
+              </span>
+            </span>
+            <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png" />
+          </label>
         </div>
 
         <div id="taskQueueCard" class="task-queue-panel">
           <div class="task-queue-heading">
             <div>
-              <p class="eyebrow">Live Queue</p>
-              <h2>合同任务看板</h2>
+              <p class="eyebrow">任务队列</p>
+              <h2>合同生成任务</h2>
             </div>
-            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务。处理中可以关闭详情，继续新建下一份。</p>
+            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务，点击“查看详情”可切换编辑。</p>
           </div>
           <div id="taskList" class="task-list"></div>
         </div>
@@ -123,13 +84,13 @@
           <div class="drawer-grip" aria-hidden="true"></div>
           <header class="drawer-header">
             <div>
-              <p class="eyebrow">Task Detail</p>
+              <p class="eyebrow">当前任务</p>
               <h2 id="activeTaskTitle">确认解析文本并补充信息</h2>
               <p class="hint" id="activeTaskHint">请检查当前任务的报价单解析文本，必要时可直接修正；额外信息会和解析文本一起交给 LLM 识别合同字段。</p>
               <div id="drawerStepRail" class="drawer-step-rail" aria-label="任务阶段">
-                <span data-drawer-step="upload">01 上传解析</span>
-                <span data-drawer-step="review">02 确认字段</span>
-                <span data-drawer-step="generate">03 生成交付</span>
+                <span data-drawer-step="upload">1 上传解析</span>
+                <span data-drawer-step="review">2 确认字段</span>
+                <span data-drawer-step="generate">3 生成交付</span>
               </div>
             </div>
             <button id="closeTaskDrawerButton" class="btn-secondary drawer-close" type="button" aria-label="关闭任务详情">关闭</button>
@@ -139,7 +100,7 @@
             <section id="previewCard" class="drawer-panel preview-card" hidden>
               <div class="drawer-section-heading">
                 <h3>报价单解析内容</h3>
-                <p class="hint">先校对文本，再补充报价单没有写清楚的签约信息。</p>
+                <p class="hint">左侧对照原报价单，当前版本先展示可编辑文本。</p>
               </div>
               <label class="field">
                 <span class="field-label">解析内容</span>
@@ -154,7 +115,7 @@
 
             <section id="fieldPreviewCard" class="drawer-panel field-preview-card" hidden>
               <div class="drawer-section-heading">
-                <h3>合同确认稿</h3>
+                <h3>合同式字段预览</h3>
                 <p class="hint" id="fieldPreviewSummary">请按合同字段顺序确认识别结果，可直接修改字段；空字段生成到 Word 合同时会留空。</p>
               </div>
               <div id="contractPreview" class="contract-preview-shell"></div>
