@@ -522,7 +522,7 @@ def test_confirmed_blank_fields_render_empty() -> None:
 
     assert pending_context["supplierName"] == "【待填写：乙方名称】"
     assert confirmed_context["supplierName"] == ""
-    assert pending_context["items"][0]["name"] == "【待填写：货物名称】"
+    assert pending_context["items"][0]["name"] == "【待填写：设备名称】"
     assert confirmed_context["items"][0]["name"] == ""
 
 
