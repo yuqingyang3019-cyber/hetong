@@ -79,6 +79,10 @@
       "label": "税金"
     },
     {
+      "key": "deliveryDays",
+      "label": "交货天数"
+    },
+    {
       "key": "deliveryYear",
       "label": "最迟交货年"
     },

@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import types
+from datetime import date
 from unittest.mock import ANY, Mock, patch
 from zipfile import ZipFile
 
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent.contract.render import build_docxtpl_context
-from agent.main import app, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
+from agent.main import app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
 
 
 os.environ.setdefault("APP_SESSION_SECRET", "test-session-secret-123456789012")
@@ -397,6 +398,30 @@ def test_tax_fields_are_calculated_from_total_amount() -> None:
     assert extracted["taxAmount"] == "13"
 
 
+def test_delivery_date_is_calculated_from_delivery_days() -> None:
+    config = get_template_config("caigouhetong")
+    extracted = {"deliveryDays": "7"}
+
+    changed = apply_delivery_date_calculation(extracted, config, today=date(2026, 5, 28))
+
+    assert changed == {"deliveryYear", "deliveryMonth", "deliveryDay"}
+    assert extracted["deliveryYear"] == "2026"
+    assert extracted["deliveryMonth"] == "06"
+    assert extracted["deliveryDay"] == "04"
+
+
+def test_delivery_date_does_not_override_confirmed_date() -> None:
+    config = get_template_config("caigouhetong")
+    extracted = {"deliveryDays": "7", "deliveryYear": "2026", "deliveryMonth": "12", "deliveryDay": "31"}
+
+    changed = apply_delivery_date_calculation(extracted, config, today=date(2026, 5, 28))
+
+    assert changed == set()
+    assert extracted["deliveryYear"] == "2026"
+    assert extracted["deliveryMonth"] == "12"
+    assert extracted["deliveryDay"] == "31"
+
+
 def test_generate_contract_backfills_confirmed_tax_fields() -> None:
     upload_id = upload_quote()["id"]
     extracted = {"supplierName": "供应商A", "totalAmount": "113", "taxRate": "13", "items": []}
@@ -416,6 +441,30 @@ def test_generate_contract_backfills_confirmed_tax_fields() -> None:
     assert render_data["taxAmount"] == "13"
     assert draft["extractedData"]["amountWithoutTax"] == "100"
     assert draft["extractedData"]["taxAmount"] == "13"
+
+
+def test_generate_contract_backfills_confirmed_delivery_date() -> None:
+    upload_id = upload_quote()["id"]
+    extracted = {"supplierName": "供应商A", "deliveryDays": "7", "items": []}
+
+    with patch("agent.main.extract_template_render_data") as llm, patch(
+        "agent.main._today_shanghai",
+        return_value=date(2026, 5, 28),
+    ), patch(
+        "agent.main.render_contract",
+        return_value=Path("agent/storage/contracts/delivery.docx"),
+    ) as render_contract_mock, patch(
+        "agent.main.upload_contract_to_dingdrive",
+        return_value={"spaceId": "space1", "fileId": "file1", "fileName": "delivery.docx", "filePath": "/delivery.docx"},
+    ):
+        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"})
+
+    llm.assert_not_called()
+    render_data = render_contract_mock.call_args.args[0]
+    assert render_data["deliveryYear"] == "2026"
+    assert render_data["deliveryMonth"] == "06"
+    assert render_data["deliveryDay"] == "04"
+    assert draft["extractedData"]["deliveryYear"] == "2026"
 
 
 def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None:
@@ -595,7 +644,8 @@ def test_template_placeholders_match_schema() -> None:
             assert column in table_columns[table_name], f"{template_type}: unknown table column {placeholder}"
             table_placeholders[table_name].add(column)
 
-        assert scalar_keys <= scalar_placeholders, f"{template_type}: schema scalars are not all rendered"
+        ui_only_scalar_keys = {"deliveryDays"} if template_type in equipment_templates else set()
+        assert scalar_keys - ui_only_scalar_keys <= scalar_placeholders, f"{template_type}: schema scalars are not all rendered"
         for table_name, columns in table_columns.items():
             assert columns <= table_placeholders[table_name], f"{template_type}: schema table {table_name} is not fully rendered"
 

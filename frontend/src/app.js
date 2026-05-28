@@ -46,6 +46,7 @@ const templateSchemaFiles = Object.freeze({
 });
 const autoDateFieldKeys = Object.freeze(["signYear", "signMonth", "signDay", "signatureYear", "signatureMonth", "signatureDay"]);
 const taxCalculationFieldKeys = Object.freeze(["totalAmount", "amountWithoutTax", "taxAmount", "taxRate"]);
+const deliveryCalculationFieldKeys = Object.freeze(["deliveryDays"]);
 const busyStatuses = new Set(["uploading", "parsing", "identifying", "generating"]);
 const completedStatuses = new Set(["completed"]);
 const templateSchemaCache = new Map();
@@ -992,6 +993,51 @@ function syncCalculatedScalarEditors(editors, extractedData, changedKeys) {
   });
 }
 
+function parsePositiveIntegerField(value) {
+  const number = parseDecimalField(typeof value === "string" ? value.replace(/[天日]/g, "") : value);
+  if (number == null || number <= 0 || !Number.isInteger(number)) return null;
+  return number;
+}
+
+function datePartsFromDate(date) {
+  return {
+    year: String(date.getUTCFullYear()),
+    month: String(date.getUTCMonth() + 1).padStart(2, "0"),
+    day: String(date.getUTCDate()).padStart(2, "0"),
+  };
+}
+
+function addDaysToShanghaiDate(days, dateParts = currentShanghaiDateParts()) {
+  const year = Number(dateParts.year);
+  const month = Number(dateParts.month);
+  const day = Number(dateParts.day);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  const base = new Date(Date.UTC(year, month - 1, day));
+  base.setUTCDate(base.getUTCDate() + days);
+  return datePartsFromDate(base);
+}
+
+function applyDeliveryDateCalculation(extractedData, options = {}) {
+  if (!extractedData || typeof extractedData !== "object") return new Set();
+  const deliveryDays = parsePositiveIntegerField(extractedData.deliveryDays);
+  if (deliveryDays == null) return new Set();
+  const parts = addDaysToShanghaiDate(deliveryDays);
+  if (!parts) return new Set();
+  const changed = new Set();
+  [
+    ["deliveryYear", parts.year],
+    ["deliveryMonth", parts.month],
+    ["deliveryDay", parts.day],
+  ].forEach(([key, value]) => {
+    if (!options.force && !isBlankField(extractedData[key])) return;
+    if (extractedData[key] !== value) {
+      extractedData[key] = value;
+      changed.add(key);
+    }
+  });
+  return changed;
+}
+
 function currentShanghaiDateParts() {
   const parts = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
@@ -1102,6 +1148,10 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
       const changedKeys = applyTaxCalculations(options.extractedData, options.fieldKey);
       syncCalculatedScalarEditors(options.scalarEditors, options.extractedData, changedKeys);
     }
+    if (deliveryCalculationFieldKeys.includes(options.fieldKey)) {
+      const changedKeys = applyDeliveryDateCalculation(options.extractedData, { force: true });
+      syncCalculatedScalarEditors(options.scalarEditors, options.extractedData, changedKeys);
+    }
     setRecognizedClass(field, editor.value);
     refreshFieldPreviewSummary(options.schema, options.extractedData);
   });
@@ -1208,6 +1258,9 @@ async function renderFieldPreview(task) {
   const autoFilledKeys = applyAutoDateDefaults(extractedData);
   if (schemaHasScalar(schema, "taxRate")) {
     applyTaxCalculations(extractedData, "taxRate", { defaultTaxRate: true }).forEach((key) => autoFilledKeys.add(key));
+  }
+  if (schemaHasScalar(schema, "deliveryDays")) {
+    applyDeliveryDateCalculation(extractedData).forEach((key) => autoFilledKeys.add(key));
   }
   const canEditPreview = !taskIsBusy(task) && task.status !== "completed";
   const stats = { recognized: 0, missing: 0 };

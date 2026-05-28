@@ -12,11 +12,16 @@ import requests
 import sys
 import time
 import uuid
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 from urllib.parse import quote
+
+try:
+    from zoneinfo import ZoneInfo
+except ModuleNotFoundError:
+    ZoneInfo = None  # type: ignore[assignment]
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -522,6 +527,46 @@ def apply_tax_calculations(extracted: dict[str, Any], config: Any) -> set[str]:
     return changed
 
 
+def _positive_int_from_field(value: Any) -> int | None:
+    normalized = str(value).replace("天", "").replace("日", "") if value is not None else value
+    number = _decimal_from_field(normalized)
+    if number is None:
+        return None
+    if number <= 0 or number != number.to_integral_value():
+        return None
+    return int(number)
+
+
+def _today_shanghai() -> date:
+    if ZoneInfo is None:
+        return (datetime.utcnow() + timedelta(hours=8)).date()
+    return datetime.now(ZoneInfo("Asia/Shanghai")).date()
+
+
+def apply_delivery_date_calculation(extracted: dict[str, Any], config: Any, today: date | None = None, overwrite: bool = False) -> set[str]:
+    scalar_keys = set(getattr(config, "scalar_keys", []))
+    required = {"deliveryDays", "deliveryYear", "deliveryMonth", "deliveryDay"}
+    if not required <= scalar_keys:
+        return set()
+    delivery_days = _positive_int_from_field(extracted.get("deliveryDays"))
+    if delivery_days is None:
+        return set()
+    target = (today or _today_shanghai()) + timedelta(days=delivery_days)
+    values = {
+        "deliveryYear": f"{target.year}",
+        "deliveryMonth": f"{target.month:02d}",
+        "deliveryDay": f"{target.day:02d}",
+    }
+    changed: set[str] = set()
+    for key, value in values.items():
+        if not overwrite and not _is_blank_field(extracted.get(key)):
+            continue
+        if extracted.get(key) != value:
+            extracted[key] = value
+            changed.add(key)
+    return changed
+
+
 def _get_by_dot_path(data: dict[str, Any], key: str) -> Any:
     if key in data:
         return data.get(key)
@@ -736,6 +781,14 @@ def generate_contract(
                 uploadId=upload_id,
                 templateType=config.type,
                 fields=sorted(computed_tax_fields),
+            )
+        computed_delivery_fields = apply_delivery_date_calculation(extracted, config)
+        if computed_delivery_fields:
+            log_info(
+                "delivery date calculated",
+                uploadId=upload_id,
+                templateType=config.type,
+                fields=sorted(computed_delivery_fields),
             )
         render_data = merge_render_data(extracted, config)
         contract_id = new_id("contract")
@@ -1018,6 +1071,7 @@ async def preview_quote_fields_api(
         )
         extracted = extract_template_render_data(quote_text, config, extra_info)
         computed_tax_fields = apply_tax_calculations(extracted, config)
+        computed_delivery_fields = apply_delivery_date_calculation(extracted, config)
         log_info(
             "field preview stage",
             stage="llm_finished",
@@ -1025,6 +1079,7 @@ async def preview_quote_fields_api(
             templateType=config.type,
             tableRowCounts=table_row_counts(extracted),
             computedTaxFields=sorted(computed_tax_fields),
+            computedDeliveryFields=sorted(computed_delivery_fields),
             elapsedMs=elapsed_ms(llm_start),
         )
     except Exception as exc:
