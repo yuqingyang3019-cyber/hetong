@@ -1866,7 +1866,6 @@ async function runGenerateTask(task) {
     setTaskStatus(task, "generating", "正在生成合同并上传钉盘...");
     await generateContract(task, task.quoteText, task.extraInfo, task.fieldPreview.extractedData);
     setTaskStatus(task, "completed", "合同已生成并存入钉盘。");
-    setStatus("合同已生成并存入钉盘。", "success");
   } catch (error) {
     const message = formatError(error);
     setTaskStatus(task, "failed", `处理失败：${message}`, "generate");
