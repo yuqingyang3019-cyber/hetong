@@ -453,35 +453,12 @@ function blockNonDingTalkAccess(message = "请在钉钉客户端内打开合同�
 }
 
 function showUserBar(user, hint) {
-  if (!userBar) return;
-  userBar.hidden = false;
-  if (userAvatar) {
-    if (user?.avatar) {
-      userAvatar.src = user.avatar;
-      userAvatar.hidden = false;
-    } else {
-      userAvatar.removeAttribute("src");
-      userAvatar.hidden = true;
-    }
-  }
   if (userNameEl) {
     const base = user?.name || user?.nick || "已登录";
     const nick = user?.nick && user.nick !== user.name ? user.nick : null;
     userNameEl.textContent = nick ? `${base}（${nick}）` : base;
   }
-  if (userDeptEl) {
-    const names = user?.deptNames;
-    if (Array.isArray(names) && names.length) {
-      userDeptEl.textContent = `部门：${names.join("、")}`;
-      userDeptEl.classList.remove("muted");
-    } else {
-      userDeptEl.textContent = "部门：未返回";
-      userDeptEl.classList.add("muted");
-    }
-  }
-  if (loginHintEl && hint != null) {
-    loginHintEl.textContent = hint;
-  }
+  if (userBar) userBar.hidden = true;
 }
 
 function hideUserBar() {
