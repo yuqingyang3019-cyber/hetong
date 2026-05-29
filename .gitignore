@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+tmp/
 
 # Local environment files
 .env
@@ -37,5 +38,6 @@ frontend/dist/
 /scripts/*
 !/scripts/
 !/scripts/yonyou_vendor_probe.py
+!/scripts/yonyou_supplier_sync.py
 /合同模板/
 /报价单/
