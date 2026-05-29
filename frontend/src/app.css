@@ -1579,8 +1579,13 @@ h1 .user-name {
   border-radius: calc(var(--radius-lg) + 4px);
   box-shadow: 0 18px 42px rgba(22, 119, 255, 0.1);
   gap: var(--space-3);
-  margin-bottom: var(--space-3);
+  margin: 0;
   padding: var(--space-3);
+}
+
+.task-create-strip.is-creating {
+  border-style: solid;
+  grid-column: 1 / -1;
 }
 
 .create-panel-heading {
@@ -1627,7 +1632,7 @@ h1 .user-name {
     linear-gradient(#ffffff, #ffffff) padding-box,
     linear-gradient(135deg, rgba(22, 119, 255, 0.52), rgba(11, 128, 103, 0.34)) border-box;
   border-radius: calc(var(--radius-lg) + 2px);
-  min-height: 132px;
+  min-height: 128px;
 }
 
 .upload-dropzone:hover,
@@ -1831,7 +1836,11 @@ button:disabled {
   }
 
   .create-panel-controls {
-    grid-template-columns: minmax(220px, 0.62fr) minmax(360px, 1.38fr);
+    grid-template-columns: minmax(220px, 0.55fr) minmax(360px, 1.45fr);
+  }
+
+  .task-create-strip.is-creating {
+    padding: var(--space-4);
   }
 }
 

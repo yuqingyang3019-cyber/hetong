@@ -1532,10 +1532,9 @@ function openCreatePanel() {
     return;
   }
   createPanelOpen = true;
-  if (taskCreatePanel) taskCreatePanel.hidden = false;
-  taskCreatePanel?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   setStatus("");
-  updateActionAvailability();
+  renderTaskList();
+  taskCreatePanel?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   window.setTimeout(() => templateType?.focus(), 0);
 }
 
@@ -1544,7 +1543,7 @@ function closeCreatePanel(options = {}) {
   if (taskCreatePanel) taskCreatePanel.hidden = true;
   if (options.clearFile !== false) clearPendingQuoteFile();
   if (!options.keepStatus) setStatus("");
-  updateActionAvailability();
+  renderTaskList();
 }
 
 function confirmCreateTask() {
@@ -1713,7 +1712,17 @@ function renderTaskList() {
     }
     taskList.append(card);
   });
-  taskList.append(createCard);
+  if (createPanelOpen && taskCreatePanel) {
+    taskCreatePanel.hidden = false;
+    taskCreatePanel.classList.add("is-creating");
+    taskList.append(taskCreatePanel);
+  } else {
+    if (taskCreatePanel) {
+      taskCreatePanel.hidden = true;
+      taskCreatePanel.classList.remove("is-creating");
+    }
+    taskList.append(createCard);
+  }
   updateActionAvailability();
 }
 
