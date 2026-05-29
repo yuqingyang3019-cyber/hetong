@@ -38,6 +38,9 @@ const processingHint = document.querySelector("#processingHint");
 const drawerStepItems = Array.from(document.querySelectorAll("[data-drawer-step]"));
 const drawerDownloadAction = document.querySelector("#drawerDownloadAction");
 const drawerActionHint = document.querySelector("#drawerActionHint");
+const taskLogCard = document.querySelector("#taskLogCard");
+const taskLogDetails = document.querySelector("#taskLogDetails");
+const taskLogText = document.querySelector("#taskLogText");
 
 const MAX_TASKS = 5;
 const supportedQuoteFileExtensions = new Set([
@@ -146,6 +149,7 @@ function appendSystemLog(text) {
 function appendTaskLog(task, text) {
   task.log = `${task.log || ""}${text}`;
   renderTaskList();
+  if (task.id === activeTaskId) syncTaskLogPanel(task);
 }
 
 function formatError(error) {
@@ -441,6 +445,21 @@ function syncDrawerDownload(task) {
   const node = task?.status === "completed" ? createTaskDownloadNode(task) : null;
   drawerDownloadAction.hidden = !node;
   if (node) drawerDownloadAction.append(node);
+}
+
+function syncTaskLogPanel(task) {
+  if (!taskLogCard || !taskLogDetails || !taskLogText) return;
+  const hasLog = Boolean(task?.log);
+  taskLogCard.hidden = !hasLog;
+  if (!hasLog) {
+    taskLogText.textContent = "";
+    return;
+  }
+  taskLogDetails.open = Boolean(task.logOpen);
+  taskLogDetails.ontoggle = () => {
+    task.logOpen = taskLogDetails.open;
+  };
+  taskLogText.textContent = task.log;
 }
 
 function setInteractionEnabled(enabled) {
@@ -1456,6 +1475,8 @@ function resetFieldPreviewUi() {
 
 function clearActiveEditor() {
   if (processingCard) processingCard.hidden = true;
+  if (taskLogCard) taskLogCard.hidden = true;
+  if (taskLogText) taskLogText.textContent = "";
   previewCard.hidden = true;
   resetFieldPreviewUi();
   syncDrawerDownload(null);
@@ -1730,17 +1751,6 @@ function renderTaskList() {
     card.append(header, stage, meta, message, actions);
     const downloadNode = createTaskDownloadNode(task);
     if (downloadNode) card.append(downloadNode);
-    if (task.log) {
-      const details = createEl("details", "task-log");
-      details.open = Boolean(task.logOpen);
-      details.addEventListener("toggle", () => {
-        task.logOpen = details.open;
-      });
-      const summary = createEl("summary", "", "查看任务日志");
-      const pre = createEl("pre", "", task.log);
-      details.append(summary, pre);
-      card.append(details);
-    }
     taskList.append(card);
   });
   if (createPanelOpen && taskCreatePanel) {
@@ -1771,6 +1781,7 @@ async function syncActiveTaskEditor() {
   setDrawerStep(drawerStepForTask(task));
   syncProcessingPanel(task);
   syncDrawerDownload(task);
+  syncTaskLogPanel(task);
 
   if (activeTaskTitle) {
     activeTaskTitle.textContent = `${task.fileName} · ${statusLabel(task.status)}`;
