@@ -1578,12 +1578,16 @@ h1 .user-name {
   border-color: rgba(22, 119, 255, 0.28);
   border-radius: calc(var(--radius-lg) + 4px);
   box-shadow: 0 18px 42px rgba(22, 119, 255, 0.1);
-  gap: var(--space-4);
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3);
 }
 
 .create-panel-heading {
-  display: grid;
-  gap: 6px;
+  align-items: start;
+  display: flex;
+  gap: var(--space-2);
+  justify-content: space-between;
 }
 
 .create-panel-heading .eyebrow,
@@ -1594,13 +1598,24 @@ h1 .user-name {
 
 .create-panel-heading h2 {
   color: var(--color-primary);
-  font-size: clamp(1.25rem, 4vw, 1.7rem);
+  font-size: clamp(1.1rem, 3.2vw, 1.35rem);
   letter-spacing: -0.04em;
 }
 
 .create-panel-controls {
   display: grid;
   gap: var(--space-3);
+}
+
+.create-panel-actions {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+}
+
+.create-panel-actions .hint {
+  margin: 0;
 }
 
 .template-field select {
@@ -1612,7 +1627,7 @@ h1 .user-name {
     linear-gradient(#ffffff, #ffffff) padding-box,
     linear-gradient(135deg, rgba(22, 119, 255, 0.52), rgba(11, 128, 103, 0.34)) border-box;
   border-radius: calc(var(--radius-lg) + 2px);
-  min-height: 168px;
+  min-height: 132px;
 }
 
 .upload-dropzone:hover,
@@ -1636,11 +1651,25 @@ h1 .user-name {
   background: rgba(248, 250, 252, 0.76);
   border: 1px solid rgba(215, 227, 240, 0.92);
   border-radius: var(--radius-lg);
+  min-height: clamp(280px, calc(100vh - 260px), 520px);
   padding: var(--space-3);
 }
 
 .task-queue-heading {
   align-items: start;
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.task-queue-heading .hint {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.task-board-create-button {
+  min-height: 42px;
+  padding-inline: var(--space-3);
 }
 
 .task-card,
@@ -1651,6 +1680,14 @@ h1 .user-name {
 .new-task-card {
   background: rgba(22, 119, 255, 0.06);
   border-color: rgba(22, 119, 255, 0.32);
+}
+
+.new-task-card.is-empty {
+  align-items: center;
+  grid-column: 1 / -1;
+  justify-content: center;
+  min-height: 220px;
+  text-align: center;
 }
 
 .task-card {
@@ -1790,7 +1827,7 @@ button:disabled {
   }
 
   .task-create-strip {
-    grid-template-columns: minmax(220px, 0.62fr) minmax(0, 1.38fr);
+    grid-template-columns: 1fr;
   }
 
   .create-panel-controls {
@@ -1810,7 +1847,25 @@ button:disabled {
   }
 
   .upload-dropzone {
-    min-height: 148px;
+    min-height: 124px;
+  }
+
+  .create-panel-actions {
+    align-items: stretch;
+    background: rgba(255, 255, 255, 0.92);
+    bottom: 0;
+    flex-direction: column;
+    padding-top: var(--space-2);
+    position: sticky;
+  }
+
+  .create-panel-actions button,
+  .task-board-create-button {
+    width: 100%;
+  }
+
+  .task-queue-heading {
+    grid-template-columns: 1fr;
   }
 
   .drawer-actions {

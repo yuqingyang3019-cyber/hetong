@@ -32,7 +32,14 @@
       <section class="card workbench-card">
         <p id="status" class="status" aria-live="polite" hidden></p>
 
-        <div id="taskCreatePanel" class="task-create-strip">
+        <div id="taskCreatePanel" class="task-create-strip" hidden>
+          <div class="create-panel-heading">
+            <div>
+              <p class="eyebrow">新建任务</p>
+              <h2>选择模板和报价单</h2>
+            </div>
+            <button id="cancelCreateTaskButton" class="btn-secondary task-secondary-button" type="button">取消</button>
+          </div>
           <div class="create-panel-controls">
             <label class="field template-field">
               <span class="field-label">合同模板</span>
@@ -56,11 +63,15 @@
                 </span>
                 <span class="upload-copy">
                   <span id="fileNameText" class="upload-title">拖拽或点击选择报价单文件</span>
-                  <span id="fileMetaText" class="upload-meta">支持 PDF、Excel 和常见图片格式；上传后自动进入解析队列</span>
+                  <span id="fileMetaText" class="upload-meta">支持 PDF、Excel 和常见图片格式；选择后点击确认创建任务</span>
                 </span>
               </span>
               <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png,.bmp,.gif,.tif,.tiff,.webp" />
             </label>
+          </div>
+          <div class="create-panel-actions">
+            <p id="createTaskHint" class="hint">选择合同模板并上传报价单后，再确认创建任务。</p>
+            <button id="confirmCreateTaskButton" class="btn-primary" type="button" disabled>确认创建任务</button>
           </div>
         </div>
 
@@ -70,6 +81,7 @@
               <p class="eyebrow">任务队列</p>
               <h2>任务看板</h2>
             </div>
+            <button id="openCreateTaskButton" class="btn-primary task-board-create-button" type="button">新建任务</button>
             <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务；处理中可关闭详情继续处理下一份。</p>
           </div>
           <div id="taskList" class="task-list"></div>

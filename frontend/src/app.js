@@ -10,6 +10,10 @@ const fieldPreviewSummary = document.querySelector("#fieldPreviewSummary");
 const contractPreviewEl = document.querySelector("#contractPreview");
 const templateType = document.querySelector("#templateType");
 const taskCreatePanel = document.querySelector("#taskCreatePanel");
+const openCreateTaskButton = document.querySelector("#openCreateTaskButton");
+const cancelCreateTaskButton = document.querySelector("#cancelCreateTaskButton");
+const confirmCreateTaskButton = document.querySelector("#confirmCreateTaskButton");
+const createTaskHint = document.querySelector("#createTaskHint");
 const taskList = document.querySelector("#taskList");
 const taskQueueHint = document.querySelector("#taskQueueHint");
 const activeTaskTitle = document.querySelector("#activeTaskTitle");
@@ -72,6 +76,8 @@ let activeTaskId = null;
 let drawerOpen = false;
 let drawerLastFocus = null;
 let uploadDragDepth = 0;
+let createPanelOpen = false;
+let pendingQuoteFile = null;
 
 function apiUrl(path) {
   return path;
@@ -199,6 +205,12 @@ function updateSelectedFile() {
   syncUploadPrompt();
 }
 
+function clearPendingQuoteFile() {
+  pendingQuoteFile = null;
+  quoteFile.value = "";
+  syncUploadPrompt();
+}
+
 function uploadDisabledReason() {
   if (!sessionReady) return "完成钉钉免登后即可上传报价单。";
   if (incompleteTaskCount() >= MAX_TASKS) return `未完成任务已达到 ${MAX_TASKS} 个，请先完成或删除任务。`;
@@ -206,18 +218,20 @@ function uploadDisabledReason() {
 }
 
 function syncUploadPrompt() {
-  const file = quoteFile.files?.[0];
+  const file = pendingQuoteFile || quoteFile.files?.[0];
   const disabledReason = uploadDisabledReason();
   uploadDropzone?.classList.toggle("has-file", Boolean(file));
   uploadDropzone?.classList.toggle("is-disabled", Boolean(disabledReason));
   uploadDropzone?.setAttribute("aria-disabled", disabledReason ? "true" : "false");
   if (!file) {
     if (fileNameText) fileNameText.textContent = disabledReason ? "暂不可上传报价单" : "拖拽或点击选择报价单文件";
-    if (fileMetaText) fileMetaText.textContent = disabledReason || "支持 PDF、Excel 和常见图片格式；上传后自动进入解析队列";
+    if (fileMetaText) fileMetaText.textContent = disabledReason || "支持 PDF、Excel 和常见图片格式；选择后点击确认创建任务";
+    if (createTaskHint) createTaskHint.textContent = disabledReason || "选择合同模板并上传报价单后，再确认创建任务。";
     return;
   }
   if (fileNameText) fileNameText.textContent = file.name || "已选择报价单";
-  if (fileMetaText) fileMetaText.textContent = `${formatFileSize(file.size)} · 已选择，系统会自动创建任务`;
+  if (fileMetaText) fileMetaText.textContent = `${formatFileSize(file.size)} · 已选择，点击确认后进入解析队列`;
+  if (createTaskHint) createTaskHint.textContent = `${file.name || "报价单"} 已选择，确认后创建任务。`;
 }
 
 function activeTask() {
@@ -242,6 +256,9 @@ function updateActionAvailability() {
   quoteFile.disabled = controlsDisabled || atLimit;
   templateType.disabled = controlsDisabled || atLimit;
   syncUploadPrompt();
+  if (openCreateTaskButton) openCreateTaskButton.disabled = controlsDisabled || atLimit || createPanelOpen;
+  if (cancelCreateTaskButton) cancelCreateTaskButton.disabled = controlsDisabled && !createPanelOpen;
+  if (confirmCreateTaskButton) confirmCreateTaskButton.disabled = controlsDisabled || atLimit || !pendingQuoteFile;
 
   quoteTextPreview.disabled = !canEditCurrent || !current?.quoteText;
   if (extraInfoText) extraInfoText.disabled = !canEditCurrent || !current?.quoteText;
@@ -296,7 +313,22 @@ function handleUploadDrop(event) {
   }
 
   const [file] = files;
-  startTaskFromFile(file);
+  setPendingQuoteFile(file);
+}
+
+function setPendingQuoteFile(file) {
+  const validationMessage = validateQuoteFile(file);
+  if (validationMessage) {
+    setStatus(validationMessage, "error");
+    pendingQuoteFile = null;
+    quoteFile.value = "";
+    updateActionAvailability();
+    return false;
+  }
+  pendingQuoteFile = file;
+  setStatus("");
+  updateActionAvailability();
+  return true;
 }
 
 function drawerStepForTask(task) {
@@ -1471,8 +1503,7 @@ function startTaskFromFile(file) {
   const task = createTask(file);
   tasks.unshift(task);
   selectTask(task.id);
-  quoteFile.value = "";
-  updateSelectedFile();
+  closeCreatePanel({ clearFile: true, keepStatus: true });
   setStatus("已创建任务，正在上传解析...");
   void runParseTask(task);
   return true;
@@ -1495,10 +1526,34 @@ function closeTaskDrawer() {
 }
 
 function openCreatePanel() {
+  if (incompleteTaskCount() >= MAX_TASKS) {
+    setStatus("未完成任务已达到 5 个，请先完成或删除任务。", "error");
+    updateActionAvailability();
+    return;
+  }
+  createPanelOpen = true;
   if (taskCreatePanel) taskCreatePanel.hidden = false;
   taskCreatePanel?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   setStatus("");
   updateActionAvailability();
+  window.setTimeout(() => templateType?.focus(), 0);
+}
+
+function closeCreatePanel(options = {}) {
+  createPanelOpen = false;
+  if (taskCreatePanel) taskCreatePanel.hidden = true;
+  if (options.clearFile !== false) clearPendingQuoteFile();
+  if (!options.keepStatus) setStatus("");
+  updateActionAvailability();
+}
+
+function confirmCreateTask() {
+  if (!pendingQuoteFile) {
+    setStatus("请先选择或拖入报价单文件。", "error");
+    updateActionAvailability();
+    return;
+  }
+  startTaskFromFile(pendingQuoteFile);
 }
 
 function syncDrawerVisibility(hasContent) {
@@ -1585,12 +1640,13 @@ function createTaskDownloadNode(task) {
 function renderTaskList() {
   if (!taskList) return;
   taskList.textContent = "";
-  const createCard = createEl("button", "new-task-card", "");
+  const hasTasks = tasks.length > 0;
+  const createCard = createEl("button", `new-task-card${hasTasks ? "" : " is-empty"}`, "");
   createCard.type = "button";
   createCard.disabled = !sessionReady || incompleteTaskCount() >= MAX_TASKS;
   createCard.append(
-    createEl("strong", "", "+ 新建报价单任务"),
-    createEl("span", "", createCard.disabled ? uploadDisabledReason() : "选择模板并上传，系统会先解析文本"),
+    createEl("strong", "", hasTasks ? "+ 新建报价单任务" : "还没有任务，上传第一份报价单"),
+    createEl("span", "", createCard.disabled ? uploadDisabledReason() : "点击新建任务，选择模板和报价单后开始解析"),
   );
   createCard.addEventListener("click", openCreatePanel);
 
@@ -1798,12 +1854,17 @@ uploadDropzone?.addEventListener("dragleave", handleUploadDragLeave);
 uploadDropzone?.addEventListener("drop", handleUploadDrop);
 
 quoteFile.addEventListener("change", () => {
-  updateSelectedFile();
   const file = quoteFile.files?.[0];
-  if (file) startTaskFromFile(file);
-  else setStatus("");
+  if (file) setPendingQuoteFile(file);
+  else clearPendingQuoteFile();
   updateActionAvailability();
 });
+
+openCreateTaskButton?.addEventListener("click", openCreatePanel);
+cancelCreateTaskButton?.addEventListener("click", () => {
+  closeCreatePanel({ clearFile: true });
+});
+confirmCreateTaskButton?.addEventListener("click", confirmCreateTask);
 
 templateType.addEventListener("change", () => {
   setStatus("模板已切换，将用于下一份报价单。");
@@ -1876,6 +1937,10 @@ document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (taskDrawer && !taskDrawer.hidden) {
     closeTaskDrawer();
+    return;
+  }
+  if (createPanelOpen) {
+    closeCreatePanel({ clearFile: true });
     return;
   }
   if (accessModal && !accessModal.hidden) closeAccessModal();
