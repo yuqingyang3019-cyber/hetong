@@ -984,6 +984,22 @@ function fieldValueForEditor(value) {
   return String(value);
 }
 
+function createCompactEditableValue(value, editor, updateValueText) {
+  const details = createEl("details", "contract-field-details");
+  const summary = createEl("summary", "contract-field-value");
+  const text = createEl("span", "contract-field-value-text", value || "已识别，点击查看");
+  text.title = value || "";
+  const hint = createEl("span", "contract-field-edit-hint", "修改");
+  summary.append(text, hint);
+  details.append(summary, editor);
+  updateValueText.current = (nextValue) => {
+    const displayValue = fieldValueForEditor(nextValue) || "待填写";
+    text.textContent = displayValue;
+    text.title = displayValue;
+  };
+  return details;
+}
+
 function parseDecimalField(value) {
   if (value == null) return null;
   const text = String(value).trim();
@@ -1074,6 +1090,7 @@ function syncCalculatedScalarEditors(editors, extractedData, changedKeys) {
     if (!entry) return;
     entry.editor.value = fieldValueForEditor(getByDotPath(extractedData, key));
     setRecognizedClass(entry.field, entry.editor.value);
+    entry.updateCompactValue?.current?.(entry.editor.value);
   });
 }
 
@@ -1267,8 +1284,9 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
   editor.placeholder = "待填写";
   editor.disabled = Boolean(options.disabled);
   editor.setAttribute("aria-label", `${prefix}${label}`);
+  const updateCompactValue = { current: null };
   if (options.scalarEditors && options.fieldKey) {
-    options.scalarEditors.set(options.fieldKey, { editor, field });
+    options.scalarEditors.set(options.fieldKey, { editor, field, updateCompactValue });
   }
   editor.addEventListener("input", () => {
     setByDotPath(options.extractedData, options.fieldKey, editor.value);
@@ -1281,13 +1299,18 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
       syncCalculatedScalarEditors(options.scalarEditors, options.extractedData, changedKeys);
     }
     setRecognizedClass(field, editor.value);
+    updateCompactValue.current?.(editor.value);
     refreshFieldPreviewSummary(options.schema, options.extractedData);
   });
 
-  field.append(
-    createEl("span", "contract-field-label", `${prefix}${label}`),
-    editor,
-  );
+  field.append(createEl("span", "contract-field-label", `${prefix}${label}`));
+  if (missing) {
+    field.append(editor);
+  } else if (options.disabled) {
+    field.append(createEl("span", "contract-field-value is-readonly", fieldValueForEditor(value)));
+  } else {
+    field.append(createCompactEditableValue(fieldValueForEditor(value), editor, updateCompactValue));
+  }
   if (options.autoFilled) field.append(createEl("span", "contract-field-badge", "系统自动填充"));
   return field;
 }
@@ -1362,12 +1385,20 @@ function renderTablePreview(paper, schema, extractedData, stats, canEditPreview)
         editor.placeholder = "待填写";
         editor.disabled = !canEditPreview;
         editor.setAttribute("aria-label", `${tableDef?.label || tableName} 第 ${rowIndex + 1} 行 ${column.label || column.key}`);
+        const updateCompactValue = { current: null };
         editor.addEventListener("input", () => {
           if (row && typeof row === "object") setByDotPath(row, column.key, editor.value);
           setRecognizedClass(cell, editor.value);
+          updateCompactValue.current?.(editor.value);
           refreshFieldPreviewSummary(schema, extractedData);
         });
-        cell.append(editor);
+        if (isBlankField(value)) {
+          cell.append(editor);
+        } else if (!canEditPreview) {
+          cell.append(createEl("span", "contract-table-value is-readonly", fieldValueForEditor(value)));
+        } else {
+          cell.append(createCompactEditableValue(fieldValueForEditor(value), editor, updateCompactValue));
+        }
         bodyRow.append(cell);
       });
       tbody.append(bodyRow);
