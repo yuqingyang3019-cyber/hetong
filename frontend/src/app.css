@@ -265,6 +265,41 @@ h1 .user-name {
   gap: var(--space-3);
 }
 
+.supplier-sync-panel {
+  align-items: start;
+  background:
+    linear-gradient(135deg, rgba(15, 108, 189, 0.08), rgba(5, 150, 105, 0.06)),
+    rgba(248, 250, 252, 0.92);
+  border: 1px solid rgba(15, 108, 189, 0.14);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.supplier-sync-panel h2,
+.supplier-sync-panel .eyebrow,
+.supplier-sync-panel .hint {
+  margin: 0;
+}
+
+.supplier-sync-button {
+  justify-self: start;
+}
+
+.supplier-sync-result {
+  color: var(--color-secondary);
+  line-height: 1.6;
+}
+
+.supplier-sync-result.is-success {
+  color: var(--color-success);
+}
+
+.supplier-sync-result.is-error {
+  color: var(--color-destructive);
+}
+
 .task-queue-heading {
   align-items: start;
   display: grid;

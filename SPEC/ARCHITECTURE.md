@@ -5,7 +5,7 @@
 | 项目 | 内容 |
 | --- | --- |
 | 文档名称 | 合同生成助手架构设计 |
-| 文档版本 | V1.1 |
+| 文档版本 | V1.2 |
 | 创建日期 | 2026-05-23 |
 | 关联 PRD | [PRD.md](./PRD.md) |
 | 适用范围 | 钉钉 H5、BFF 鉴权协同、AgentRun 业务接口、报价单解析、合同生成、钉盘下载交付 |
@@ -43,6 +43,7 @@ flowchart LR
   jsapi -->|"免登授权码"| user
   agent --> dashscope["DashScope LLM"]
   agent --> aliyunOcr["阿里云 OCR"]
+  agent --> yonbip["用友 YonBIP"]
   agent --> dingdrive["钉盘新版 SDK"]
   agent --> localStorage["本地临时存储\nagent/storage"]
 ```
@@ -60,9 +61,9 @@ flowchart LR
 | --- | --- | --- |
 | 前端 H5 | `frontend/src/app.js`、`frontend/src/index.html`、`frontend/src/app.css` | 页面交互、任务列表、用户确认、钉钉客户端 JSAPI SDK 免登和合同下载 |
 | BFF 鉴权层 | `frontend/src/index.cjs` | 静态资源、`/config.js`、钉钉新版服务端 SDK 免登换取、H5 会话、AgentRun 短期凭证签发 |
-| Agent 业务 API | `agent/main.py` | 上传、解析、字段预览、AG-UI 生成、钉盘上传、代理下载合同 |
+| Agent 业务 API | `agent/main.py` | 上传、解析、字段预览、供应商同步、AG-UI 生成、钉盘上传、代理下载合同 |
 | 合同处理模块 | `agent/contract/*` | 文本抽取、字段识别、模板渲染、字段契约 |
-| 集成模块 | BFF 鉴权层、`agent/dingdrive.py` | 钉钉免登、用户信息、钉盘上传和下载信息获取 |
+| 集成模块 | BFF 鉴权层、`agent/dingdrive.py`、`agent/yonyou_vendor.py` | 钉钉免登、用户信息、钉盘上传和下载信息获取、用友供应商同步 |
 
 ## 5. 组件职责
 
@@ -122,6 +123,7 @@ AgentRun 由 `agent/main.py` 承担业务 API 和长流程编排。前端通过 
 - 通过 AG-UI SSE 编排合同生成过程并输出事件。
 - 调用合同渲染模块生成 `.docx` 文件。
 - 使用钉盘官方新版 SDK 上传合同。
+- 从用友 YonBIP 同步供应商档案，生成缓存文件并上传钉盘。
 - 返回钉盘文件信息和必要下载元数据。
 - 记录关键阶段日志。
 - 在成功生成并上传合同后清理本地临时文件。
@@ -150,6 +152,7 @@ AgentRun 不负责：
 | AgentRun 访问凭证 | BFF 鉴权层、AgentRun | BFF 签发短期凭证，AgentRun 校验后处理业务请求 |
 | 钉盘上传 | `agent/dingdrive.py` | 使用钉盘官方新版 SDK 上传合同文件到指定钉盘空间和目录 |
 | 钉盘下载 | `agent/dingdrive.py`、前端 H5 | AgentRun 获取钉盘下载信息并代理文件流，前端触发浏览器或钉钉客户端下载 |
+| 用友供应商同步 | `agent/yonyou_vendor.py`、`agent/main.py` | 使用 YonBIP 开放 API 分页读取供应商档案和银行子表，生成 `.xlsx` 缓存文件 |
 
 ## 6. 核心数据流
 
@@ -205,6 +208,33 @@ flowchart TD
 4. AgentRun 代理下载文件流并返回给前端。
 5. 前端触发浏览器或钉钉客户端下载，并提示用户文件会保存到默认下载目录；如系统弹窗提示，可选择目标保存位置。
 
+### 6.5 用友供应商同步流程
+
+```mermaid
+flowchart TD
+  clickSync["用户点击同步供应商"] --> syncApi["POST /api/suppliers/sync"]
+  syncApi --> getToken["YonBIP获取access_token"]
+  getToken --> queryPage["分页调用vendor/queryByPage"]
+  queryPage --> dedupe["按供应商id去重"]
+  dedupe --> chooseBank["选择默认未停用银行账户"]
+  chooseBank --> buildXlsx["生成供应商缓存xlsx"]
+  buildXlsx --> uploadDrive["上传钉盘"]
+  uploadDrive --> cleanup["清理本地临时文件"]
+  cleanup --> result["返回统计和钉盘文件信息"]
+```
+
+1. 前端完成钉钉免登后，携带 AgentRun Bearer Token 调用 `POST /api/suppliers/sync`。
+2. AgentRun 使用 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
+3. AgentRun 分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含：
+   - `data: "*"`
+   - `queryOrders: [{ field: "code", order: "asc" }]`
+   - `partParam.vendorbanks.data: "*,openaccountbank.name"`
+4. AgentRun 过滤冻结或停用记录，并按供应商主档 `id` 去重。
+5. 同一供应商有多条记录时，优先保留可用、配置组织匹配或企业账号级记录。
+6. AgentRun 从 `vendorbanks` 中选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；若不存在默认账户，则选择第一条未停用账户。
+7. AgentRun 生成包含 `vendors` 和 `manifest` 两个 Sheet 的 `.xlsx` 缓存文件。
+8. AgentRun 复用钉盘上传能力将缓存文件上传至配置的钉盘目录，上传成功后清理本地临时文件。
+
 ## 7. 鉴权设计
 
 ```mermaid
@@ -238,6 +268,7 @@ sequenceDiagram
 | `POST /api/uploads` | Agent API | 上传报价单并生成上传记录 |
 | `POST /api/uploads/{uploadId}/quote-text` | Agent API | 解析报价单文本和表格 |
 | `POST /api/uploads/{uploadId}/field-preview` | Agent API | 识别并返回合同字段预览 |
+| `POST /api/suppliers/sync` | Agent API | 同步用友供应商档案并上传钉盘缓存文件 |
 | `POST /ag-ui/agent` | Agent API | 通过 SSE 编排合同生成流程 |
 | `POST /api/dingdrive/download` | Agent API | 获取钉盘下载信息并返回合同文件流 |
 
@@ -266,6 +297,7 @@ sequenceDiagram
 | 上传报价单 | `agent/storage/uploads` | 上传后保存，合同生成成功后清理 |
 | 生成合同 | `agent/storage/contracts` | 渲染后保存，上传钉盘成功后清理 |
 | 草稿或中间文件 | `agent/storage/drafts` | 按具体流程临时使用 |
+| 供应商缓存文件 | `agent/storage/drafts` | 同步过程中临时生成，上传钉盘成功后清理 |
 | 合同模板 | `agent/contract/templates/zhanweifu` | 随代码发布 |
 | 模板字段契约 | `*.placeholders.json` | 随模板维护 |
 
@@ -289,6 +321,12 @@ sequenceDiagram
 | `DINGTALK_DRIVE_SPACE_ID` | 钉盘空间 | 仅 AgentRun |
 | `DINGTALK_DRIVE_PARENT_ID` | 钉盘目标目录 | 仅 AgentRun |
 | `DINGTALK_DRIVE_CONFLICT_POLICY` | 钉盘同名冲突策略 | 仅 AgentRun |
+| `YONBIP_APP_KEY` | 用友 YonBIP 自建应用 Key | 仅 AgentRun |
+| `YONBIP_APP_SECRET` | 用友 YonBIP 自建应用 Secret | 仅 AgentRun |
+| `YONBIP_GATEWAY_URL` | 用友业务接口动态域名，如 `https://c3.yonyoucloud.com/iuap-api-gateway` | 仅 AgentRun |
+| `YONBIP_TOKEN_URL` | 用友 token 接口动态域名 | 仅 AgentRun |
+| `YONBIP_VENDOR_PAGE_SIZE` | 供应商同步分页大小 | 仅 AgentRun |
+| `YONBIP_ORG_ID` | 可选组织 ID，用于多组织记录优先级 | 仅 AgentRun |
 | `AGENT_ENDPOINT` | AgentRun 业务入口 | H5 服务可见，前端通过 BFF 获取 |
 
 前端页面只允许拿到完成免登所需的公开配置，不允许暴露服务端密钥。
@@ -312,12 +350,13 @@ sequenceDiagram
 | 合同生成失败 | 保留字段上下文，展示生成失败原因 |
 | 钉盘上传失败 | 展示钉盘上传失败原因，允许重试生成或重新提交 |
 | 下载失败 | 展示下载失败原因，允许用户重试下载或到钉盘目录手动下载 |
+| 供应商同步失败 | 展示供应商同步失败原因，不影响报价单任务继续处理 |
 
 ## 13. 可观测性
 
 V1 主要依赖 AgentRun 日志和前端任务日志排障。
 
-- AgentRun 日志应覆盖鉴权、上传、解析、字段识别、合同生成、钉盘上传和清理阶段。
+- AgentRun 日志应覆盖鉴权、上传、解析、字段识别、供应商同步、合同生成、钉盘上传和清理阶段。
 - AG-UI `TEXT_MESSAGE_CONTENT` 用于向用户展示生成过程中的关键进度。
 - 前端任务日志用于保存当前页面内任务的处理过程。
 - 第三方调用失败应记录服务名、阶段、耗时和可定位的错误信息。
@@ -331,6 +370,7 @@ V1 主要依赖 AgentRun 日志和前端任务日志排障。
 | 鉴权边界 | BFF 负责免登和 AgentRun 短期凭证，AgentRun 只处理业务请求 | 已迁移为 BFF `/bff/auth/*` + AgentRun Bearer 鉴权，BFF 内部钉钉调用使用官方新版 SDK | 后续在真实钉钉环境验证新版 SDK 免登字段稳定性 |
 | 业务请求路径 | 前端直连 AgentRun 业务接口 | 已改为 `agentBaseUrl` + Bearer Token | 部署时确保 AgentRun CORS 允许 H5 域名 |
 | 合同交付 | 前端通过 AgentRun 下载钉盘文件 | 已返回 `dingDrive` 和 `download` 结构，并由 AgentRun 代理下载合同文件 | 继续确认钉盘下载信息接口在真实环境的权限配置 |
+| 供应商同步 | 从用友同步供应商档案和默认银行信息，生成 `.xlsx` 缓存文件并上传钉盘 | 规划新增 `agent/yonyou_vendor.py` 和 `POST /api/suppliers/sync` | 需在真实 YonBIP 环境验证分页大小、限流、字段稳定性和钉盘权限 |
 | TXT 输入 | PRD 不将 TXT 作为正式业务格式 | 上传入口已按正式格式白名单拒绝 TXT | 后续若需内部测试文本输入，应使用独立开发工具而非正式业务 API |
 | 服务端任务持久化 | V1 不包含 | 当前任务状态在前端内存中维护 | 后续若做跨端恢复再设计服务端任务表 |
 

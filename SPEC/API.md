@@ -66,6 +66,9 @@ Content-Type: application/json
 | `UNSUPPORTED_FILE_TYPE` | 400 | 报价单格式不支持 |
 | `OCR_FAILED` | 502 | 图片 OCR 识别失败 |
 | `LLM_FAILED` | 502 | 字段识别失败 |
+| `YONBIP_AUTH_FAILED` | 502 | 用友 YonBIP 访问令牌获取失败 |
+| `YONBIP_VENDOR_LIST_FAILED` | 502 | 用友供应商分页查询失败 |
+| `SUPPLIER_SYNC_FAILED` | 500 | 供应商同步或缓存文件生成失败 |
 | `CONTRACT_GENERATE_FAILED` | 500 | 合同生成失败 |
 | `DINGDRIVE_UPLOAD_FAILED` | 502 | 钉盘上传失败 |
 | `DINGDRIVE_DOWNLOAD_FAILED` | 502 | 钉盘下载失败 |
@@ -426,6 +429,58 @@ Authorization: Bearer <agentAccessToken>
 
 用途：AgentRun 调用钉盘 `GetFileDownloadInfo` 获取下载 URL 和 headers，并代理返回合同文件流。前端收到文件流后触发浏览器或钉钉客户端下载，并提示用户保存路径。
 
+### 6.6 同步用友供应商
+
+```http
+POST /api/suppliers/sync
+Authorization: Bearer <agentAccessToken>
+```
+
+用途：前端触发 AgentRun 从用友 YonBIP 同步供应商档案，生成 `.xlsx` 缓存文件并上传至钉盘。
+
+请求：
+
+```json
+{}
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "fileName": "supplier-cache_20260529_193000.xlsx",
+  "sourceApi": "vendor/queryByPage",
+  "sourceRecordCount": 3400,
+  "uniqueVendorCount": 3398,
+  "pageSize": 500,
+  "syncedAt": "2026-05-29T19:30:00+08:00",
+  "dingDrive": {
+    "spaceId": "space_xxx",
+    "fileId": "file_xxx",
+    "fileName": "supplier-cache_20260529_193000.xlsx",
+    "filePath": "合同/2026/05/supplier-cache_20260529_193000.xlsx"
+  },
+  "download": {
+    "type": "agent_proxy",
+    "fileName": "supplier-cache_20260529_193000.xlsx",
+    "savePathHint": "文件将保存到浏览器或钉钉客户端的默认下载目录；如系统弹窗提示，请选择目标保存位置。"
+  }
+}
+```
+
+同步规则：
+
+- AgentRun 使用服务端配置的 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
+- AgentRun 分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含 `data: "*"`, `queryOrders: [{ field: "code", order: "asc" }]` 和 `partParam.vendorbanks.data: "*,openaccountbank.name"`。
+- 供应商记录按 `id` 去重；同一 `id` 出现多条记录时，优先保留可用且默认组织更匹配的记录。
+- `vendorbanks` 中优先选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；否则选择第一条未停用账户。
+- 缓存文件第一版使用 `.xlsx`，包含 `vendors` 和 `manifest` 两个 Sheet。
+- `vendors` Sheet 字段包括：`id`、`code`、`name`、`creditcode`、`address`、`contactphone`、`openaccountbankName`、`bankAccount`、`bankAccountName`、`vendorFax`、`org`、`orgName`、`accessstatus`、`freezestatus`、`pubts`。
+- `manifest` Sheet 字段包括：`syncedAt`、`sourceRecordCount`、`uniqueVendorCount`、`pageSize`、`sourceApi`。
+- 同步完成后本地临时缓存文件应清理；长期缓存以钉盘文件为准。
+- 前端不得传入或展示用友 `access_token`、`appKey`、`appSecret`。
+
 ## 7. SDK 使用约束
 
 - 前端只使用钉钉客户端 JSAPI SDK 获取免登授权码。
@@ -452,3 +507,4 @@ Authorization: Bearer <agentAccessToken>
 | 业务请求路径 | 前端直连 AgentRun | 已改为 `agentBaseUrl` + `Authorization: Bearer` | 部署时确保 AgentRun CORS 允许 H5 域名 |
 | 合同交付 | AgentRun 使用钉盘官方新版 SDK 返回钉盘文件信息，前端通过 AgentRun 下载合同 | 已返回 `dingDrive` 和 `download` 结构，并通过 `/api/dingdrive/download` 下载 | 继续确认钉盘下载信息接口在真实环境的权限配置 |
 | 图片 OCR | AgentRun 解析图片报价单 | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |
+| 供应商同步 | AgentRun 分页读取用友供应商档案，生成 `.xlsx` 缓存文件并上传钉盘 | 规划接入 `POST /api/suppliers/sync` | 需配置 YonBIP 密钥并在真实环境验证分页、限流和钉盘文件权限 |

@@ -137,8 +137,8 @@ def _upload_with_header_signature(path: Path, upload_info: Any) -> None:
     response.raise_for_status()
 
 
-def upload_contract_to_dingdrive(path: Path, file_name: str, current_user: dict[str, Any] | None) -> dict[str, Any]:
-    """Upload a generated contract to the configured DingTalk team folder."""
+def upload_file_to_dingdrive(path: Path, file_name: str, current_user: dict[str, Any] | None) -> dict[str, Any]:
+    """Upload a local file to the configured DingTalk team folder."""
     parent_dentry_uuid = _config_value("DINGTALK_DRIVE_PARENT_ID")
     configured_space_id = _config_value("DINGTALK_DRIVE_SPACE_ID")
     union_id = _union_id(current_user)
@@ -204,6 +204,11 @@ def upload_contract_to_dingdrive(path: Path, file_name: str, current_user: dict[
         "openUrl": open_url,
         "raw": dentry,
     }
+
+
+def upload_contract_to_dingdrive(path: Path, file_name: str, current_user: dict[str, Any] | None) -> dict[str, Any]:
+    """Upload a generated contract to the configured DingTalk team folder."""
+    return upload_file_to_dingdrive(path, file_name, current_user)
 
 
 def get_contract_download_info(space_id: str, file_id: str, current_user: dict[str, Any] | None) -> dict[str, Any]:

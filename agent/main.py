@@ -51,12 +51,15 @@ except ImportError:
     from contract.render import merge_render_data, render_contract
 
 try:
-    from .dingdrive import get_contract_download_info, upload_contract_to_dingdrive
+    from .dingdrive import get_contract_download_info, upload_contract_to_dingdrive, upload_file_to_dingdrive
     from .storage_cleanup import remove_contract_files, remove_upload
+    from .yonyou_vendor import sync_suppliers_to_xlsx
 except ImportError:
     from dingdrive import get_contract_download_info  # type: ignore[no-redef]
     from dingdrive import upload_contract_to_dingdrive  # type: ignore[no-redef]
+    from dingdrive import upload_file_to_dingdrive  # type: ignore[no-redef]
     from storage_cleanup import remove_contract_files, remove_upload  # type: ignore[no-redef]
+    from yonyou_vendor import sync_suppliers_to_xlsx  # type: ignore[no-redef]
 
 
 app = FastAPI(title="合同生成 Agent")
@@ -1191,6 +1194,66 @@ async def preview_quote_fields_api(
         "extractedData": extracted,
         **field_summary,
     }
+
+
+@app.post("/api/suppliers/sync")
+def sync_suppliers_api(current_user: dict = Depends(get_current_user)) -> dict:
+    start = time.perf_counter()
+    cache_path: Path | None = None
+    try:
+        log_info("supplier sync start", dingtalkUserId=current_user.get("userid"))
+        sync_result = sync_suppliers_to_xlsx(DRAFTS_DIR)
+        cache_path = sync_result["path"]
+        file_name = str(sync_result["fileName"])
+        ding_drive = upload_file_to_dingdrive(cache_path, file_name, current_user)
+        log_info(
+            "supplier sync finished",
+            fileName=file_name,
+            sourceRecordCount=sync_result.get("sourceRecordCount"),
+            uniqueVendorCount=sync_result.get("uniqueVendorCount"),
+            elapsedMs=elapsed_ms(start),
+        )
+        return {
+            "ok": True,
+            "fileName": file_name,
+            "sourceApi": sync_result.get("sourceApi"),
+            "sourceRecordCount": sync_result.get("sourceRecordCount"),
+            "fetchedRecordCount": sync_result.get("fetchedRecordCount"),
+            "availableRecordCount": sync_result.get("availableRecordCount"),
+            "uniqueVendorCount": sync_result.get("uniqueVendorCount"),
+            "pageSize": sync_result.get("pageSize"),
+            "syncedAt": sync_result.get("syncedAt"),
+            "dingDrive": ding_drive,
+            "download": {
+                "type": "agent_proxy",
+                "fileName": file_name,
+                "savePathHint": "文件将保存到浏览器或钉钉客户端的默认下载目录；如系统弹窗提示，请选择目标保存位置。",
+            },
+        }
+    except HTTPException:
+        raise
+    except requests.RequestException as exc:
+        log_exception("supplier sync request failed", exc, elapsedMs=elapsed_ms(start))
+        if cache_path is not None:
+            raise api_error(502, "DINGDRIVE_UPLOAD_FAILED", "供应商缓存文件上传钉盘失败，请稍后重试", str(exc)) from exc
+        raise api_error(502, "YONBIP_VENDOR_LIST_FAILED", "用友供应商分页查询失败，请稍后重试", str(exc)) from exc
+    except RuntimeError as exc:
+        message = str(exc)
+        log_exception("supplier sync failed", exc, elapsedMs=elapsed_ms(start))
+        if "access_token" in message or "YONBIP_APP" in message or "用友数据中心" in message:
+            raise api_error(502, "YONBIP_AUTH_FAILED", "用友访问凭证获取失败，请检查 YonBIP 配置", message) from exc
+        if "供应商分页查询" in message:
+            raise api_error(502, "YONBIP_VENDOR_LIST_FAILED", "用友供应商分页查询失败，请稍后重试", message) from exc
+        raise api_error(500, "SUPPLIER_SYNC_FAILED", "供应商同步失败，请稍后重试", message) from exc
+    except Exception as exc:
+        log_exception("supplier sync unexpected failed", exc, elapsedMs=elapsed_ms(start))
+        raise api_error(500, "SUPPLIER_SYNC_FAILED", "供应商同步失败，请稍后重试", str(exc)) from exc
+    finally:
+        if cache_path and cache_path.exists():
+            try:
+                cache_path.unlink()
+            except Exception as exc:
+                log_warning("supplier cache cleanup failed", filePath=str(cache_path), error=str(exc))
 
 
 @app.post("/api/dingdrive/download")

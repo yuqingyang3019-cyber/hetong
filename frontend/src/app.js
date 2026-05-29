@@ -41,6 +41,8 @@ const drawerActionHint = document.querySelector("#drawerActionHint");
 const taskLogCard = document.querySelector("#taskLogCard");
 const taskLogDetails = document.querySelector("#taskLogDetails");
 const taskLogText = document.querySelector("#taskLogText");
+const syncSuppliersButton = document.querySelector("#syncSuppliersButton");
+const supplierSyncResult = document.querySelector("#supplierSyncResult");
 
 const MAX_TASKS = 5;
 const supportedQuoteFileExtensions = new Set([
@@ -94,6 +96,7 @@ let drawerLastFocus = null;
 let uploadDragDepth = 0;
 let createPanelOpen = false;
 let pendingQuoteFile = null;
+let supplierSyncState = { busy: false, result: null, error: "" };
 
 function apiUrl(path) {
   return path;
@@ -478,7 +481,61 @@ function syncTaskLogPanel(task) {
 function setInteractionEnabled(enabled) {
   sessionReady = enabled;
   renderTaskList();
+  updateSupplierSyncUi();
   updateActionAvailability();
+}
+
+function formatCount(value) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) ? numeric.toLocaleString("zh-CN") : "0";
+}
+
+function updateSupplierSyncUi() {
+  if (syncSuppliersButton) {
+    syncSuppliersButton.disabled = !sessionReady || supplierSyncState.busy;
+    syncSuppliersButton.textContent = supplierSyncState.busy ? "同步中..." : "同步供应商";
+  }
+  if (!supplierSyncResult) return;
+  supplierSyncResult.classList.toggle("is-success", Boolean(supplierSyncState.result) && !supplierSyncState.error);
+  supplierSyncResult.classList.toggle("is-error", Boolean(supplierSyncState.error));
+  if (supplierSyncState.busy) {
+    supplierSyncResult.textContent = "正在从用友读取供应商档案并上传钉盘，请稍候。";
+    return;
+  }
+  if (supplierSyncState.error) {
+    supplierSyncResult.textContent = supplierSyncState.error;
+    return;
+  }
+  if (supplierSyncState.result) {
+    const result = supplierSyncState.result;
+    supplierSyncResult.textContent = `同步完成：用友记录 ${formatCount(result.sourceRecordCount)} 条，去重后 ${formatCount(result.uniqueVendorCount)} 个供应商；文件 ${result.fileName || "supplier-cache.xlsx"} 已上传钉盘。`;
+    return;
+  }
+  supplierSyncResult.textContent = sessionReady ? "可同步用友供应商缓存，生成 Excel 后上传钉盘。" : "完成钉钉免登后可同步供应商缓存。";
+}
+
+async function syncSuppliers() {
+  supplierSyncState = { busy: true, result: null, error: "" };
+  updateSupplierSyncUi();
+  setStatus("正在同步用友供应商...");
+  try {
+    const response = await fetchAgent("/api/suppliers/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok || !body.ok) {
+      throw new Error(body.message || body.detail || "供应商同步失败");
+    }
+    supplierSyncState = { busy: false, result: body, error: "" };
+    setStatus(`供应商同步完成：去重后 ${formatCount(body.uniqueVendorCount)} 个供应商。`, "success");
+  } catch (error) {
+    const message = formatError(error);
+    supplierSyncState = { busy: false, result: null, error: message };
+    setStatus(message, "error");
+  }
+  updateSupplierSyncUi();
 }
 
 function getDingTalkPlatform() {
@@ -2145,6 +2202,9 @@ cancelCreateTaskButton?.addEventListener("click", () => {
   closeCreatePanel({ clearFile: true });
 });
 confirmCreateTaskButton?.addEventListener("click", confirmCreateTask);
+syncSuppliersButton?.addEventListener("click", () => {
+  void syncSuppliers();
+});
 
 templateType.addEventListener("change", () => {
   setStatus("模板已切换，将用于下一份报价单。");
@@ -2228,6 +2288,7 @@ document.addEventListener("keydown", (event) => {
 
 updateSelectedFile();
 renderTaskList();
+updateSupplierSyncUi();
 clearActiveEditor();
 updateActionAvailability();
 void initAuth();
