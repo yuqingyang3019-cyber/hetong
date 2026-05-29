@@ -16,6 +16,8 @@ import requests
 
 
 DATA_CENTER_URL = "https://apigateway.yonyoucloud.com/open-auth/dataCenter/getGatewayAddress"
+DEFAULT_YONBIP_GATEWAY_URL = "https://c3.yonyoucloud.com/iuap-api-gateway"
+DEFAULT_YONBIP_TOKEN_URL = "https://c3.yonyoucloud.com/iuap-api-gateway"
 TOKEN_PATH = "/open-auth/selfAppAuth/getAccessToken"
 VENDOR_QUERY_PATH = "/yonbip/digitalModel/vendor/queryByPage"
 VENDOR_LIST_PATH = "/yonbip/digitalModel/vendor/list"
@@ -406,8 +408,8 @@ def main() -> None:
     app_secret = require_env("YONBIP_APP_SECRET")
     org_id = (os.getenv("YONBIP_ORG_ID") or "").strip()
 
-    gateway_url = optional_env("YONBIP_GATEWAY_URL").rstrip("/")
-    token_url = optional_env("YONBIP_TOKEN_URL").rstrip("/")
+    gateway_url = optional_env("YONBIP_GATEWAY_URL").rstrip("/") or DEFAULT_YONBIP_GATEWAY_URL
+    token_url = optional_env("YONBIP_TOKEN_URL").rstrip("/") or DEFAULT_YONBIP_TOKEN_URL
     if not gateway_url or not token_url:
         if not tenant_id:
             raise RuntimeError("缺少配置：YONBIP_TENANT_ID；或同时配置 YONBIP_GATEWAY_URL 和 YONBIP_TOKEN_URL")

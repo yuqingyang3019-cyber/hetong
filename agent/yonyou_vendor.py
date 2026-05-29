@@ -16,6 +16,8 @@ from openpyxl import Workbook
 
 
 DATA_CENTER_URL = "https://apigateway.yonyoucloud.com/open-auth/dataCenter/getGatewayAddress"
+DEFAULT_YONBIP_GATEWAY_URL = "https://c3.yonyoucloud.com/iuap-api-gateway"
+DEFAULT_YONBIP_TOKEN_URL = "https://c3.yonyoucloud.com/iuap-api-gateway"
 TOKEN_PATH = "/open-auth/selfAppAuth/getAccessToken"
 VENDOR_QUERY_PATH = "/yonbip/digitalModel/vendor/queryByPage"
 DEFAULT_PAGE_SIZE = 500
@@ -98,8 +100,8 @@ def get_gateway_address(tenant_id: str) -> tuple[str, str]:
 
 
 def resolve_endpoints() -> tuple[str, str]:
-    gateway_url = optional_env("YONBIP_GATEWAY_URL").rstrip("/")
-    token_url = optional_env("YONBIP_TOKEN_URL").rstrip("/")
+    gateway_url = optional_env("YONBIP_GATEWAY_URL").rstrip("/") or DEFAULT_YONBIP_GATEWAY_URL
+    token_url = optional_env("YONBIP_TOKEN_URL").rstrip("/") or DEFAULT_YONBIP_TOKEN_URL
     if gateway_url and token_url:
         return gateway_url, token_url
 

@@ -323,9 +323,9 @@ sequenceDiagram
 | `DINGTALK_DRIVE_CONFLICT_POLICY` | 钉盘同名冲突策略 | 仅 AgentRun |
 | `YONBIP_APP_KEY` | 用友 YonBIP 自建应用 Key | 仅 AgentRun |
 | `YONBIP_APP_SECRET` | 用友 YonBIP 自建应用 Secret | 仅 AgentRun |
-| `YONBIP_GATEWAY_URL` | 用友业务接口动态域名，如 `https://c3.yonyoucloud.com/iuap-api-gateway` | 仅 AgentRun |
-| `YONBIP_TOKEN_URL` | 用友 token 接口动态域名 | 仅 AgentRun |
-| `YONBIP_VENDOR_PAGE_SIZE` | 供应商同步分页大小 | 仅 AgentRun |
+| `YONBIP_GATEWAY_URL` | 用友业务接口域名，默认 `https://c3.yonyoucloud.com/iuap-api-gateway`，仅需跨数据中心时覆盖 | 仅 AgentRun |
+| `YONBIP_TOKEN_URL` | 用友 token 接口域名，默认与 `YONBIP_GATEWAY_URL` 相同 | 仅 AgentRun |
+| `YONBIP_VENDOR_PAGE_SIZE` | 供应商同步分页大小，默认 500；系统会自动翻页直到抓完全部记录 | 仅 AgentRun |
 | `YONBIP_ORG_ID` | 可选组织 ID，用于多组织记录优先级 | 仅 AgentRun |
 | `AGENT_ENDPOINT` | AgentRun 业务入口 | H5 服务可见，前端通过 BFF 获取 |
 

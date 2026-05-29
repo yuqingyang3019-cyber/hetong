@@ -51,8 +51,8 @@ resources:
           DINGTALK_DRIVE_CONFLICT_POLICY: ${env("DINGTALK_DRIVE_CONFLICT_POLICY", "AUTO_RENAME")}
           YONBIP_APP_KEY: ${env("YONBIP_APP_KEY", "")}
           YONBIP_APP_SECRET: ${env("YONBIP_APP_SECRET", "")}
-          YONBIP_GATEWAY_URL: ${env("YONBIP_GATEWAY_URL", "")}
-          YONBIP_TOKEN_URL: ${env("YONBIP_TOKEN_URL", "")}
+          YONBIP_GATEWAY_URL: ${env("YONBIP_GATEWAY_URL", "https://c3.yonyoucloud.com/iuap-api-gateway")}
+          YONBIP_TOKEN_URL: ${env("YONBIP_TOKEN_URL", "https://c3.yonyoucloud.com/iuap-api-gateway")}
           YONBIP_TENANT_ID: ${env("YONBIP_TENANT_ID", "")}
           YONBIP_ORG_ID: ${env("YONBIP_ORG_ID", "")}
           YONBIP_VENDOR_PAGE_SIZE: ${env("YONBIP_VENDOR_PAGE_SIZE", "500")}
