@@ -70,6 +70,14 @@ const dateFieldGroups = Object.freeze([
   { id: "deliveryDate", label: "最迟交货日期", keys: ["deliveryYear", "deliveryMonth", "deliveryDay"], suffixes: ["年", "月", "日"] },
   { id: "signatureDate", label: "签署日期", keys: ["signatureYear", "signatureMonth", "signatureDay"], suffixes: ["年", "月", "日"] },
 ]);
+const fieldGroupDefinitions = Object.freeze([
+  { id: "basic", label: "基础信息", hint: "合同编号、项目、签订与签署信息" },
+  { id: "parties", label: "甲乙方信息", hint: "签约主体、联系方式与代表人" },
+  { id: "money", label: "金额与税率", hint: "合同金额、税率和系统计算金额" },
+  { id: "delivery", label: "交付与质保", hint: "交货地点、货期、最迟交付和质保" },
+  { id: "payment", label: "付款与发票", hint: "付款比例、账户、税号和发票相关字段" },
+  { id: "other", label: "其他条款", hint: "模板中的其他补充字段" },
+]);
 const taxCalculationFieldKeys = Object.freeze(["totalAmount", "amountWithoutTax", "taxAmount", "taxRate"]);
 const deliveryCalculationFieldKeys = Object.freeze(["deliveryDays"]);
 const busyStatuses = new Set(["uploading", "parsing", "identifying", "generating"]);
@@ -1036,6 +1044,56 @@ function setDateGroupClass(element, group, extractedData) {
   element.classList.toggle("is-recognized", !missing);
 }
 
+function scalarFieldGroupId(field, dateGroup = null) {
+  const key = String(dateGroup?.id || field?.key || "");
+  const label = String(dateGroup?.label || field?.label || "");
+  const text = `${key} ${label}`.toLowerCase();
+  if (["signdate", "signaturedate"].includes(key)) return "basic";
+  if (key === "deliveryDate" || /delivery|交货|交付|货期|质保/.test(text)) return "delivery";
+  if (/amount|price|taxrate|金额|税率|总价|单价|税金/.test(text)) return "money";
+  if (/payment|bank|account|invoice|付款|预付款|发货款|验收款|到货款|质保金|开户|账号|税号|发票/.test(text)) return "payment";
+  if (/buyer|supplier|party|representative|甲方|乙方|代表|联系人|联系地址|电话|邮箱/.test(text)) return "parties";
+  if (/contract|project|subject|签订|签署|合同|项目|采购内容/.test(text)) return "basic";
+  return "other";
+}
+
+function entryPreviewStats(entry, extractedData) {
+  const stats = { recognized: 0, missing: 0 };
+  if (entry.type === "date") {
+    entry.group.keys.forEach((key) => markPreviewStat(stats, getByDotPath(extractedData, key)));
+  } else {
+    markPreviewStat(stats, getByDotPath(extractedData, entry.field.key));
+  }
+  return stats;
+}
+
+function createScalarFieldGroups(scalars, extractedData) {
+  const schemaKeys = new Set(scalars.map((field) => field.key));
+  const renderedDateGroups = new Set();
+  const groups = new Map(fieldGroupDefinitions.map((group) => [group.id, { ...group, entries: [], stats: { recognized: 0, missing: 0 } }]));
+  scalars.forEach((field) => {
+    const dateGroup = dateFieldGroupForKey(field.key);
+    if (dateGroup && dateFieldGroupCanRender(dateGroup, schemaKeys)) {
+      if (renderedDateGroups.has(dateGroup.id)) return;
+      renderedDateGroups.add(dateGroup.id);
+      const entry = { type: "date", group: dateGroup };
+      const group = groups.get(scalarFieldGroupId(field, dateGroup)) || groups.get("other");
+      const stats = entryPreviewStats(entry, extractedData);
+      group.stats.recognized += stats.recognized;
+      group.stats.missing += stats.missing;
+      group.entries.push(entry);
+      return;
+    }
+    const entry = { type: "field", field };
+    const group = groups.get(scalarFieldGroupId(field)) || groups.get("other");
+    const stats = entryPreviewStats(entry, extractedData);
+    group.stats.recognized += stats.recognized;
+    group.stats.missing += stats.missing;
+    group.entries.push(entry);
+  });
+  return Array.from(groups.values()).filter((group) => group.entries.length);
+}
+
 function createCompactEditableValue(value, editor, updateValueText) {
   const details = createEl("details", "contract-field-details");
   const summary = createEl("summary", "contract-field-value");
@@ -1434,47 +1492,66 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
 
   const section = createEl("section", "contract-preview-section");
   section.append(createEl("h4", "", "合同条款字段"));
-  const body = createEl("div", "contract-preview-flow");
+  const body = createEl("div", "contract-preview-groups");
   const scalarEditors = new Map();
-  const schemaKeys = new Set(scalars.map((field) => field.key));
-  const renderedDateGroups = new Set();
+  const groups = createScalarFieldGroups(scalars, extractedData);
   let displayIndex = 1;
 
-  scalars.forEach((field) => {
-    const dateGroup = dateFieldGroupForKey(field.key);
-    if (dateGroup && dateFieldGroupCanRender(dateGroup, schemaKeys)) {
-      if (renderedDateGroups.has(dateGroup.id)) return;
-      renderedDateGroups.add(dateGroup.id);
-      body.append(createContractDateField(
-        dateGroup,
-        stats,
-        `${displayIndex}. `,
-        {
-          autoFilledKeys,
-          extractedData,
-          scalarEditors,
-          schema,
-          disabled: !canEditPreview,
-        },
-      ));
+  groups.forEach((group) => {
+    const groupCard = createEl("section", [
+      "contract-field-group",
+      group.stats.missing ? "has-missing" : "is-complete",
+    ].join(" "));
+    const groupHeader = createEl("div", "contract-field-group-header");
+    const title = createEl("div", "");
+    title.append(
+      createEl("h5", "", group.label),
+      createEl("p", "contract-field-group-hint", group.hint),
+    );
+    const stat = createEl(
+      "span",
+      "contract-field-group-stat",
+      group.stats.missing ? `${group.stats.missing} 项待补` : "已完整",
+    );
+    groupHeader.append(title, stat);
+    const groupBody = createEl("div", "contract-preview-flow");
+
+    group.entries.forEach((entry) => {
+      if (entry.type === "date") {
+        groupBody.append(createContractDateField(
+          entry.group,
+          stats,
+          `${displayIndex}. `,
+          {
+            autoFilledKeys,
+            extractedData,
+            scalarEditors,
+            schema,
+            disabled: !canEditPreview,
+          },
+        ));
+      } else {
+        const field = entry.field;
+        groupBody.append(createContractField(
+          field.label || field.key,
+          getByDotPath(extractedData, field.key),
+          stats,
+          `${displayIndex}. `,
+          {
+            autoFilled: autoFilledKeys?.has(field.key),
+            extractedData,
+            fieldKey: field.key,
+            scalarEditors,
+            schema,
+            disabled: !canEditPreview,
+          },
+        ));
+      }
       displayIndex += 1;
-      return;
-    }
-    body.append(createContractField(
-      field.label || field.key,
-      getByDotPath(extractedData, field.key),
-      stats,
-      `${displayIndex}. `,
-      {
-        autoFilled: autoFilledKeys?.has(field.key),
-        extractedData,
-        fieldKey: field.key,
-        scalarEditors,
-        schema,
-        disabled: !canEditPreview,
-      },
-    ));
-    displayIndex += 1;
+    });
+
+    groupCard.append(groupHeader, groupBody);
+    body.append(groupCard);
   });
 
   section.append(body);

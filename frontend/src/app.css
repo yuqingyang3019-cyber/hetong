@@ -1167,6 +1167,67 @@ button:disabled {
   gap: 6px;
 }
 
+.contract-preview-groups {
+  display: grid;
+  gap: 10px;
+}
+
+.contract-field-group {
+  background: rgba(248, 250, 252, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.contract-field-group.has-missing {
+  background: rgba(254, 242, 242, 0.46);
+  border-color: rgba(220, 38, 38, 0.2);
+}
+
+.contract-field-group-header {
+  align-items: start;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.contract-field-group-header h5,
+.contract-field-group-hint {
+  margin: 0;
+}
+
+.contract-field-group-header h5 {
+  color: var(--color-primary);
+  font-size: 0.92rem;
+  letter-spacing: -0.01em;
+}
+
+.contract-field-group-hint {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.contract-field-group-stat {
+  background: rgba(5, 150, 105, 0.09);
+  border: 1px solid rgba(5, 150, 105, 0.16);
+  border-radius: 999px;
+  color: #047857;
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 800;
+  padding: 3px 8px;
+}
+
+.contract-field-group.has-missing .contract-field-group-stat {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.18);
+  color: #991b1b;
+}
+
 .contract-preview-field {
   align-items: start;
   background: rgba(255, 255, 255, 0.86);
@@ -1462,6 +1523,10 @@ pre {
 
   .contract-preview-flow {
     grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+
+  .contract-field-group .contract-preview-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .contract-preview-ghost {
