@@ -84,6 +84,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="tmp", help="Excel 输出目录")
     parser.add_argument("--page-size", type=int, default=None, help="覆盖 YONBIP_VENDOR_PAGE_SIZE")
     parser.add_argument("--max-pages", type=int, default=0, help="最多抓取页数；0 表示抓全量")
+    parser.add_argument("--timestamped", action="store_true", help="输出带时间戳的文件名，默认覆盖 supplier-cache-debug.xlsx")
     parser.add_argument("--verbose", action="store_true", help="输出更详细日志")
     return parser.parse_args()
 
@@ -174,7 +175,7 @@ def main() -> int:
         output_dir = (PROJECT_ROOT / args.output_dir).resolve()
         output_dir.mkdir(parents=True, exist_ok=True)
         synced_at = now_shanghai().isoformat(timespec="seconds")
-        file_name = f"supplier-cache-debug_{now_shanghai().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        file_name = f"supplier-cache-debug_{now_shanghai().strftime('%Y%m%d_%H%M%S')}.xlsx" if args.timestamped else "supplier-cache-debug.xlsx"
         output_path = output_dir / file_name
         manifest = build_manifest(
             synced_at=synced_at,

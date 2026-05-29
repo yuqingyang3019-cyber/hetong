@@ -252,32 +252,45 @@ def now_shanghai() -> datetime:
 def write_supplier_cache_xlsx(path: Path, rows: list[dict[str, Any]], manifest: dict[str, Any]) -> None:
     workbook = Workbook()
     vendors_sheet = workbook.active
-    vendors_sheet.title = "vendors"
-    vendor_headers = [
-        "id",
-        "code",
-        "name",
-        "creditcode",
-        "address",
-        "contactphone",
-        "openaccountbankName",
-        "bankAccount",
-        "bankAccountName",
-        "vendorFax",
-        "org",
-        "orgName",
-        "accessstatus",
-        "freezestatus",
-        "pubts",
+    vendors_sheet.title = "供应商"
+    vendor_columns = [
+        ("id", "供应商ID"),
+        ("code", "供应商编码"),
+        ("name", "供应商名称"),
+        ("creditcode", "统一社会信用代码"),
+        ("address", "地址"),
+        ("contactphone", "电话"),
+        ("openaccountbankName", "开户行"),
+        ("bankAccount", "银行账号"),
+        ("bankAccountName", "户名"),
+        ("vendorFax", "传真"),
+        ("org", "组织ID"),
+        ("orgName", "组织名称"),
+        ("accessstatus", "准入状态"),
+        ("freezestatus", "冻结状态"),
+        ("pubts", "更新时间"),
     ]
-    vendors_sheet.append(vendor_headers)
+    vendors_sheet.append([label for _key, label in vendor_columns])
     for row in rows:
-        vendors_sheet.append([row.get(header, "") for header in vendor_headers])
+        vendors_sheet.append([row.get(key, "") for key, _label in vendor_columns])
 
-    manifest_sheet = workbook.create_sheet("manifest")
-    manifest_sheet.append(["key", "value"])
+    manifest_labels = {
+        "syncedAt": "同步时间",
+        "sourceRecordCount": "用友原始记录数",
+        "fetchedRecordCount": "实际抓取记录数",
+        "availableRecordCount": "可用记录数",
+        "uniqueVendorCount": "去重后供应商数",
+        "pageSize": "分页大小",
+        "maxPages": "最大抓取页数",
+        "sourceApi": "来源接口",
+        "tokenExpire": "令牌有效期秒数",
+    }
+    manifest_sheet = workbook.create_sheet("同步信息")
+    manifest_sheet.append(["项目", "值"])
     for key, value in manifest.items():
-        manifest_sheet.append([key, json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value])
+        label = manifest_labels.get(key, key)
+        display_value = json.dumps(value, ensure_ascii=False) if isinstance(value, (dict, list)) else value
+        manifest_sheet.append([label, display_value])
     workbook.save(path)
 
 
@@ -306,7 +319,7 @@ def sync_suppliers_to_xlsx(output_dir: Path) -> dict[str, Any]:
     unique_records = dedupe_vendors(available_records, org_id)
     rows = [vendor_cache_row(record) for record in unique_records]
     synced_at = now_shanghai().isoformat(timespec="seconds")
-    file_name = f"supplier-cache_{now_shanghai().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    file_name = "supplier-cache.xlsx"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / file_name
     manifest = {

@@ -449,7 +449,7 @@ Authorization: Bearer <agentAccessToken>
 ```json
 {
   "ok": true,
-  "fileName": "supplier-cache_20260529_193000.xlsx",
+  "fileName": "supplier-cache.xlsx",
   "sourceApi": "vendor/queryByPage",
   "sourceRecordCount": 3400,
   "uniqueVendorCount": 3398,
@@ -458,12 +458,12 @@ Authorization: Bearer <agentAccessToken>
   "dingDrive": {
     "spaceId": "space_xxx",
     "fileId": "file_xxx",
-    "fileName": "supplier-cache_20260529_193000.xlsx",
-    "filePath": "合同/2026/05/supplier-cache_20260529_193000.xlsx"
+    "fileName": "supplier-cache.xlsx",
+    "filePath": "合同/2026/05/supplier-cache.xlsx"
   },
   "download": {
     "type": "agent_proxy",
-    "fileName": "supplier-cache_20260529_193000.xlsx",
+    "fileName": "supplier-cache.xlsx",
     "savePathHint": "文件将保存到浏览器或钉钉客户端的默认下载目录；如系统弹窗提示，请选择目标保存位置。"
   }
 }
@@ -475,9 +475,9 @@ Authorization: Bearer <agentAccessToken>
 - AgentRun 分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含 `data: "*"`, `queryOrders: [{ field: "code", order: "asc" }]` 和 `partParam.vendorbanks.data: "*,openaccountbank.name"`。
 - 供应商记录按 `id` 去重；同一 `id` 出现多条记录时，优先保留可用且默认组织更匹配的记录。
 - `vendorbanks` 中优先选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；否则选择第一条未停用账户。
-- 缓存文件第一版使用 `.xlsx`，包含 `vendors` 和 `manifest` 两个 Sheet。
-- `vendors` Sheet 字段包括：`id`、`code`、`name`、`creditcode`、`address`、`contactphone`、`openaccountbankName`、`bankAccount`、`bankAccountName`、`vendorFax`、`org`、`orgName`、`accessstatus`、`freezestatus`、`pubts`。
-- `manifest` Sheet 字段包括：`syncedAt`、`sourceRecordCount`、`uniqueVendorCount`、`pageSize`、`sourceApi`。
+- 缓存文件第一版使用固定文件名 `supplier-cache.xlsx`，包含 `供应商` 和 `同步信息` 两个 Sheet，重复同步时按钉盘冲突策略覆盖或保留已有文件。
+- `供应商` Sheet 表头使用中文，包括：供应商ID、供应商编码、供应商名称、统一社会信用代码、地址、电话、开户行、银行账号、户名、传真、组织ID、组织名称、准入状态、冻结状态、更新时间。
+- `同步信息` Sheet 表头使用中文，包括：同步时间、用友原始记录数、实际抓取记录数、可用记录数、去重后供应商数、分页大小、来源接口、令牌有效期秒数。
 - 同步完成后本地临时缓存文件应清理；长期缓存以钉盘文件为准。
 - 前端不得传入或展示用友 `access_token`、`appKey`、`appSecret`。
 

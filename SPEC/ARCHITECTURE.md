@@ -232,7 +232,7 @@ flowchart TD
 4. AgentRun 过滤冻结或停用记录，并按供应商主档 `id` 去重。
 5. 同一供应商有多条记录时，优先保留可用、配置组织匹配或企业账号级记录。
 6. AgentRun 从 `vendorbanks` 中选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；若不存在默认账户，则选择第一条未停用账户。
-7. AgentRun 生成包含 `vendors` 和 `manifest` 两个 Sheet 的 `.xlsx` 缓存文件。
+7. AgentRun 生成固定文件名 `supplier-cache.xlsx`，包含 `供应商` 和 `同步信息` 两个 Sheet，表头使用中文业务名称。
 8. AgentRun 复用钉盘上传能力将缓存文件上传至配置的钉盘目录，上传成功后清理本地临时文件。
 
 ## 7. 鉴权设计
