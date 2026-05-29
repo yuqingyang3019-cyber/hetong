@@ -1258,8 +1258,49 @@ button:disabled {
   margin-bottom: 6px;
 }
 
+.contract-date-editors {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(78px, 1fr) minmax(58px, 0.72fr) minmax(58px, 0.72fr);
+}
+
+.contract-date-part {
+  align-items: center;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(148, 163, 184, 0.42);
+  border-radius: 10px;
+  display: flex;
+  min-width: 0;
+  padding: 0 7px;
+}
+
+.contract-date-editor {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  color: #047857;
+  font-size: 0.875rem;
+  font-weight: 800;
+  min-height: 34px;
+  min-width: 0;
+  padding: 4px 0;
+}
+
+.contract-date-editor:focus {
+  box-shadow: none;
+  outline: none;
+}
+
+.contract-date-suffix {
+  color: var(--color-text-muted);
+  flex: 0 0 auto;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
 .contract-preview-field.is-missing .contract-field-editor,
-.contract-preview-table td.is-missing .contract-table-editor {
+.contract-preview-table td.is-missing .contract-table-editor,
+.contract-preview-field.is-missing .contract-date-editor {
   color: #991b1b;
 }
 

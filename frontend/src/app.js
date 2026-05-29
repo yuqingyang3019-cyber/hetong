@@ -65,6 +65,11 @@ const templateSchemaFiles = Object.freeze({
   laborSubcontract: "labor-subcontract",
 });
 const autoDateFieldKeys = Object.freeze(["signYear", "signMonth", "signDay", "signatureYear", "signatureMonth", "signatureDay"]);
+const dateFieldGroups = Object.freeze([
+  { id: "signDate", label: "签订日期", keys: ["signYear", "signMonth", "signDay"], suffixes: ["年", "月", "日"] },
+  { id: "deliveryDate", label: "最迟交货日期", keys: ["deliveryYear", "deliveryMonth", "deliveryDay"], suffixes: ["年", "月", "日"] },
+  { id: "signatureDate", label: "签署日期", keys: ["signatureYear", "signatureMonth", "signatureDay"], suffixes: ["年", "月", "日"] },
+]);
 const taxCalculationFieldKeys = Object.freeze(["totalAmount", "amountWithoutTax", "taxAmount", "taxRate"]);
 const deliveryCalculationFieldKeys = Object.freeze(["deliveryDays"]);
 const busyStatuses = new Set(["uploading", "parsing", "identifying", "generating"]);
@@ -1003,6 +1008,34 @@ function fieldValueForEditor(value) {
   return String(value);
 }
 
+function dateFieldGroupForKey(key) {
+  return dateFieldGroups.find((group) => group.keys.includes(key)) || null;
+}
+
+function dateFieldGroupCanRender(group, schemaKeys) {
+  return group.keys.every((key) => schemaKeys.has(key));
+}
+
+function dateGroupValueForEditor(group, extractedData) {
+  return group.keys
+    .map((key, index) => {
+      const value = fieldValueForEditor(getByDotPath(extractedData, key));
+      return value ? `${value}${group.suffixes[index] || ""}` : "";
+    })
+    .filter(Boolean)
+    .join("");
+}
+
+function dateGroupHasMissing(group, extractedData) {
+  return group.keys.some((key) => isBlankField(getByDotPath(extractedData, key)));
+}
+
+function setDateGroupClass(element, group, extractedData) {
+  const missing = dateGroupHasMissing(group, extractedData);
+  element.classList.toggle("is-missing", missing);
+  element.classList.toggle("is-recognized", !missing);
+}
+
 function createCompactEditableValue(value, editor, updateValueText) {
   const details = createEl("details", "contract-field-details");
   const summary = createEl("summary", "contract-field-value");
@@ -1108,6 +1141,10 @@ function syncCalculatedScalarEditors(editors, extractedData, changedKeys) {
     const entry = editors.get(key);
     if (!entry) return;
     entry.editor.value = fieldValueForEditor(getByDotPath(extractedData, key));
+    if (entry.syncCalculated) {
+      entry.syncCalculated();
+      return;
+    }
     setRecognizedClass(entry.field, entry.editor.value);
     entry.updateCompactValue?.current?.(entry.editor.value);
   });
@@ -1334,6 +1371,63 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
   return field;
 }
 
+function createContractDateField(group, stats, prefix = "", options = {}) {
+  group.keys.forEach((key) => markPreviewStat(stats, getByDotPath(options.extractedData, key)));
+  const missing = dateGroupHasMissing(group, options.extractedData);
+  const field = createEl("div", [
+    "contract-preview-field",
+    "contract-date-field",
+    missing ? "is-missing" : "is-recognized",
+    group.keys.some((key) => options.autoFilledKeys?.has(key)) ? "is-auto-filled" : "",
+  ].filter(Boolean).join(" "));
+  const updateCompactValue = { current: null };
+  const editorGroup = createEl("div", "contract-date-editors");
+  const syncDateDisplay = () => {
+    updateCompactValue.current?.(dateGroupValueForEditor(group, options.extractedData));
+  };
+
+  group.keys.forEach((key, index) => {
+    const editorWrap = createEl("label", "contract-date-part");
+    const editor = createEl("input", "contract-date-editor");
+    editor.type = "text";
+    editor.inputMode = "numeric";
+    editor.value = fieldValueForEditor(getByDotPath(options.extractedData, key));
+    editor.placeholder = group.suffixes[index] || "";
+    editor.disabled = Boolean(options.disabled);
+    editor.setAttribute("aria-label", `${prefix}${group.label}${group.suffixes[index] || ""}`);
+    if (options.scalarEditors) {
+      options.scalarEditors.set(key, {
+        editor,
+        field,
+        updateCompactValue,
+        syncCalculated: () => {
+          setDateGroupClass(field, group, options.extractedData);
+          syncDateDisplay();
+        },
+      });
+    }
+    editor.addEventListener("input", () => {
+      setByDotPath(options.extractedData, key, editor.value);
+      setDateGroupClass(field, group, options.extractedData);
+      syncDateDisplay();
+      refreshFieldPreviewSummary(options.schema, options.extractedData);
+    });
+    editorWrap.append(editor, createEl("span", "contract-date-suffix", group.suffixes[index] || ""));
+    editorGroup.append(editorWrap);
+  });
+
+  field.append(createEl("span", "contract-field-label", `${prefix}${group.label}`));
+  if (missing) {
+    field.append(editorGroup);
+  } else if (options.disabled) {
+    field.append(createEl("span", "contract-field-value is-readonly", dateGroupValueForEditor(group, options.extractedData)));
+  } else {
+    field.append(createCompactEditableValue(dateGroupValueForEditor(group, options.extractedData), editorGroup, updateCompactValue));
+  }
+  if (group.keys.some((key) => options.autoFilledKeys?.has(key))) field.append(createEl("span", "contract-field-badge", "系统自动填充"));
+  return field;
+}
+
 function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview) {
   const scalars = Array.isArray(schema?.scalars) ? schema.scalars : [];
   if (!scalars.length) return;
@@ -1342,13 +1436,35 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
   section.append(createEl("h4", "", "合同条款字段"));
   const body = createEl("div", "contract-preview-flow");
   const scalarEditors = new Map();
+  const schemaKeys = new Set(scalars.map((field) => field.key));
+  const renderedDateGroups = new Set();
+  let displayIndex = 1;
 
-  scalars.forEach((field, index) => {
+  scalars.forEach((field) => {
+    const dateGroup = dateFieldGroupForKey(field.key);
+    if (dateGroup && dateFieldGroupCanRender(dateGroup, schemaKeys)) {
+      if (renderedDateGroups.has(dateGroup.id)) return;
+      renderedDateGroups.add(dateGroup.id);
+      body.append(createContractDateField(
+        dateGroup,
+        stats,
+        `${displayIndex}. `,
+        {
+          autoFilledKeys,
+          extractedData,
+          scalarEditors,
+          schema,
+          disabled: !canEditPreview,
+        },
+      ));
+      displayIndex += 1;
+      return;
+    }
     body.append(createContractField(
       field.label || field.key,
       getByDotPath(extractedData, field.key),
       stats,
-      `${index + 1}. `,
+      `${displayIndex}. `,
       {
         autoFilled: autoFilledKeys?.has(field.key),
         extractedData,
@@ -1358,6 +1474,7 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
         disabled: !canEditPreview,
       },
     ));
+    displayIndex += 1;
   });
 
   section.append(body);
