@@ -1094,22 +1094,6 @@ function createScalarFieldGroups(scalars, extractedData) {
   return Array.from(groups.values()).filter((group) => group.entries.length);
 }
 
-function createCompactEditableValue(value, editor, updateValueText) {
-  const details = createEl("details", "contract-field-details");
-  const summary = createEl("summary", "contract-field-value");
-  const text = createEl("span", "contract-field-value-text", value || "已识别，点击查看");
-  text.title = value || "";
-  const hint = createEl("span", "contract-field-edit-hint", "修改");
-  summary.append(text, hint);
-  details.append(summary, editor);
-  updateValueText.current = (nextValue) => {
-    const displayValue = fieldValueForEditor(nextValue) || "待填写";
-    text.textContent = displayValue;
-    text.title = displayValue;
-  };
-  return details;
-}
-
 function parseDecimalField(value) {
   if (value == null) return null;
   const text = String(value).trim();
@@ -1131,8 +1115,81 @@ function formatCalculatedAmount(value) {
   return String(Math.round((value + Number.EPSILON) * 100) / 100);
 }
 
+function integerToChineseAmount(integerText) {
+  const digits = ["零", "壹", "贰", "叁", "肆", "伍", "陆", "柒", "捌", "玖"];
+  const units = ["", "拾", "佰", "仟"];
+  const sections = ["", "万", "亿", "兆"];
+  const normalized = String(integerText || "").replace(/^0+(?=\d)/, "") || "0";
+  if (normalized === "0") return "零";
+
+  const sectionToChinese = (sectionNumber) => {
+    let sectionResult = "";
+    let zeroInSection = false;
+    String(sectionNumber).padStart(4, "0").split("").forEach((char, index) => {
+      const digit = Number(char);
+      const unitIndex = 3 - index;
+      if (digit === 0) {
+        if (sectionResult) zeroInSection = true;
+        return;
+      }
+      if (zeroInSection) {
+        sectionResult += digits[0];
+        zeroInSection = false;
+      }
+      sectionResult += `${digits[digit]}${units[unitIndex]}`;
+    });
+    return sectionResult;
+  };
+
+  const sectionNumbers = [];
+  for (let cursor = normalized.length; cursor > 0; cursor -= 4) {
+    sectionNumbers.unshift(Number(normalized.slice(Math.max(0, cursor - 4), cursor)));
+  }
+
+  let result = "";
+  let needZero = false;
+  sectionNumbers.forEach((sectionNumber, index) => {
+    const sectionIndex = sectionNumbers.length - index - 1;
+    if (sectionNumber === 0) {
+      if (result) needZero = true;
+      return;
+    }
+    if (result && (needZero || sectionNumber < 1000)) result += digits[0];
+    result += `${sectionToChinese(sectionNumber)}${sections[sectionIndex] || ""}`;
+    needZero = false;
+  });
+  return result.replace(/零+/g, "零").replace(/零$/g, "");
+}
+
+function formatChineseAmount(value) {
+  const number = parseDecimalField(value);
+  if (number == null || number < 0) return "";
+  const fixed = number.toFixed(2);
+  const [integerText, decimalText = "00"] = fixed.split(".");
+  const integerPart = integerToChineseAmount(integerText);
+  const jiao = Number(decimalText[0] || 0);
+  const fen = Number(decimalText[1] || 0);
+  let decimalPart = "";
+  if (jiao) decimalPart += `${integerToChineseAmount(jiao)}角`;
+  if (fen) decimalPart += `${integerToChineseAmount(fen)}分`;
+  return `人民币${integerPart}元${decimalPart || "整"}`;
+}
+
 function schemaHasScalar(schema, key) {
   return Array.isArray(schema?.scalars) && schema.scalars.some((field) => field?.key === key);
+}
+
+function syncTotalAmountChinese(extractedData) {
+  if (!extractedData || typeof extractedData !== "object") return new Set();
+  const chineseAmount = formatChineseAmount(extractedData.totalAmount);
+  if (!chineseAmount) {
+    if (isBlankField(extractedData.totalAmountChinese)) return new Set();
+    extractedData.totalAmountChinese = "";
+    return new Set(["totalAmountChinese"]);
+  }
+  if (extractedData.totalAmountChinese === chineseAmount) return new Set();
+  extractedData.totalAmountChinese = chineseAmount;
+  return new Set(["totalAmountChinese"]);
 }
 
 function firstPresentAmountField(extractedData) {
@@ -1204,7 +1261,6 @@ function syncCalculatedScalarEditors(editors, extractedData, changedKeys) {
       return;
     }
     setRecognizedClass(entry.field, entry.editor.value);
-    entry.updateCompactValue?.current?.(entry.editor.value);
   });
 }
 
@@ -1396,11 +1452,10 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
   editor.rows = 2;
   editor.value = fieldValueForEditor(value);
   editor.placeholder = "待填写";
-  editor.disabled = Boolean(options.disabled);
+  editor.disabled = Boolean(options.disabled || options.readonly);
   editor.setAttribute("aria-label", `${prefix}${label}`);
-  const updateCompactValue = { current: null };
   if (options.scalarEditors && options.fieldKey) {
-    options.scalarEditors.set(options.fieldKey, { editor, field, updateCompactValue });
+    options.scalarEditors.set(options.fieldKey, { editor, field });
   }
   editor.addEventListener("input", () => {
     setByDotPath(options.extractedData, options.fieldKey, editor.value);
@@ -1412,19 +1467,16 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
       const changedKeys = applyDeliveryDateCalculation(options.extractedData, { force: true });
       syncCalculatedScalarEditors(options.scalarEditors, options.extractedData, changedKeys);
     }
+    if (schemaHasScalar(options.schema, "totalAmountChinese")) {
+      const changedKeys = syncTotalAmountChinese(options.extractedData);
+      syncCalculatedScalarEditors(options.scalarEditors, options.extractedData, changedKeys);
+    }
     setRecognizedClass(field, editor.value);
-    updateCompactValue.current?.(editor.value);
     refreshFieldPreviewSummary(options.schema, options.extractedData);
   });
 
   field.append(createEl("span", "contract-field-label", `${prefix}${label}`));
-  if (missing) {
-    field.append(editor);
-  } else if (options.disabled) {
-    field.append(createEl("span", "contract-field-value is-readonly", fieldValueForEditor(value)));
-  } else {
-    field.append(createCompactEditableValue(fieldValueForEditor(value), editor, updateCompactValue));
-  }
+  field.append(editor);
   if (options.autoFilled) field.append(createEl("span", "contract-field-badge", "系统自动填充"));
   return field;
 }
@@ -1438,11 +1490,7 @@ function createContractDateField(group, stats, prefix = "", options = {}) {
     missing ? "is-missing" : "is-recognized",
     group.keys.some((key) => options.autoFilledKeys?.has(key)) ? "is-auto-filled" : "",
   ].filter(Boolean).join(" "));
-  const updateCompactValue = { current: null };
   const editorGroup = createEl("div", "contract-date-editors");
-  const syncDateDisplay = () => {
-    updateCompactValue.current?.(dateGroupValueForEditor(group, options.extractedData));
-  };
 
   group.keys.forEach((key, index) => {
     const editorWrap = createEl("label", "contract-date-part");
@@ -1457,17 +1505,14 @@ function createContractDateField(group, stats, prefix = "", options = {}) {
       options.scalarEditors.set(key, {
         editor,
         field,
-        updateCompactValue,
         syncCalculated: () => {
           setDateGroupClass(field, group, options.extractedData);
-          syncDateDisplay();
         },
       });
     }
     editor.addEventListener("input", () => {
       setByDotPath(options.extractedData, key, editor.value);
       setDateGroupClass(field, group, options.extractedData);
-      syncDateDisplay();
       refreshFieldPreviewSummary(options.schema, options.extractedData);
     });
     editorWrap.append(editor, createEl("span", "contract-date-suffix", group.suffixes[index] || ""));
@@ -1475,13 +1520,7 @@ function createContractDateField(group, stats, prefix = "", options = {}) {
   });
 
   field.append(createEl("span", "contract-field-label", `${prefix}${group.label}`));
-  if (missing) {
-    field.append(editorGroup);
-  } else if (options.disabled) {
-    field.append(createEl("span", "contract-field-value is-readonly", dateGroupValueForEditor(group, options.extractedData)));
-  } else {
-    field.append(createCompactEditableValue(dateGroupValueForEditor(group, options.extractedData), editorGroup, updateCompactValue));
-  }
+  field.append(editorGroup);
   if (group.keys.some((key) => options.autoFilledKeys?.has(key))) field.append(createEl("span", "contract-field-badge", "系统自动填充"));
   return field;
 }
@@ -1538,9 +1577,10 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
           stats,
           `${displayIndex}. `,
           {
-            autoFilled: autoFilledKeys?.has(field.key),
+            autoFilled: autoFilledKeys?.has(field.key) || field.key === "totalAmountChinese",
             extractedData,
             fieldKey: field.key,
+            readonly: field.key === "totalAmountChinese",
             scalarEditors,
             schema,
             disabled: !canEditPreview,
@@ -1598,20 +1638,12 @@ function renderTablePreview(paper, schema, extractedData, stats, canEditPreview)
         editor.placeholder = "待填写";
         editor.disabled = !canEditPreview;
         editor.setAttribute("aria-label", `${tableDef?.label || tableName} 第 ${rowIndex + 1} 行 ${column.label || column.key}`);
-        const updateCompactValue = { current: null };
         editor.addEventListener("input", () => {
           if (row && typeof row === "object") setByDotPath(row, column.key, editor.value);
           setRecognizedClass(cell, editor.value);
-          updateCompactValue.current?.(editor.value);
           refreshFieldPreviewSummary(schema, extractedData);
         });
-        if (isBlankField(value)) {
-          cell.append(editor);
-        } else if (!canEditPreview) {
-          cell.append(createEl("span", "contract-table-value is-readonly", fieldValueForEditor(value)));
-        } else {
-          cell.append(createCompactEditableValue(fieldValueForEditor(value), editor, updateCompactValue));
-        }
+        cell.append(editor);
         bodyRow.append(cell);
       });
       tbody.append(bodyRow);
@@ -1629,6 +1661,10 @@ async function renderFieldPreview(task) {
   const autoFilledKeys = applyAutoDateDefaults(extractedData);
   if (schemaHasScalar(schema, "taxRate")) {
     applyTaxCalculations(extractedData, "taxRate", { defaultTaxRate: true }).forEach((key) => autoFilledKeys.add(key));
+  }
+  if (schemaHasScalar(schema, "totalAmountChinese")) {
+    syncTotalAmountChinese(extractedData).forEach((key) => autoFilledKeys.add(key));
+    if (!isBlankField(extractedData.totalAmountChinese)) autoFilledKeys.add("totalAmountChinese");
   }
   if (schemaHasScalar(schema, "deliveryDays")) {
     applyDeliveryDateCalculation(extractedData).forEach((key) => autoFilledKeys.add(key));
