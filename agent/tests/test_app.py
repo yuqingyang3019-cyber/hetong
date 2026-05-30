@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
-from agent.contract.render import build_docxtpl_context
+from agent.contract.render import build_docxtpl_context, merge_render_data, render_contract
 from agent.main import app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
 
 
@@ -629,6 +629,69 @@ def test_confirmed_blank_fields_render_empty() -> None:
     assert confirmed_context["items"][0]["name"] == ""
 
 
+@pytest.mark.parametrize("template_type", ["caigouhetong", "nonStandardNoInstall", "nonStandardWithInstall"])
+def test_equipment_item_rows_render_vertically(template_type: str) -> None:
+    config = get_template_config(template_type)
+    render_data = merge_render_data({
+        "contractNo": f"test-{template_type}",
+        "buyerPhone": "0571-00000000",
+        "supplierName": "测试供应商",
+        "supplierAddress": "测试地址",
+        "supplierBank": "测试银行",
+        "supplierAccount": "123456",
+        "supplierTaxNo": "tax-no",
+        "supplierPhone": "13800000000",
+        "projectName": "测试项目",
+        "purchaseSubject": "测试设备采购",
+        "totalAmount": "300",
+        "totalAmountChinese": "叁佰元整",
+        "taxRate": "13",
+        "amountWithoutTax": "265.49",
+        "taxAmount": "34.51",
+        "items": [
+            {
+                "index": "1",
+                "name": "设备A",
+                "spec": "A-100",
+                "unit": "台",
+                "quantity": "1",
+                "unitPrice": "100",
+                "totalPrice": "100",
+                "tagNo": "TAG-A",
+            },
+            {
+                "index": "2",
+                "name": "设备B",
+                "spec": "B-200",
+                "unit": "台",
+                "quantity": "2",
+                "unitPrice": "100",
+                "totalPrice": "200",
+                "tagNo": "TAG-B",
+            },
+        ],
+    }, config)
+
+    rendered_path = render_contract(render_data, config, f"test-{template_type}-vertical-rows", blank_missing=True)
+    try:
+        with ZipFile(rendered_path) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+    finally:
+        rendered_path.unlink(missing_ok=True)
+
+    assert "{{" not in xml
+    assert "{%" not in xml
+
+    row_texts = [
+        "".join(re.findall(r"<w:t[^>]*>(.*?)</w:t>", row))
+        for row in re.findall(r"<w:tr[\s\S]*?</w:tr>", xml)
+    ]
+    row_a = next(index for index, text in enumerate(row_texts) if "设备A" in text)
+    row_b = next(index for index, text in enumerate(row_texts) if "设备B" in text)
+    assert row_a != row_b
+    assert row_a < row_b
+
+
 def test_agui_passes_confirmed_extracted_data() -> None:
     upload_id = upload_quote(content=b"%PDF-1.4 raw quote")["id"]
     extracted = {"supplierName": "供应商A", "items": []}
@@ -675,7 +738,7 @@ def test_template_placeholders_match_schema() -> None:
             xml = docx.read("word/document.xml").decode("utf-8")
 
         placeholders = set(re.findall(r"\{\{\s*([^}]+?)\s*\}\}", xml))
-        loop_bindings = dict(re.findall(r"\{%\s*for\s+(\w+)\s+in\s+(\w+)\s*%\}", xml))
+        loop_bindings = dict(re.findall(r"\{%\s*(?:tr\s+)?for\s+(\w+)\s+in\s+(\w+)\s*%\}", xml))
         assert placeholders, f"{template_type} should contain docxtpl placeholders"
 
         scalar_keys = set(config.scalar_keys)
