@@ -49,6 +49,14 @@ def _union_id(current_user: dict[str, Any] | None) -> str:
     return value
 
 
+def _operator_id(current_user: dict[str, Any] | None) -> str:
+    user = current_user or {}
+    value = str(user.get("userid") or user.get("userId") or "").strip()
+    if not value:
+        raise RuntimeError("当前用户缺少 userid，无法搜索钉盘文件")
+    return value
+
+
 def _storage_client() -> Any:
     try:
         from alibabacloud_dingtalk.storage_2_0.client import Client as DingtalkStorageClient
@@ -223,7 +231,7 @@ def upload_supplier_cache_to_dingdrive(path: Path, current_user: dict[str, Any] 
 
 
 def find_supplier_cache_file(current_user: dict[str, Any] | None) -> dict[str, Any] | None:
-    union_id = _union_id(current_user)
+    operator_id = _operator_id(current_user)
     token = dingtalk_oapi.get_app_access_token()
     configured_space_id = _config_value("DINGTALK_DRIVE_SPACE_ID")
 
@@ -236,7 +244,7 @@ def find_supplier_cache_file(current_user: dict[str, Any] | None) -> dict[str, A
     option = storage_models.SearchDentriesRequestOption(**option_kwargs)
     request = storage_models.SearchDentriesRequest(
         keyword=SUPPLIER_CACHE_FILE_NAME,
-        operator_id=union_id,
+        operator_id=operator_id,
         option=option,
     )
     response = _storage_client().search_dentries_with_options(request, headers, _runtime_options())

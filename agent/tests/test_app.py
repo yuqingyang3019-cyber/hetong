@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
+from agent import dingdrive
 from agent.contract.extract import extract_excel_text, extract_pdf_text
 from agent.contract.render import build_docxtpl_context, merge_render_data, render_contract
 from agent.main import app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
@@ -304,6 +305,44 @@ def test_upsert_confirmed_supplier_row_updates_by_name() -> None:
     assert rows[0]["creditcode"] == "9133"
     assert rows[0]["address"] == "用户确认地址"
     assert rows[0]["openaccountbankName"] == "用户确认开户行"
+
+
+def test_supplier_cache_search_uses_userid_operator() -> None:
+    class FakeHeaders:
+        x_acs_dingtalk_access_token = None
+
+    class FakeOption:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    class FakeRequest:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+    class FakeModels:
+        SearchDentriesHeaders = FakeHeaders
+        SearchDentriesRequestOption = FakeOption
+        SearchDentriesRequest = FakeRequest
+
+    class FakeClient:
+        request: FakeRequest | None = None
+
+        def search_dentries_with_options(self, request: FakeRequest, headers: object, runtime: object) -> dict:
+            self.request = request
+            return {"body": {"items": []}}
+
+    fake_client = FakeClient()
+    with patch("agent.dingdrive._models", return_value=FakeModels), patch(
+        "agent.dingdrive._storage_client",
+        return_value=fake_client,
+    ), patch("agent.dingdrive._runtime_options", return_value=object()), patch(
+        "agent.dingdrive.dingtalk_oapi.get_app_access_token",
+        return_value="token",
+    ), patch.dict(os.environ, {"DINGTALK_DRIVE_SPACE_ID": "123"}):
+        assert dingdrive.find_supplier_cache_file({"userid": "uid1", "unionid": "union-x"}) is None
+
+    assert fake_client.request is not None
+    assert fake_client.request.kwargs["operator_id"] == "uid1"
 
 
 def test_upload_owner_cannot_access_other_user_upload() -> None:
