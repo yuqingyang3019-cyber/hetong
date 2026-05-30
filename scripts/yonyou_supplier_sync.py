@@ -15,12 +15,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agent.yonyou_vendor import (  # noqa: E402
     DEFAULT_PAGE_SIZE,
+    VENDOR_QUERY_PATH,
+    api_post,
     dedupe_vendors,
     env_int,
     get_access_token,
     optional_env,
-    query_vendor_page,
     resolve_endpoints,
+    success_code,
     vendor_cache_row,
     vendor_is_available,
     write_supplier_cache_xlsx,
@@ -29,6 +31,23 @@ from agent.yonyou_vendor import (  # noqa: E402
 
 
 logger = logging.getLogger("yonyou_supplier_sync")
+
+EXPLICIT_VENDOR_DATA_FIELDS = ",".join([
+    "id",
+    "code",
+    "name",
+    "creditcode",
+    "address",
+    "contactphone",
+    "vendorphone",
+    "vendorfax",
+    "vendoraddress",
+    "orgId",
+    "org",
+    "accessstatus",
+    "freezestatus",
+    "pubts",
+])
 
 
 def configure_logging(verbose: bool) -> None:
@@ -113,6 +132,46 @@ def build_manifest(
     }
 
 
+def explicit_vendor_query_payload(page_index: int, page_size: int) -> dict[str, Any]:
+    return {
+        "data": EXPLICIT_VENDOR_DATA_FIELDS,
+        "page": {
+            "pageSize": page_size,
+            "pageIndex": page_index,
+        },
+        "queryOrders": [
+            {
+                "field": "code",
+                "order": "asc",
+            }
+        ],
+        "partParam": {
+            "vendorbanks": {
+                "data": "*,openaccountbank.name",
+            }
+        },
+    }
+
+
+def query_vendor_page_explicit(gateway_url: str, access_token: str, page_index: int, page_size: int) -> dict[str, Any]:
+    body = api_post(
+        f"{gateway_url}{VENDOR_QUERY_PATH}",
+        {"access_token": access_token},
+        explicit_vendor_query_payload(page_index, page_size),
+    )
+    if not success_code(body, "200"):
+        raise RuntimeError(f"用友供应商分页查询失败：{body.get('message') or body}")
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    records = data.get("recordList") if isinstance(data.get("recordList"), list) else []
+    return {
+        "recordCount": int(data.get("recordCount") or 0),
+        "pageIndex": int(data.get("pageIndex") or page_index),
+        "pageSize": int(data.get("pageSize") or page_size),
+        "pageCount": int(data.get("pageCount") or 0),
+        "records": [record for record in records if isinstance(record, dict)],
+    }
+
+
 def main() -> int:
     args = parse_args()
     configure_logging(args.verbose)
@@ -139,8 +198,9 @@ def main() -> int:
         page_index = 1
 
         logger.info("开始分页读取供应商：pageSize=%s，maxPages=%s", page_size, args.max_pages or "all")
+        logger.info("使用显式字段 data：%s", EXPLICIT_VENDOR_DATA_FIELDS)
         while True:
-            page = query_vendor_page(gateway_url, access_token, page_index, page_size)
+            page = query_vendor_page_explicit(gateway_url, access_token, page_index, page_size)
             if page_index == 1:
                 source_record_count = page["recordCount"]
             records = page["records"]
