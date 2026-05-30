@@ -12,6 +12,7 @@ from openai import APITimeoutError, OpenAI
 from .config import TemplateConfig
 
 logger = logging.getLogger("agentrun")
+SDK_MAX_RETRIES = 0
 
 
 SYSTEM_PROMPT = """你是合同占位符字段匹配助手。你的任务是根据用户提供的报价单解析文本和用户补充信息，理解采购内容与表格结构，再按「合同模板字段契约」输出 JSON。
@@ -49,19 +50,6 @@ def env_float(name: str, default: float) -> float:
     return value
 
 
-def env_int(name: str, default: int) -> int:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except ValueError as exc:
-        raise RuntimeError(f"环境变量 {name} 必须是整数") from exc
-    if value < 0:
-        raise RuntimeError(f"环境变量 {name} 不能小于 0")
-    return value
-
-
 def log_meta(**meta: Any) -> str:
     clean = {key: value for key, value in meta.items() if value is not None}
     if not clean:
@@ -82,11 +70,61 @@ def elapsed_ms(start: float) -> int:
 
 
 def is_timeout_error(exc: BaseException) -> bool:
-    if isinstance(exc, (APITimeoutError, TimeoutError)):
-        return True
-    class_name = exc.__class__.__name__.lower()
-    message = str(exc).lower()
-    return "timeout" in class_name or "timed out" in message or "timeout" in message
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, (APITimeoutError, TimeoutError)):
+            return True
+        class_name = current.__class__.__name__.lower()
+        message = str(current).lower()
+        if "timeout" in class_name or "timed out" in message or "timeout" in message:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def parse_model_chain(primary_model: str, fallback_models: str | None = None) -> list[str]:
+    models: list[str] = []
+    for raw_model in [primary_model, *(fallback_models or "").split(",")]:
+        model = raw_model.strip()
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
+def dashscope_model_chain() -> list[str]:
+    return parse_model_chain(require_env("DASHSCOPE_MODEL"), os.getenv("DASHSCOPE_FALLBACK_MODELS", ""))
+
+
+def error_chain_summary(exc: BaseException, limit: int = 5) -> list[dict[str, str]]:
+    chain: list[dict[str, str]] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(chain) < limit:
+        seen.add(id(current))
+        chain.append({
+            "type": current.__class__.__name__,
+            "module": current.__class__.__module__,
+            "message": str(current)[:300],
+        })
+        current = current.__cause__ or current.__context__
+    return chain
+
+
+def timeout_layer(exc: BaseException) -> str:
+    for item in error_chain_summary(exc):
+        module = item["module"]
+        type_name = item["type"].lower()
+        if module.startswith("openai") or item["type"] == "APITimeoutError":
+            return "openai"
+        if module.startswith("httpx"):
+            return "httpx"
+        if module.startswith("httpcore"):
+            return "httpcore"
+        if "timeout" in type_name:
+            return module or "unknown"
+    return "unknown"
 
 
 def _set_by_dot_path(target: dict[str, Any], dot_path: str, value: Any) -> None:
@@ -130,11 +168,10 @@ def prune_to_shape(shape: Any, patch: Any) -> Any:
 
 def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_info: str | None = None) -> dict[str, Any]:
     api_key = require_env("DASHSCOPE_API_KEY")
-    model = require_env("DASHSCOPE_MODEL")
+    models = dashscope_model_chain()
     base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1").strip()
     enable_thinking = os.getenv("DASHSCOPE_ENABLE_THINKING", "false").lower() == "true"
     timeout_seconds = env_float("DASHSCOPE_TIMEOUT_SECONDS", 60.0)
-    max_retries = env_int("DASHSCOPE_MAX_RETRIES", 1)
     output_shape = build_output_shape(config)
     user_payload = {
         "quoteText": quote_text,
@@ -150,11 +187,12 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_
         "%s%s",
         "dashscope request start",
         log_meta(
-            model=model,
+            model=models[0],
+            fallbackModels=models[1:],
             baseUrlHost=base_url_host(base_url),
             enableThinking=enable_thinking,
             timeoutSeconds=timeout_seconds,
-            maxRetries=max_retries,
+            maxRetries=SDK_MAX_RETRIES,
             templateType=config.type,
             quoteTextLength=len(quote_text),
             extraInfoLength=len(user_payload["extraInfo"]),
@@ -162,47 +200,79 @@ def extract_template_render_data(quote_text: str, config: TemplateConfig, extra_
             tableCount=len(config.table_bindings),
         ),
     )
-    try:
-        client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds, max_retries=max_retries)
-        completion = client.chat.completions.create(
-            model=model,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-            ],
-            extra_body={"enable_thinking": enable_thinking},
-        )
-    except Exception as exc:
-        error_type = "timeout" if is_timeout_error(exc) else exc.__class__.__name__
-        logger.exception(
-            "%s%s",
-            "dashscope request failed",
-            log_meta(
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds, max_retries=SDK_MAX_RETRIES)
+    failures: list[dict[str, Any]] = []
+    last_error: Exception | None = None
+    for attempt_index, model in enumerate(models, start=1):
+        attempt_start = time.perf_counter()
+        try:
+            logger.info(
+                "%s%s",
+                "dashscope model attempt start",
+                log_meta(model=model, attemptIndex=attempt_index, attemptCount=len(models), templateType=config.type),
+            )
+            completion = client.chat.completions.create(
                 model=model,
-                baseUrlHost=base_url_host(base_url),
-                enableThinking=enable_thinking,
-                timeoutSeconds=timeout_seconds,
-                maxRetries=max_retries,
-                templateType=config.type,
-                elapsedMs=elapsed_ms(start),
-                errorType=error_type,
-                error=str(exc),
-            ),
-        )
-        raise
-    content = completion.choices[0].message.content
-    logger.info(
+                response_format={"type": "json_object"},
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+                ],
+                extra_body={"enable_thinking": enable_thinking},
+            )
+            content = completion.choices[0].message.content
+            if not content or not content.strip():
+                raise RuntimeError("百炼模型返回内容为空")
+            parsed = json.loads(content)
+            logger.info(
+                "%s%s",
+                "dashscope request finished",
+                log_meta(
+                    model=model,
+                    attemptIndex=attempt_index,
+                    templateType=config.type,
+                    contentLength=len(content),
+                    elapsedMs=elapsed_ms(start),
+                ),
+            )
+            return prune_to_shape(output_shape, parsed)
+        except Exception as exc:
+            last_error = exc
+            error_type = "timeout" if is_timeout_error(exc) else exc.__class__.__name__
+            failure = {
+                "model": model,
+                "attemptIndex": attempt_index,
+                "errorType": error_type,
+                "timeout": is_timeout_error(exc),
+                "timeoutLayer": timeout_layer(exc) if is_timeout_error(exc) else None,
+                "error": str(exc),
+                "errorChain": error_chain_summary(exc),
+                "elapsedMs": elapsed_ms(attempt_start),
+            }
+            failures.append(failure)
+            logger.exception(
+                "%s%s",
+                "dashscope model attempt failed",
+                log_meta(
+                    **failure,
+                    baseUrlHost=base_url_host(base_url),
+                    enableThinking=enable_thinking,
+                    timeoutSeconds=timeout_seconds,
+                    maxRetries=SDK_MAX_RETRIES,
+                    templateType=config.type,
+                ),
+            )
+    logger.error(
         "%s%s",
-        "dashscope request finished",
+        "dashscope request all models failed",
         log_meta(
-            model=model,
+            primaryModel=models[0],
+            fallbackModels=models[1:],
             templateType=config.type,
-            contentLength=len(content or ""),
             elapsedMs=elapsed_ms(start),
+            failures=failures,
         ),
     )
-    if not content or not content.strip():
-        raise RuntimeError("百炼模型返回内容为空")
-    parsed = json.loads(content)
-    return prune_to_shape(output_shape, parsed)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("未配置可用的百炼模型")

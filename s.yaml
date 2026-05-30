@@ -33,9 +33,9 @@ resources:
           DASHSCOPE_API_KEY: ${env("DASHSCOPE_API_KEY")}
           DASHSCOPE_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
           DASHSCOPE_MODEL: ${env("DASHSCOPE_MODEL")}
+          DASHSCOPE_FALLBACK_MODELS: ${env("DASHSCOPE_FALLBACK_MODELS", "")}
           DASHSCOPE_ENABLE_THINKING: ${env("DASHSCOPE_ENABLE_THINKING", "false")}
           DASHSCOPE_TIMEOUT_SECONDS: ${env("DASHSCOPE_TIMEOUT_SECONDS", "60")}
-          DASHSCOPE_MAX_RETRIES: ${env("DASHSCOPE_MAX_RETRIES", "1")}
           ALIYUN_ACCESS_KEY_ID: ${env("ALIYUN_ACCESS_KEY_ID")}
           ALIYUN_ACCESS_KEY_SECRET: ${env("ALIYUN_ACCESS_KEY_SECRET")}
           ALIYUN_OCR_ENDPOINT: ocr-api.cn-hangzhou.aliyuncs.com

@@ -1,6 +1,7 @@
 from pathlib import Path
 import base64
 import json
+import logging
 import os
 import re
 import sys
@@ -12,6 +13,7 @@ from zipfile import ZipFile
 import pytest
 from fastapi.testclient import TestClient
 
+from agent.contract import llm as contract_llm
 from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent import dingdrive
 from agent.contract.extract import extract_excel_text, extract_pdf_text
@@ -305,6 +307,111 @@ def test_upsert_confirmed_supplier_row_updates_by_name() -> None:
     assert rows[0]["creditcode"] == "9133"
     assert rows[0]["address"] == "用户确认地址"
     assert rows[0]["openaccountbankName"] == "用户确认开户行"
+
+
+def test_parse_dashscope_model_chain_deduplicates() -> None:
+    assert contract_llm.parse_model_chain(" qwen3.6-plus ", "qwen-plus, qwen-turbo, qwen-plus, ") == [
+        "qwen3.6-plus",
+        "qwen-plus",
+        "qwen-turbo",
+    ]
+
+
+def test_dashscope_fallback_model_succeeds_after_timeout(monkeypatch, caplog) -> None:
+    class FakeMessage:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class FakeChoice:
+        def __init__(self, content: str) -> None:
+            self.message = FakeMessage(content)
+
+    class FakeCompletion:
+        def __init__(self, content: str) -> None:
+            self.choices = [FakeChoice(content)]
+
+    class FakeCompletions:
+        def __init__(self, responses: dict[str, object], calls: list[str]) -> None:
+            self.responses = responses
+            self.calls = calls
+
+        def create(self, **kwargs: object) -> FakeCompletion:
+            model = str(kwargs["model"])
+            self.calls.append(model)
+            response = self.responses[model]
+            if isinstance(response, Exception):
+                raise response
+            return FakeCompletion(str(response))
+
+    class FakeChat:
+        def __init__(self, responses: dict[str, object], calls: list[str]) -> None:
+            self.completions = FakeCompletions(responses, calls)
+
+    class FakeOpenAI:
+        calls: list[str] = []
+        max_retries: object = None
+        responses: dict[str, object] = {
+            "primary-model": TimeoutError("Request timed out."),
+            "fallback-model": json.dumps({"supplierName": "供应商B", "items": []}, ensure_ascii=False),
+        }
+
+        def __init__(self, **kwargs: object) -> None:
+            FakeOpenAI.max_retries = kwargs.get("max_retries")
+            self.chat = FakeChat(FakeOpenAI.responses, FakeOpenAI.calls)
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "key")
+    monkeypatch.setenv("DASHSCOPE_MODEL", "primary-model")
+    monkeypatch.setenv("DASHSCOPE_FALLBACK_MODELS", "fallback-model,primary-model")
+    monkeypatch.delenv("DASHSCOPE_MAX_RETRIES", raising=False)
+    caplog.set_level(logging.ERROR, logger="agentrun")
+
+    with patch("agent.contract.llm.OpenAI", FakeOpenAI):
+        result = contract_llm.extract_template_render_data("报价文本", get_template_config("caigouhetong"))
+
+    assert result["supplierName"] == "供应商B"
+    assert FakeOpenAI.calls == ["primary-model", "fallback-model"]
+    assert FakeOpenAI.max_retries == 0
+    assert any("timeoutLayer" in record.getMessage() and "primary-model" in record.getMessage() for record in caplog.records)
+
+
+def test_timeout_error_chain_summary_detects_httpx_layer() -> None:
+    FakeReadTimeout = type("ReadTimeout", (Exception,), {"__module__": "httpx"})
+    exc = RuntimeError("outer")
+    exc.__cause__ = FakeReadTimeout("The read operation timed out")
+
+    assert contract_llm.is_timeout_error(exc)
+    assert contract_llm.timeout_layer(exc) == "httpx"
+    chain = contract_llm.error_chain_summary(exc)
+    assert [item["type"] for item in chain] == ["RuntimeError", "ReadTimeout"]
+
+
+def test_dashscope_all_models_failed_raises_last_error(monkeypatch, caplog) -> None:
+    class FakeCompletions:
+        calls: list[str] = []
+
+        def create(self, **kwargs: object) -> object:
+            model = str(kwargs["model"])
+            self.calls.append(model)
+            raise TimeoutError(f"{model} timed out")
+
+    class FakeChat:
+        def __init__(self) -> None:
+            self.completions = FakeCompletions()
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs: object) -> None:
+            self.chat = FakeChat()
+
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "key")
+    monkeypatch.setenv("DASHSCOPE_MODEL", "primary-model")
+    monkeypatch.setenv("DASHSCOPE_FALLBACK_MODELS", "fallback-model")
+    caplog.set_level(logging.ERROR, logger="agentrun")
+
+    with patch("agent.contract.llm.OpenAI", FakeOpenAI), pytest.raises(TimeoutError, match="fallback-model timed out"):
+        contract_llm.extract_template_render_data("报价文本", get_template_config("caigouhetong"))
+
+    assert FakeCompletions.calls == ["primary-model", "fallback-model"]
+    assert any("dashscope request all models failed" in record.getMessage() for record in caplog.records)
 
 
 def test_supplier_cache_search_uses_userid_operator() -> None:
