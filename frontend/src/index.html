@@ -32,16 +32,6 @@
       <section class="card workbench-card">
         <p id="status" class="status" aria-live="polite" hidden></p>
 
-        <div id="supplierSyncPanel" class="supplier-sync-panel">
-          <div>
-            <p class="eyebrow">供应商档案</p>
-            <h2>同步用友供应商</h2>
-            <p class="hint">从用友同步供应商抬头和默认银行信息，生成缓存 Excel 并上传钉盘。</p>
-          </div>
-          <button id="syncSuppliersButton" class="btn-secondary supplier-sync-button" type="button" disabled>同步供应商</button>
-          <p id="supplierSyncResult" class="supplier-sync-result hint" aria-live="polite">完成钉钉免登后可同步供应商缓存。</p>
-        </div>
-
         <div id="taskQueueCard" class="task-queue-panel">
           <div class="task-queue-heading">
             <div>
@@ -96,6 +86,14 @@
           </div>
         </div>
       </section>
+
+      <footer id="supplierSyncPanel" class="supplier-sync-panel" aria-label="内测功能">
+        <div class="supplier-sync-copy">
+          <span class="supplier-sync-label">内测功能</span>
+          <span id="supplierSyncResult" class="supplier-sync-result" aria-live="polite">完成钉钉免登后可同步供应商缓存。</span>
+        </div>
+        <button id="syncSuppliersButton" class="supplier-sync-button" type="button" disabled>同步供应商</button>
+      </footer>
 
       <div id="taskDrawerBackdrop" class="drawer-backdrop" hidden></div>
       <aside id="taskDrawer" class="task-drawer" role="dialog" aria-modal="true" aria-labelledby="activeTaskTitle" aria-hidden="true" hidden>

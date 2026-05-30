@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -12,7 +13,7 @@ from typing import Any
 from urllib.parse import quote, urlencode
 
 import requests
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 
 
 DATA_CENTER_URL = "https://apigateway.yonyoucloud.com/open-auth/dataCenter/getGatewayAddress"
@@ -21,6 +22,49 @@ DEFAULT_YONBIP_TOKEN_URL = "https://c3.yonyoucloud.com/iuap-api-gateway"
 TOKEN_PATH = "/open-auth/selfAppAuth/getAccessToken"
 VENDOR_QUERY_PATH = "/yonbip/digitalModel/vendor/queryByPage"
 DEFAULT_PAGE_SIZE = 500
+SUPPLIER_CACHE_FILE_NAME = "supplier-cache.xlsx"
+EXPLICIT_VENDOR_DATA_FIELDS = ",".join([
+    "id",
+    "code",
+    "name",
+    "creditcode",
+    "address",
+    "contactphone",
+    "vendorphone",
+    "vendorfax",
+    "vendoraddress",
+    "orgId",
+    "org",
+    "accessstatus",
+    "freezestatus",
+    "pubts",
+])
+VENDOR_COLUMNS = [
+    ("id", "供应商ID"),
+    ("code", "供应商编码"),
+    ("name", "供应商名称"),
+    ("creditcode", "统一社会信用代码"),
+    ("address", "地址"),
+    ("contactphone", "电话"),
+    ("openaccountbankName", "开户行"),
+    ("bankAccount", "银行账号"),
+    ("bankAccountName", "户名"),
+    ("vendorFax", "传真"),
+    ("org", "组织ID"),
+    ("orgName", "组织名称"),
+    ("accessstatus", "准入状态"),
+    ("freezestatus", "冻结状态"),
+    ("pubts", "更新时间"),
+]
+VENDOR_COLUMN_LABEL_TO_KEY = {label: key for key, label in VENDOR_COLUMNS}
+SUPPLIER_FIELD_MAP = {
+    "supplierAddress": "address",
+    "supplierBank": "openaccountbankName",
+    "supplierAccount": "bankAccount",
+    "supplierTaxNo": "creditcode",
+    "supplierPhone": "contactphone",
+    "supplierFax": "vendorFax",
+}
 
 
 def require_env(name: str) -> str:
@@ -63,6 +107,16 @@ def as_text(value: Any) -> str:
     if isinstance(value, list):
         return " ".join(text for text in (as_text(item) for item in value) if text).strip()
     return str(value).strip()
+
+
+def is_blank(value: Any) -> bool:
+    return not as_text(value)
+
+
+def normalize_supplier_name(value: Any) -> str:
+    text = as_text(value).lower()
+    text = re.sub(r"\s+", "", text)
+    return re.sub(r"[（）()【】\\[\\]\"'“”‘’.,，。;；:：、]", "", text)
 
 
 def api_get(url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -138,7 +192,7 @@ def get_access_token(token_url: str) -> tuple[str, int]:
 
 def vendor_query_payload(page_index: int, page_size: int) -> dict[str, Any]:
     return {
-        "data": "*",
+        "data": EXPLICIT_VENDOR_DATA_FIELDS,
         "page": {
             "pageSize": page_size,
             "pageIndex": page_index,
@@ -245,6 +299,134 @@ def vendor_cache_row(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def supplier_row_from_render_data(render_data: dict[str, Any]) -> dict[str, Any]:
+    name = as_text(render_data.get("supplierName"))
+    if not name:
+        return {}
+    return {
+        "id": "",
+        "code": "",
+        "name": name,
+        "creditcode": as_text(render_data.get("supplierTaxNo")),
+        "address": as_text(render_data.get("supplierAddress")),
+        "contactphone": as_text(render_data.get("supplierPhone")),
+        "openaccountbankName": as_text(render_data.get("supplierBank")),
+        "bankAccount": as_text(render_data.get("supplierAccount")),
+        "bankAccountName": "",
+        "vendorFax": as_text(render_data.get("supplierFax")),
+        "org": "",
+        "orgName": "",
+        "accessstatus": "",
+        "freezestatus": "",
+        "pubts": now_shanghai().isoformat(timespec="seconds"),
+    }
+
+
+def _row_key_by_id(row: dict[str, Any]) -> str:
+    return as_text(row.get("id"))
+
+
+def _row_key_by_name(row: dict[str, Any]) -> str:
+    return normalize_supplier_name(row.get("name"))
+
+
+def append_new_supplier_rows(existing_rows: list[dict[str, Any]], incoming_rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    merged = [dict(row) for row in existing_rows]
+    existing_ids = {_row_key_by_id(row) for row in merged if _row_key_by_id(row)}
+    existing_names = {_row_key_by_name(row) for row in merged if not _row_key_by_id(row) and _row_key_by_name(row)}
+    stats = {"existingCacheCount": len(merged), "addedVendorCount": 0, "skippedVendorCount": 0}
+    for row in incoming_rows:
+        candidate = dict(row)
+        row_id = _row_key_by_id(candidate)
+        name_key = _row_key_by_name(candidate)
+        exists = bool(row_id and row_id in existing_ids) or bool(not row_id and name_key and name_key in existing_names)
+        if exists:
+            stats["skippedVendorCount"] += 1
+            continue
+        merged.append(candidate)
+        stats["addedVendorCount"] += 1
+        if row_id:
+            existing_ids.add(row_id)
+        elif name_key:
+            existing_names.add(name_key)
+    stats["cacheVendorCount"] = len(merged)
+    return merged, stats
+
+
+def upsert_confirmed_supplier_row(existing_rows: list[dict[str, Any]], supplier_row: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if not supplier_row or not as_text(supplier_row.get("name")):
+        return existing_rows, {"updated": False, "added": False, "reason": "missing_supplier_name"}
+    merged = [dict(row) for row in existing_rows]
+    supplier_id = _row_key_by_id(supplier_row)
+    supplier_name = _row_key_by_name(supplier_row)
+    matched_index: int | None = None
+    for index, row in enumerate(merged):
+        if supplier_id and _row_key_by_id(row) == supplier_id:
+            matched_index = index
+            break
+        if supplier_name and _row_key_by_name(row) == supplier_name:
+            matched_index = index
+            break
+    if matched_index is None:
+        merged.append(dict(supplier_row))
+        return merged, {"updated": False, "added": True, "supplierName": supplier_row.get("name")}
+
+    changed_fields: list[str] = []
+    target = dict(merged[matched_index])
+    for key, value in supplier_row.items():
+        text = as_text(value)
+        if not text:
+            continue
+        if as_text(target.get(key)) != text:
+            target[key] = text
+            changed_fields.append(key)
+    merged[matched_index] = target
+    return merged, {
+        "updated": bool(changed_fields),
+        "added": False,
+        "supplierName": target.get("name"),
+        "changedFields": changed_fields,
+    }
+
+
+def supplier_patch_from_cache(extracted: dict[str, Any], cache_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    supplier_name = as_text(extracted.get("supplierName"))
+    if not supplier_name:
+        return {"matched": False, "patch": {}, "reason": "missing_supplier_name"}
+    name_key = normalize_supplier_name(supplier_name)
+    matches = [row for row in cache_rows if _row_key_by_name(row) == name_key]
+    if not matches:
+        return {"matched": False, "patch": {}, "reason": "not_found", "supplierName": supplier_name}
+    if len(matches) > 1:
+        return {"matched": False, "patch": {}, "reason": "ambiguous", "supplierName": supplier_name}
+
+    row = matches[0]
+    patch: dict[str, str] = {}
+    for field_key, row_key in SUPPLIER_FIELD_MAP.items():
+        if not is_blank(extracted.get(field_key)):
+            continue
+        value = as_text(row.get(row_key))
+        if value:
+            patch[field_key] = value
+    return {
+        "matched": True,
+        "supplierName": supplier_name,
+        "cacheSupplierName": row.get("name"),
+        "patch": patch,
+        "patchedFields": sorted(patch),
+    }
+
+
+def apply_supplier_patch(extracted: dict[str, Any], patch: dict[str, Any]) -> set[str]:
+    changed: set[str] = set()
+    values = patch.get("patch") if isinstance(patch.get("patch"), dict) else {}
+    for key, value in values.items():
+        if is_blank(extracted.get(key)) and not is_blank(value):
+            extracted[key] = as_text(value)
+            changed.add(key)
+    return changed
+
+
 def now_shanghai() -> datetime:
     return datetime.now(timezone(timedelta(hours=8)))
 
@@ -253,26 +435,9 @@ def write_supplier_cache_xlsx(path: Path, rows: list[dict[str, Any]], manifest: 
     workbook = Workbook()
     vendors_sheet = workbook.active
     vendors_sheet.title = "供应商"
-    vendor_columns = [
-        ("id", "供应商ID"),
-        ("code", "供应商编码"),
-        ("name", "供应商名称"),
-        ("creditcode", "统一社会信用代码"),
-        ("address", "地址"),
-        ("contactphone", "电话"),
-        ("openaccountbankName", "开户行"),
-        ("bankAccount", "银行账号"),
-        ("bankAccountName", "户名"),
-        ("vendorFax", "传真"),
-        ("org", "组织ID"),
-        ("orgName", "组织名称"),
-        ("accessstatus", "准入状态"),
-        ("freezestatus", "冻结状态"),
-        ("pubts", "更新时间"),
-    ]
-    vendors_sheet.append([label for _key, label in vendor_columns])
+    vendors_sheet.append([label for _key, label in VENDOR_COLUMNS])
     for row in rows:
-        vendors_sheet.append([row.get(key, "") for key, _label in vendor_columns])
+        vendors_sheet.append([row.get(key, "") for key, _label in VENDOR_COLUMNS])
 
     manifest_labels = {
         "syncedAt": "同步时间",
@@ -280,6 +445,10 @@ def write_supplier_cache_xlsx(path: Path, rows: list[dict[str, Any]], manifest: 
         "fetchedRecordCount": "实际抓取记录数",
         "availableRecordCount": "可用记录数",
         "uniqueVendorCount": "去重后供应商数",
+        "existingCacheCount": "原缓存供应商数",
+        "addedVendorCount": "本次新增供应商数",
+        "skippedVendorCount": "本次已存在供应商数",
+        "cacheVendorCount": "缓存供应商总数",
         "pageSize": "分页大小",
         "maxPages": "最大抓取页数",
         "sourceApi": "来源接口",
@@ -294,7 +463,26 @@ def write_supplier_cache_xlsx(path: Path, rows: list[dict[str, Any]], manifest: 
     workbook.save(path)
 
 
-def sync_suppliers_to_xlsx(output_dir: Path) -> dict[str, Any]:
+def read_supplier_cache_xlsx(path: Path) -> list[dict[str, Any]]:
+    workbook = load_workbook(path, data_only=True, read_only=True)
+    if "供应商" not in workbook.sheetnames:
+        return []
+    sheet = workbook["供应商"]
+    rows_iter = sheet.iter_rows(values_only=True)
+    try:
+        header = next(rows_iter)
+    except StopIteration:
+        return []
+    keys = [VENDOR_COLUMN_LABEL_TO_KEY.get(as_text(label), as_text(label)) for label in header]
+    rows: list[dict[str, Any]] = []
+    for values in rows_iter:
+        row = {key: as_text(value) for key, value in zip(keys, values) if key}
+        if as_text(row.get("id")) or as_text(row.get("name")):
+            rows.append({key: row.get(key, "") for key, _label in VENDOR_COLUMNS})
+    return rows
+
+
+def sync_suppliers_to_xlsx(output_dir: Path, existing_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     gateway_url, token_url = resolve_endpoints()
     access_token, expire = get_access_token(token_url)
     page_size = env_int("YONBIP_VENDOR_PAGE_SIZE", DEFAULT_PAGE_SIZE)
@@ -317,9 +505,10 @@ def sync_suppliers_to_xlsx(output_dir: Path) -> dict[str, Any]:
 
     available_records = [record for record in all_records if vendor_is_available(record)]
     unique_records = dedupe_vendors(available_records, org_id)
-    rows = [vendor_cache_row(record) for record in unique_records]
+    incoming_rows = [vendor_cache_row(record) for record in unique_records]
+    rows, merge_stats = append_new_supplier_rows(existing_rows or [], incoming_rows)
     synced_at = now_shanghai().isoformat(timespec="seconds")
-    file_name = "supplier-cache.xlsx"
+    file_name = SUPPLIER_CACHE_FILE_NAME
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / file_name
     manifest = {
@@ -327,7 +516,8 @@ def sync_suppliers_to_xlsx(output_dir: Path) -> dict[str, Any]:
         "sourceRecordCount": source_record_count or len(all_records),
         "fetchedRecordCount": len(all_records),
         "availableRecordCount": len(available_records),
-        "uniqueVendorCount": len(rows),
+        "uniqueVendorCount": len(incoming_rows),
+        **merge_stats,
         "pageSize": page_size,
         "sourceApi": "vendor/queryByPage",
         "tokenExpire": expire,

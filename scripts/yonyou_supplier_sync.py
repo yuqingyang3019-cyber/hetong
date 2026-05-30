@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -15,12 +16,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from agent.yonyou_vendor import (  # noqa: E402
     DEFAULT_PAGE_SIZE,
-    VENDOR_QUERY_PATH,
-    api_post,
+    EXPLICIT_VENDOR_DATA_FIELDS,
+    api_get,
+    as_text,
     dedupe_vendors,
     env_int,
     get_access_token,
     optional_env,
+    query_vendor_page,
     resolve_endpoints,
     success_code,
     vendor_cache_row,
@@ -31,23 +34,7 @@ from agent.yonyou_vendor import (  # noqa: E402
 
 
 logger = logging.getLogger("yonyou_supplier_sync")
-
-EXPLICIT_VENDOR_DATA_FIELDS = ",".join([
-    "id",
-    "code",
-    "name",
-    "creditcode",
-    "address",
-    "contactphone",
-    "vendorphone",
-    "vendorfax",
-    "vendoraddress",
-    "orgId",
-    "org",
-    "accessstatus",
-    "freezestatus",
-    "pubts",
-])
+VENDOR_DETAIL_PATH = "/yonbip/digitalModel/vendor/detail"
 
 
 def configure_logging(verbose: bool) -> None:
@@ -103,6 +90,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", default="tmp", help="Excel 输出目录")
     parser.add_argument("--page-size", type=int, default=None, help="覆盖 YONBIP_VENDOR_PAGE_SIZE")
     parser.add_argument("--max-pages", type=int, default=0, help="最多抓取页数；0 表示抓全量")
+    parser.add_argument("--fetch-detail-missing", action="store_true", help="对缺关键字段的供应商调用 vendor/detail 尝试补齐")
+    parser.add_argument("--detail-limit", type=int, default=0, help="最多查询详情条数；0 表示不限制")
+    parser.add_argument("--detail-interval", type=float, default=1.1, help="详情接口调用间隔秒数，默认避开 60 次/分钟限流")
     parser.add_argument("--timestamped", action="store_true", help="输出带时间戳的文件名，默认覆盖 supplier-cache-debug.xlsx")
     parser.add_argument("--verbose", action="store_true", help="输出更详细日志")
     return parser.parse_args()
@@ -132,44 +122,113 @@ def build_manifest(
     }
 
 
-def explicit_vendor_query_payload(page_index: int, page_size: int) -> dict[str, Any]:
-    return {
-        "data": EXPLICIT_VENDOR_DATA_FIELDS,
-        "page": {
-            "pageSize": page_size,
-            "pageIndex": page_index,
-        },
-        "queryOrders": [
-            {
-                "field": "code",
-                "order": "asc",
-            }
-        ],
-        "partParam": {
-            "vendorbanks": {
-                "data": "*,openaccountbank.name",
-            }
-        },
-    }
+def cache_row_from_record(record: dict[str, Any]) -> dict[str, Any]:
+    return vendor_cache_row(record)
 
 
-def query_vendor_page_explicit(gateway_url: str, access_token: str, page_index: int, page_size: int) -> dict[str, Any]:
-    body = api_post(
-        f"{gateway_url}{VENDOR_QUERY_PATH}",
-        {"access_token": access_token},
-        explicit_vendor_query_payload(page_index, page_size),
-    )
+def row_missing_detail_fields(row: dict[str, Any]) -> bool:
+    return not all([
+        row.get("creditcode"),
+        row.get("address"),
+        row.get("contactphone"),
+        row.get("openaccountbankName"),
+        row.get("bankAccount"),
+        row.get("vendorFax"),
+    ])
+
+
+def detail_vendor(gateway_url: str, access_token: str, record: dict[str, Any]) -> dict[str, Any]:
+    vendor_id = as_text(record.get("id"))
+    if not vendor_id:
+        return {}
+    params: dict[str, Any] = {"access_token": access_token, "id": vendor_id}
+    org_id = optional_env("YONBIP_ORG_ID")
+    if org_id:
+        params["orgId"] = org_id
+    body = api_get(f"{gateway_url}{VENDOR_DETAIL_PATH}", params)
     if not success_code(body, "200"):
-        raise RuntimeError(f"用友供应商分页查询失败：{body.get('message') or body}")
+        raise RuntimeError(f"供应商详情查询失败：{body.get('message') or body}")
     data = body.get("data") if isinstance(body.get("data"), dict) else {}
-    records = data.get("recordList") if isinstance(data.get("recordList"), list) else []
-    return {
-        "recordCount": int(data.get("recordCount") or 0),
-        "pageIndex": int(data.get("pageIndex") or page_index),
-        "pageSize": int(data.get("pageSize") or page_size),
-        "pageCount": int(data.get("pageCount") or 0),
-        "records": [record for record in records if isinstance(record, dict)],
+    return data
+
+
+def merge_record_detail(record: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(record)
+    for key in (
+        "creditcode",
+        "address",
+        "vendoraddress",
+        "contactphone",
+        "vendorphone",
+        "vendorfax",
+        "org_name",
+        "orgName",
+        "accessstatus",
+        "freezestatus",
+        "pubts",
+    ):
+        if not as_text(merged.get(key)) and as_text(detail.get(key)):
+            merged[key] = detail.get(key)
+    if not merged.get("vendorbanks") and detail.get("vendorbanks"):
+        merged["vendorbanks"] = detail.get("vendorbanks")
+    return merged
+
+
+def fill_missing_from_detail(
+    gateway_url: str,
+    access_token: str,
+    records: list[dict[str, Any]],
+    detail_limit: int,
+    detail_interval: float,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    filled: list[dict[str, Any]] = []
+    stats = {
+        "detailChecked": 0,
+        "detailFailed": 0,
+        "creditcodeFilled": 0,
+        "addressFilled": 0,
+        "phoneFilled": 0,
+        "bankFilled": 0,
+        "faxFilled": 0,
     }
+    for index, record in enumerate(records, 1):
+        before = cache_row_from_record(record)
+        should_fetch = row_missing_detail_fields(before)
+        detail_attempts = stats["detailChecked"] + stats["detailFailed"]
+        if detail_limit and detail_attempts >= detail_limit:
+            should_fetch = False
+        if not should_fetch:
+            filled.append(record)
+            continue
+        try:
+            detail = detail_vendor(gateway_url, access_token, record)
+            stats["detailChecked"] += 1
+            merged = merge_record_detail(record, detail)
+            after = cache_row_from_record(merged)
+            if not before.get("creditcode") and after.get("creditcode"):
+                stats["creditcodeFilled"] += 1
+            if not before.get("address") and after.get("address"):
+                stats["addressFilled"] += 1
+            if not before.get("contactphone") and after.get("contactphone"):
+                stats["phoneFilled"] += 1
+            if (not before.get("bankAccount") or not before.get("openaccountbankName")) and (after.get("bankAccount") or after.get("openaccountbankName")):
+                stats["bankFilled"] += 1
+            if not before.get("vendorFax") and after.get("vendorFax"):
+                stats["faxFilled"] += 1
+            filled.append(merged)
+        except Exception as exc:
+            stats["detailFailed"] += 1
+            response = getattr(exc, "response", None)
+            status_code = getattr(response, "status_code", None)
+            error_text = f"HTTP {status_code}" if status_code else exc.__class__.__name__
+            logger.warning("详情查询失败：index=%s id=%s name=%s error=%s", index, as_text(record.get("id")), as_text(record.get("name")), error_text)
+            filled.append(record)
+        detail_attempts = stats["detailChecked"] + stats["detailFailed"]
+        if detail_attempts and detail_attempts % 50 == 0:
+            logger.info("详情补齐进度：已请求 %s，成功 %s，失败 %s", detail_attempts, stats["detailChecked"], stats["detailFailed"])
+        if detail_interval > 0:
+            time.sleep(detail_interval)
+    return filled, stats
 
 
 def main() -> int:
@@ -200,7 +259,7 @@ def main() -> int:
         logger.info("开始分页读取供应商：pageSize=%s，maxPages=%s", page_size, args.max_pages or "all")
         logger.info("使用显式字段 data：%s", EXPLICIT_VENDOR_DATA_FIELDS)
         while True:
-            page = query_vendor_page_explicit(gateway_url, access_token, page_index, page_size)
+            page = query_vendor_page(gateway_url, access_token, page_index, page_size)
             if page_index == 1:
                 source_record_count = page["recordCount"]
             records = page["records"]
@@ -229,7 +288,12 @@ def main() -> int:
 
         logger.info("开始按供应商 id 去重...")
         unique_records = dedupe_vendors(available_records, org_id)
-        rows = [vendor_cache_row(record) for record in unique_records]
+        detail_stats: dict[str, int] = {}
+        if args.fetch_detail_missing:
+            logger.info("开始调用 vendor/detail 补齐缺失字段：detailLimit=%s，detailInterval=%ss", args.detail_limit or "all", args.detail_interval)
+            unique_records, detail_stats = fill_missing_from_detail(gateway_url, access_token, unique_records, args.detail_limit, args.detail_interval)
+            logger.info("详情补齐完成：%s", detail_stats)
+        rows = [cache_row_from_record(record) for record in unique_records]
         logger.info("去重完成：uniqueVendorCount=%s", len(rows))
 
         output_dir = (PROJECT_ROOT / args.output_dir).resolve()
@@ -247,6 +311,7 @@ def main() -> int:
             max_pages=args.max_pages,
             token_expire=expire,
         )
+        manifest.update(detail_stats)
 
         logger.info("开始写入 Excel：%s", output_path)
         write_supplier_cache_xlsx(output_path, rows, manifest)

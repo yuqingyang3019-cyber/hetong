@@ -217,8 +217,10 @@ flowchart TD
   getToken --> queryPage["分页调用vendor/queryByPage"]
   queryPage --> dedupe["按供应商id去重"]
   dedupe --> chooseBank["选择默认未停用银行账户"]
-  chooseBank --> buildXlsx["生成供应商缓存xlsx"]
-  buildXlsx --> uploadDrive["上传钉盘"]
+  chooseBank --> readCache["读取钉盘现有缓存"]
+  readCache --> appendNew["按供应商id追加新供应商"]
+  appendNew --> buildXlsx["生成合并缓存xlsx"]
+  buildXlsx --> uploadDrive["提交钉盘"]
   uploadDrive --> cleanup["清理本地临时文件"]
   cleanup --> result["返回统计和钉盘文件信息"]
 ```
@@ -226,14 +228,34 @@ flowchart TD
 1. 前端完成钉钉免登后，携带 AgentRun Bearer Token 调用 `POST /api/suppliers/sync`。
 2. AgentRun 使用 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
 3. AgentRun 分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含：
-   - `data: "*"`
+   - 显式供应商主档字段：`id`、`code`、`name`、`creditcode`、`address`、`contactphone`、`vendorphone`、`vendorfax`、`vendoraddress`、`orgId`、`org`、`accessstatus`、`freezestatus`、`pubts`
    - `queryOrders: [{ field: "code", order: "asc" }]`
    - `partParam.vendorbanks.data: "*,openaccountbank.name"`
 4. AgentRun 过滤冻结或停用记录，并按供应商主档 `id` 去重。
 5. 同一供应商有多条记录时，优先保留可用、配置组织匹配或企业账号级记录。
 6. AgentRun 从 `vendorbanks` 中选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；若不存在默认账户，则选择第一条未停用账户。
-7. AgentRun 生成固定文件名 `supplier-cache.xlsx`，包含 `供应商` 和 `同步信息` 两个 Sheet，表头使用中文业务名称。
-8. AgentRun 复用钉盘上传能力将缓存文件上传至配置的钉盘目录，上传成功后清理本地临时文件。
+7. AgentRun 读取钉盘现有 `supplier-cache.xlsx`，按供应商 `id` 只追加缓存中不存在的新供应商，已有供应商不更新、不覆盖。
+8. AgentRun 生成固定文件名 `supplier-cache.xlsx`，包含 `供应商` 和 `同步信息` 两个 Sheet，表头使用中文业务名称。
+9. AgentRun 复用钉盘上传能力将合并后的缓存文件提交至配置的钉盘目录，上传成功后清理本地临时文件。
+
+### 6.6 供应商抬头回填与写回流程
+
+```mermaid
+flowchart TD
+  fieldPreview["字段识别完成"] --> supplierName["读取supplierName"]
+  supplierName --> readCache["读取钉盘supplier-cache.xlsx"]
+  readCache --> matchName["按乙方名称精确匹配"]
+  matchName --> fillBlank["只回填空的乙方抬头字段"]
+  fillBlank --> confirm["用户确认字段"]
+  confirm --> generate["生成合同"]
+  generate --> upsertCache["将最终确认抬头写回缓存"]
+  upsertCache --> uploadDrive["提交钉盘缓存"]
+```
+
+1. 字段识别后，AgentRun 使用 `supplierName` 从钉盘缓存中按名称匹配供应商。
+2. 命中唯一供应商时，只回填乙方地址、开户行、银行账号、税号、电话、传真等空字段。
+3. 用户额外信息和字段确认中的已有值优先，不被缓存覆盖。
+4. 用户点击生成合同时，AgentRun 使用最终确认的结构化乙方字段写回钉盘缓存：同名供应商更新用户确认字段，不存在则追加新行；缺少用友 `id` 的用户补充行允许 `id` 为空。
 
 ## 7. 鉴权设计
 

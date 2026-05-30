@@ -14,6 +14,7 @@ except ImportError:
 
 
 DEFAULT_CONFLICT_STRATEGY = "AUTO_RENAME"
+SUPPLIER_CACHE_FILE_NAME = "supplier-cache.xlsx"
 
 
 def _config_value(name: str) -> str:
@@ -137,7 +138,12 @@ def _upload_with_header_signature(path: Path, upload_info: Any) -> None:
     response.raise_for_status()
 
 
-def upload_file_to_dingdrive(path: Path, file_name: str, current_user: dict[str, Any] | None) -> dict[str, Any]:
+def upload_file_to_dingdrive(
+    path: Path,
+    file_name: str,
+    current_user: dict[str, Any] | None,
+    conflict_strategy: str | None = None,
+) -> dict[str, Any]:
     """Upload a local file to the configured DingTalk team folder."""
     parent_dentry_uuid = _config_value("DINGTALK_DRIVE_PARENT_ID")
     configured_space_id = _config_value("DINGTALK_DRIVE_SPACE_ID")
@@ -174,7 +180,7 @@ def upload_file_to_dingdrive(path: Path, file_name: str, current_user: dict[str,
     commit_headers.x_acs_dingtalk_access_token = token
     commit_option = storage_models.CommitFileRequestOption(
         size=size,
-        conflict_strategy=_conflict_strategy(),
+        conflict_strategy=conflict_strategy or _conflict_strategy(),
         convert_to_online_doc=False,
     )
     commit_request = storage_models.CommitFileRequest(
@@ -209,6 +215,64 @@ def upload_file_to_dingdrive(path: Path, file_name: str, current_user: dict[str,
 def upload_contract_to_dingdrive(path: Path, file_name: str, current_user: dict[str, Any] | None) -> dict[str, Any]:
     """Upload a generated contract to the configured DingTalk team folder."""
     return upload_file_to_dingdrive(path, file_name, current_user)
+
+
+def upload_supplier_cache_to_dingdrive(path: Path, current_user: dict[str, Any] | None) -> dict[str, Any]:
+    """Submit the merged supplier cache using the stable cache file name."""
+    return upload_file_to_dingdrive(path, SUPPLIER_CACHE_FILE_NAME, current_user, conflict_strategy="OVERWRITE")
+
+
+def find_supplier_cache_file(current_user: dict[str, Any] | None) -> dict[str, Any] | None:
+    union_id = _union_id(current_user)
+    token = dingtalk_oapi.get_app_access_token()
+    configured_space_id = _config_value("DINGTALK_DRIVE_SPACE_ID")
+
+    storage_models = _models()
+    headers = storage_models.SearchDentriesHeaders()
+    headers.x_acs_dingtalk_access_token = token
+    option_kwargs: dict[str, Any] = {"max_results": 20}
+    if configured_space_id.isdigit():
+        option_kwargs["space_ids"] = [int(configured_space_id)]
+    option = storage_models.SearchDentriesRequestOption(**option_kwargs)
+    request = storage_models.SearchDentriesRequest(
+        keyword=SUPPLIER_CACHE_FILE_NAME,
+        operator_id=union_id,
+        option=option,
+    )
+    response = _storage_client().search_dentries_with_options(request, headers, _runtime_options())
+    body = _to_map(_response_body(response))
+    items = body.get("items") if isinstance(body, dict) and isinstance(body.get("items"), list) else []
+    exact_matches = [item for item in items if isinstance(item, dict) and item.get("name") == SUPPLIER_CACHE_FILE_NAME]
+    if not exact_matches:
+        return None
+    exact_matches.sort(key=lambda item: item.get("lastModifyTime") or 0, reverse=True)
+    item = exact_matches[0]
+    return {
+        "spaceId": configured_space_id,
+        "fileId": item.get("dentryUuid") or item.get("fileId") or item.get("id"),
+        "fileName": item.get("name") or SUPPLIER_CACHE_FILE_NAME,
+        "raw": item,
+    }
+
+
+def download_supplier_cache_from_dingdrive(target_path: Path, current_user: dict[str, Any] | None) -> dict[str, Any] | None:
+    cache_file = find_supplier_cache_file(current_user)
+    if not cache_file or not cache_file.get("fileId"):
+        return None
+    download_info = get_contract_download_info(str(cache_file["spaceId"]), str(cache_file["fileId"]), current_user)
+    resource_urls = download_info.get("resourceUrls") if isinstance(download_info, dict) else None
+    headers = download_info.get("headers") if isinstance(download_info, dict) else None
+    if not resource_urls:
+        raise RuntimeError("钉盘未返回供应商缓存下载地址")
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    response = requests.get(resource_urls[0], headers=headers or {}, stream=True, timeout=120)
+    response.raise_for_status()
+    with target_path.open("wb") as handle:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                handle.write(chunk)
+    cache_file["path"] = target_path
+    return cache_file
 
 
 def get_contract_download_info(space_id: str, file_id: str, current_user: dict[str, Any] | None) -> dict[str, Any]:

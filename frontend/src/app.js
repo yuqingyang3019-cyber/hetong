@@ -508,10 +508,10 @@ function updateSupplierSyncUi() {
   }
   if (supplierSyncState.result) {
     const result = supplierSyncState.result;
-    supplierSyncResult.textContent = `同步完成：用友记录 ${formatCount(result.sourceRecordCount)} 条，去重后 ${formatCount(result.uniqueVendorCount)} 个供应商；文件 ${result.fileName || "supplier-cache.xlsx"} 已上传钉盘。`;
+    supplierSyncResult.textContent = `同步完成：用友 ${formatCount(result.sourceRecordCount)} 条，本次新增 ${formatCount(result.addedVendorCount)} 个，缓存共 ${formatCount(result.cacheVendorCount || result.uniqueVendorCount)} 个。`;
     return;
   }
-  supplierSyncResult.textContent = sessionReady ? "可同步用友供应商缓存，生成 Excel 后上传钉盘。" : "完成钉钉免登后可同步供应商缓存。";
+  supplierSyncResult.textContent = sessionReady ? "从用友增量补充供应商缓存。" : "完成钉钉免登后可同步供应商缓存。";
 }
 
 async function syncSuppliers() {
@@ -529,7 +529,7 @@ async function syncSuppliers() {
       throw new Error(body.message || body.detail || "供应商同步失败");
     }
     supplierSyncState = { busy: false, result: body, error: "" };
-    setStatus(`供应商同步完成：去重后 ${formatCount(body.uniqueVendorCount)} 个供应商。`, "success");
+    setStatus(`供应商同步完成：本次新增 ${formatCount(body.addedVendorCount)} 个，缓存共 ${formatCount(body.cacheVendorCount || body.uniqueVendorCount)} 个供应商。`, "success");
   } catch (error) {
     const message = formatError(error);
     supplierSyncState = { busy: false, result: null, error: message };
@@ -2141,12 +2141,17 @@ async function runIdentifyTask(task) {
     task.fieldPreview = await previewQuoteFields(task.upload.id, task.quoteText.trim(), task.extraInfo, task.templateType);
     await renderFieldPreview(task);
     const missing = task.fieldPreview.missingFields?.length || 0;
+    const supplierPatched = task.fieldPreview.supplierPatch?.appliedFields?.length || 0;
+    const supplierHint = supplierPatched ? ` 已从钉盘供应商缓存补齐 ${supplierPatched} 项乙方信息。` : "";
     setTaskStatus(
       task,
       "needs_fields",
-      missing > 0 ? `AI 已识别字段，仍有 ${missing} 项需要人工确认。` : "AI 已识别字段，未发现缺失字段。",
+      missing > 0 ? `AI 已识别字段，仍有 ${missing} 项需要人工确认。${supplierHint}` : `AI 已识别字段，未发现缺失字段。${supplierHint}`,
     );
-    setStatus(missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。", missing > 0 ? "info" : "success");
+    setStatus(
+      supplierPatched ? `AI 已整理字段，并从钉盘供应商缓存补齐 ${supplierPatched} 项乙方信息。` : (missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。"),
+      missing > 0 ? "info" : "success",
+    );
   } catch (error) {
     const message = formatError(error);
     setTaskStatus(task, "failed", `字段识别失败：${message}`, "identify");

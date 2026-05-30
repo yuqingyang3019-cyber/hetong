@@ -16,6 +16,15 @@ from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, ge
 from agent.contract.extract import extract_excel_text, extract_pdf_text
 from agent.contract.render import build_docxtpl_context, merge_render_data, render_contract
 from agent.main import app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
+from agent.yonyou_vendor import (
+    EXPLICIT_VENDOR_DATA_FIELDS,
+    append_new_supplier_rows,
+    apply_supplier_patch,
+    supplier_patch_from_cache,
+    supplier_row_from_render_data,
+    upsert_confirmed_supplier_row,
+    vendor_query_payload,
+)
 
 
 os.environ.setdefault("APP_SESSION_SECRET", "test-session-secret-123456789012")
@@ -228,6 +237,73 @@ def test_extract_pdf_text_outputs_tsv_without_html() -> None:
     assert "[第 1 页文字]" in text
     assert "<table" not in text
     assert "<td>" not in text
+
+
+def test_yonbip_vendor_query_uses_explicit_fields() -> None:
+    payload = vendor_query_payload(1, 500)
+
+    assert payload["data"] == EXPLICIT_VENDOR_DATA_FIELDS
+    assert "vendorbanks" in payload["partParam"]
+
+
+def test_append_new_supplier_rows_adds_only_missing_ids() -> None:
+    existing = [{"id": "v1", "name": "供应商A", "creditcode": "old"}]
+    incoming = [
+        {"id": "v1", "name": "供应商A", "creditcode": "new"},
+        {"id": "v2", "name": "供应商B", "creditcode": "b"},
+    ]
+
+    rows, stats = append_new_supplier_rows(existing, incoming)
+
+    assert rows == [
+        {"id": "v1", "name": "供应商A", "creditcode": "old"},
+        {"id": "v2", "name": "供应商B", "creditcode": "b"},
+    ]
+    assert stats["addedVendorCount"] == 1
+    assert stats["skippedVendorCount"] == 1
+    assert stats["cacheVendorCount"] == 2
+
+
+def test_supplier_cache_patch_only_fills_blank_fields() -> None:
+    extracted = {
+        "supplierName": "供应商A",
+        "supplierAddress": "",
+        "supplierBank": "用户已填开户行",
+        "supplierAccount": None,
+    }
+    cache_rows = [{
+        "name": "供应商A",
+        "address": "缓存地址",
+        "openaccountbankName": "缓存开户行",
+        "bankAccount": "6222",
+    }]
+
+    patch_payload = supplier_patch_from_cache(extracted, cache_rows)
+    changed = apply_supplier_patch(extracted, patch_payload)
+
+    assert patch_payload["matched"] is True
+    assert changed == {"supplierAddress", "supplierAccount"}
+    assert extracted["supplierAddress"] == "缓存地址"
+    assert extracted["supplierBank"] == "用户已填开户行"
+    assert extracted["supplierAccount"] == "6222"
+
+
+def test_upsert_confirmed_supplier_row_updates_by_name() -> None:
+    existing = [{"id": "", "name": "供应商A", "creditcode": "", "address": "旧地址"}]
+    supplier_row = supplier_row_from_render_data({
+        "supplierName": "供应商A",
+        "supplierTaxNo": "9133",
+        "supplierAddress": "用户确认地址",
+        "supplierBank": "用户确认开户行",
+    })
+
+    rows, result = upsert_confirmed_supplier_row(existing, supplier_row)
+
+    assert result["updated"] is True
+    assert result["added"] is False
+    assert rows[0]["creditcode"] == "9133"
+    assert rows[0]["address"] == "用户确认地址"
+    assert rows[0]["openaccountbankName"] == "用户确认开户行"
 
 
 def test_upload_owner_cannot_access_other_user_upload() -> None:
@@ -454,6 +530,31 @@ def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
     assert body["tableRowCounts"] == {"items": 1}
 
 
+def test_field_preview_applies_supplier_cache_patch() -> None:
+    upload_id = upload_quote()["id"]
+    extracted = {"supplierName": "供应商A", "supplierAddress": "", "supplierBank": "用户开户行", "items": []}
+
+    def fake_supplier_patch(data: dict, current_user: dict) -> dict:
+        data["supplierAddress"] = "缓存地址"
+        return {"matched": True, "patch": {"supplierAddress": "缓存地址"}, "appliedFields": ["supplierAddress"]}
+
+    with patch("agent.main.extract_template_render_data", return_value=extracted), patch(
+        "agent.main.patch_supplier_fields_from_cache",
+        side_effect=fake_supplier_patch,
+    ):
+        response = client.post(
+            f"/api/uploads/{upload_id}/field-preview",
+            headers=agent_auth_header(),
+            json={"templateType": "caigouhetong", "quoteText": "用户确认报价单文本"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["extractedData"]["supplierAddress"] == "缓存地址"
+    assert body["extractedData"]["supplierBank"] == "用户开户行"
+    assert body["supplierPatch"]["appliedFields"] == ["supplierAddress"]
+
+
 def test_field_preview_timeout_returns_retryable_message() -> None:
     upload_id = upload_quote()["id"]
 
@@ -484,13 +585,18 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
     ) as render_contract_mock, patch(
         "agent.main.upload_contract_to_dingdrive",
         return_value={"spaceId": "space1", "fileId": "file1", "fileName": "confirmed.docx", "filePath": "/confirmed.docx"},
-    ):
+    ), patch(
+        "agent.main.write_confirmed_supplier_to_cache",
+        return_value={"updated": True, "added": False, "supplierName": "供应商A"},
+    ) as supplier_writeback:
         draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"})
 
     llm.assert_not_called()
     render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True)
+    supplier_writeback.assert_called_once()
     assert draft["extractedData"] == extracted
     assert draft["extraInfoLength"] == len("补充信息")
+    assert draft["supplierCacheWriteback"]["updated"] is True
     assert draft["dingDrive"]["fileId"] == "file1"
 
 

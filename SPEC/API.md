@@ -453,6 +453,10 @@ Authorization: Bearer <agentAccessToken>
   "sourceApi": "vendor/queryByPage",
   "sourceRecordCount": 3400,
   "uniqueVendorCount": 3398,
+  "existingCacheCount": 3300,
+  "addedVendorCount": 98,
+  "skippedVendorCount": 3300,
+  "cacheVendorCount": 3398,
   "pageSize": 500,
   "syncedAt": "2026-05-29T19:30:00+08:00",
   "dingDrive": {
@@ -472,14 +476,34 @@ Authorization: Bearer <agentAccessToken>
 同步规则：
 
 - AgentRun 使用服务端配置的 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
-- AgentRun 分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含 `data: "*"`, `queryOrders: [{ field: "code", order: "asc" }]` 和 `partParam.vendorbanks.data: "*,openaccountbank.name"`。
+- AgentRun 分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含显式供应商主档字段、`queryOrders: [{ field: "code", order: "asc" }]` 和 `partParam.vendorbanks.data: "*,openaccountbank.name"`。
 - 供应商记录按 `id` 去重；同一 `id` 出现多条记录时，优先保留可用且默认组织更匹配的记录。
+- 同步前应读取钉盘现有 `supplier-cache.xlsx`；同步按钮只按供应商 `id` 追加缓存中不存在的用友供应商，已存在 `id` 不更新、不覆盖。
 - `vendorbanks` 中优先选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；否则选择第一条未停用账户。
-- 缓存文件第一版使用固定文件名 `supplier-cache.xlsx`，包含 `供应商` 和 `同步信息` 两个 Sheet，重复同步时按钉盘冲突策略覆盖或保留已有文件。
+- 缓存文件第一版使用固定文件名 `supplier-cache.xlsx`，包含 `供应商` 和 `同步信息` 两个 Sheet，重复同步时提交合并后的缓存文件，钉盘目录中不额外生成多个缓存文件。
 - `供应商` Sheet 表头使用中文，包括：供应商ID、供应商编码、供应商名称、统一社会信用代码、地址、电话、开户行、银行账号、户名、传真、组织ID、组织名称、准入状态、冻结状态、更新时间。
 - `同步信息` Sheet 表头使用中文，包括：同步时间、用友原始记录数、实际抓取记录数、可用记录数、去重后供应商数、分页大小、来源接口、令牌有效期秒数。
 - 同步完成后本地临时缓存文件应清理；长期缓存以钉盘文件为准。
 - 前端不得传入或展示用友 `access_token`、`appKey`、`appSecret`。
+
+字段识别预览响应可附带供应商缓存回填结果：
+
+```json
+{
+  "supplierPatch": {
+    "matched": true,
+    "supplierName": "某某供应商有限公司",
+    "patchedFields": ["supplierAddress", "supplierTaxNo"],
+    "appliedFields": ["supplierAddress", "supplierTaxNo"]
+  }
+}
+```
+
+规则：
+
+- AgentRun 根据字段识别结果中的 `supplierName` 读取钉盘缓存并按供应商名称精确匹配。
+- 仅回填当前合同字段中的空值，不覆盖报价单、用户额外信息或字段确认中已有的值。
+- 用户点击生成合同时，AgentRun 应把最终确认的乙方抬头信息写回 `supplier-cache.xlsx`；同名供应商更新用户确认字段，不存在则追加新行。
 
 ## 7. SDK 使用约束
 

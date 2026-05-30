@@ -266,30 +266,46 @@ h1 .user-name {
 }
 
 .supplier-sync-panel {
-  align-items: start;
-  background:
-    linear-gradient(135deg, rgba(15, 108, 189, 0.08), rgba(5, 150, 105, 0.06)),
-    rgba(248, 250, 252, 0.92);
-  border: 1px solid rgba(15, 108, 189, 0.14);
-  border-radius: var(--radius-md);
-  display: grid;
+  align-items: center;
+  color: var(--color-text-muted);
+  display: flex;
   gap: var(--space-2);
-  padding: var(--space-3);
-}
-
-.supplier-sync-panel h2,
-.supplier-sync-panel .eyebrow,
-.supplier-sync-panel .hint {
-  margin: 0;
+  justify-content: space-between;
+  padding: 0 var(--space-1) var(--space-2);
 }
 
 .supplier-sync-button {
-  justify-self: start;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: var(--space-1);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.supplier-sync-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.supplier-sync-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.supplier-sync-label {
+  font-size: 0.75rem;
+  font-weight: 700;
 }
 
 .supplier-sync-result {
-  color: var(--color-secondary);
-  line-height: 1.6;
+  font-size: 0.75rem;
+  line-height: 1.5;
 }
 
 .supplier-sync-result.is-success {
