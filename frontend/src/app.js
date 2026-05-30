@@ -1461,6 +1461,18 @@ function refreshFieldPreviewSummary(schema, extractedData) {
   syncFieldPreviewSummary(calculatePreviewStats(schema, extractedData));
 }
 
+function supplierPatchNotice(supplierPatch) {
+  if (!supplierPatch || supplierPatch.matched || supplierPatch.appliedFields?.length) return "";
+  const supplierName = supplierPatch.supplierName ? `「${supplierPatch.supplierName}」` : "当前乙方";
+  const reason = supplierPatch.reason || "";
+  if (reason === "not_found") return `未在钉盘供应商缓存找到${supplierName}的抬头信息，请在确认稿中手动补充。`;
+  if (reason === "cache_not_found") return "未找到钉盘供应商缓存，乙方抬头信息未自动补齐，请在确认稿中手动补充。";
+  if (reason === "ambiguous") return `钉盘供应商缓存中存在多个${supplierName}匹配项，乙方抬头信息未自动补齐，请人工确认。`;
+  if (reason === "missing_supplier_name") return "未识别到乙方名称，无法从钉盘供应商缓存匹配抬头信息。";
+  if (reason === "cache_error") return "读取钉盘供应商缓存失败，乙方抬头信息未自动补齐，请在确认稿中手动补充。";
+  return "";
+}
+
 function scrollToFirstMissingField() {
   const target = contractPreviewEl?.querySelector(
     ".contract-preview-field.is-missing, .contract-preview-table td.is-missing, .contract-preview-table-empty.is-missing",
@@ -2143,14 +2155,20 @@ async function runIdentifyTask(task) {
     const missing = task.fieldPreview.missingFields?.length || 0;
     const supplierPatched = task.fieldPreview.supplierPatch?.appliedFields?.length || 0;
     const supplierHint = supplierPatched ? ` 已从钉盘供应商缓存补齐 ${supplierPatched} 项乙方信息。` : "";
+    const supplierNotice = supplierPatchNotice(task.fieldPreview.supplierPatch);
+    const supplierStatus = supplierPatched
+      ? `AI 已整理字段，并从钉盘供应商缓存补齐 ${supplierPatched} 项乙方信息。`
+      : supplierNotice || (missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。");
     setTaskStatus(
       task,
       "needs_fields",
-      missing > 0 ? `AI 已识别字段，仍有 ${missing} 项需要人工确认。${supplierHint}` : `AI 已识别字段，未发现缺失字段。${supplierHint}`,
+      missing > 0
+        ? `AI 已识别字段，仍有 ${missing} 项需要人工确认。${supplierHint}${supplierNotice ? ` ${supplierNotice}` : ""}`
+        : `AI 已识别字段，未发现缺失字段。${supplierHint}${supplierNotice ? ` ${supplierNotice}` : ""}`,
     );
     setStatus(
-      supplierPatched ? `AI 已整理字段，并从钉盘供应商缓存补齐 ${supplierPatched} 项乙方信息。` : (missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。"),
-      missing > 0 ? "info" : "success",
+      supplierStatus,
+      supplierNotice || missing > 0 ? "info" : "success",
     );
   } catch (error) {
     const message = formatError(error);
