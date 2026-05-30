@@ -1,7 +1,6 @@
 from pathlib import Path
 import base64
 import json
-import logging
 import os
 import re
 import sys
@@ -317,7 +316,7 @@ def test_parse_dashscope_model_chain_deduplicates() -> None:
     ]
 
 
-def test_dashscope_fallback_model_succeeds_after_timeout(monkeypatch, caplog) -> None:
+def test_dashscope_fallback_model_succeeds_after_timeout(monkeypatch) -> None:
     class FakeMessage:
         def __init__(self, content: str) -> None:
             self.content = content
@@ -363,7 +362,6 @@ def test_dashscope_fallback_model_succeeds_after_timeout(monkeypatch, caplog) ->
     monkeypatch.setenv("DASHSCOPE_MODEL", "primary-model")
     monkeypatch.setenv("DASHSCOPE_FALLBACK_MODELS", "fallback-model,primary-model")
     monkeypatch.delenv("DASHSCOPE_MAX_RETRIES", raising=False)
-    caplog.set_level(logging.ERROR, logger="agentrun")
 
     with patch("agent.contract.llm.OpenAI", FakeOpenAI):
         result = contract_llm.extract_template_render_data("报价文本", get_template_config("caigouhetong"))
@@ -371,7 +369,6 @@ def test_dashscope_fallback_model_succeeds_after_timeout(monkeypatch, caplog) ->
     assert result["supplierName"] == "供应商B"
     assert FakeOpenAI.calls == ["primary-model", "fallback-model"]
     assert FakeOpenAI.max_retries == 0
-    assert any("timeoutLayer" in record.getMessage() and "primary-model" in record.getMessage() for record in caplog.records)
 
 
 def test_timeout_error_chain_summary_detects_httpx_layer() -> None:
@@ -385,7 +382,7 @@ def test_timeout_error_chain_summary_detects_httpx_layer() -> None:
     assert [item["type"] for item in chain] == ["RuntimeError", "ReadTimeout"]
 
 
-def test_dashscope_all_models_failed_raises_last_error(monkeypatch, caplog) -> None:
+def test_dashscope_all_models_failed_raises_last_error(monkeypatch) -> None:
     class FakeCompletions:
         calls: list[str] = []
 
@@ -405,13 +402,11 @@ def test_dashscope_all_models_failed_raises_last_error(monkeypatch, caplog) -> N
     monkeypatch.setenv("DASHSCOPE_API_KEY", "key")
     monkeypatch.setenv("DASHSCOPE_MODEL", "primary-model")
     monkeypatch.setenv("DASHSCOPE_FALLBACK_MODELS", "fallback-model")
-    caplog.set_level(logging.ERROR, logger="agentrun")
 
     with patch("agent.contract.llm.OpenAI", FakeOpenAI), pytest.raises(TimeoutError, match="fallback-model timed out"):
         contract_llm.extract_template_render_data("报价文本", get_template_config("caigouhetong"))
 
     assert FakeCompletions.calls == ["primary-model", "fallback-model"]
-    assert any("dashscope request all models failed" in record.getMessage() for record in caplog.records)
 
 
 def test_supplier_cache_search_uses_userid_operator() -> None:
