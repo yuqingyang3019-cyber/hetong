@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from html import escape
 from pathlib import Path
 from typing import Any
 
@@ -28,17 +27,6 @@ def _trim_empty_edges(rows: list[list[str]]) -> list[list[str]]:
 
 def _rows_to_tsv(rows: list[list[str]]) -> str:
     return "\n".join("\t".join(cell.replace("\n", " / ") for cell in row) for row in rows)
-
-
-def _rows_to_html(rows: list[list[str]], name: str, attr: str = "sheet") -> str:
-    lines = [f'<table {attr}="{escape(name, quote=True)}">']
-    for row in rows:
-        lines.append("  <tr>")
-        for cell in row:
-            lines.append(f"    <td>{escape(cell).replace(chr(10), '<br>')}</td>")
-        lines.append("  </tr>")
-    lines.append("</table>")
-    return "\n".join(lines)
 
 
 def _response_to_map(response: Any) -> dict[str, Any]:
@@ -90,9 +78,7 @@ def extract_excel_text(path: Path) -> str:
         if not rows:
             continue
         parts.append(f"--- 工作表：{sheet_name} ---")
-        parts.append(f"[表格 parser=excel sheet={sheet_name}]")
-        parts.append(_rows_to_html(rows, sheet_name))
-        parts.append("[TSV]")
+        parts.append(f"[表格 parser=excel sheet={sheet_name} format=tsv]")
         parts.append(_rows_to_tsv(rows))
     text = "\n".join(parts).strip()
     if not text:
@@ -135,9 +121,7 @@ def extract_pdf_text(path: Path) -> str:
             for table_no, table in enumerate(page_tables, start=1):
                 rows = [[_normalize_cell(cell) for cell in row] for row in (table.extract() or []) if row]
                 if rows:
-                    parts.append(f"[表格 parser={parser_name} page={page_no} index={table_no}]")
-                    parts.append(_rows_to_html(rows, str(page_no), "page"))
-                    parts.append("[TSV]")
+                    parts.append(f"[表格 parser={parser_name} page={page_no} index={table_no} format=tsv]")
                     parts.append(_rows_to_tsv(rows))
             text = (page.extract_text(x_tolerance=2, y_tolerance=3, layout=True) or "").strip()
             if text:

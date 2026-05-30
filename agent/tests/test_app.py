@@ -13,6 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
+from agent.contract.extract import extract_excel_text, extract_pdf_text
 from agent.contract.render import build_docxtpl_context, merge_render_data, render_contract
 from agent.main import app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
 
@@ -175,6 +176,58 @@ def test_upload_rejects_mismatched_file_signature() -> None:
     body = response.json()
     assert body["code"] == "INVALID_ARGUMENT"
     assert "文件内容与格式不匹配" in body["message"]
+
+
+def test_extract_excel_text_outputs_tsv_without_html(tmp_path: Path) -> None:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "报价"
+    sheet.append(["品名", "数量", "单价"])
+    sheet.append(["阀门", 2, 100])
+    path = tmp_path / "quote.xlsx"
+    workbook.save(path)
+
+    text = extract_excel_text(path)
+
+    assert "[表格 parser=excel sheet=报价 format=tsv]" in text
+    assert "品名\t数量\t单价" in text
+    assert "阀门\t2\t100" in text
+    assert "<table" not in text
+    assert "<td>" not in text
+
+
+def test_extract_pdf_text_outputs_tsv_without_html() -> None:
+    class FakeTable:
+        def extract(self) -> list[list[str]]:
+            return [["品名", "数量"], ["阀门", "2"]]
+
+    class FakePage:
+        def find_tables(self, table_settings: dict) -> list[FakeTable]:
+            return [FakeTable()]
+
+        def extract_text(self, **kwargs: object) -> str:
+            return "报价备注"
+
+    class FakePdf:
+        pages = [FakePage()]
+
+        def __enter__(self) -> "FakePdf":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+    with patch("pdfplumber.open", return_value=FakePdf()):
+        text = extract_pdf_text(Path("quote.pdf"))
+
+    assert "[表格 parser=pdfplumber-lines page=1 index=1 format=tsv]" in text
+    assert "品名\t数量" in text
+    assert "阀门\t2" in text
+    assert "[第 1 页文字]" in text
+    assert "<table" not in text
+    assert "<td>" not in text
 
 
 def test_upload_owner_cannot_access_other_user_upload() -> None:
