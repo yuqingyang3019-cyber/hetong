@@ -171,10 +171,14 @@ jobs:
         id: get-url
         run: |
           s info -t s.yaml
-          URLS=$(s info -t s.yaml 2>/dev/null | grep -Eo 'https?://[^[:space:]]+')
+          URLS="$(s info -t s.yaml 2>/dev/null | grep -Eo 'https?://[^[:space:]]+' || true)"
           APP_URL=$(echo "$URLS" | tail -1)
           echo "app_url=$APP_URL" >> "$GITHUB_OUTPUT"
-          echo "FC URL: $APP_URL"
+          if [ -n "$APP_URL" ]; then
+            echo "FC URL: $APP_URL"
+          else
+            echo "::notice::未能从 s info 输出中解析 FC URL，部署已完成，请在函数计算控制台查看自定义域名或函数 HTTP 触发地址。"
+          fi
 
       - name: H5 page check
         if: steps.get-url.outputs.app_url != ''
