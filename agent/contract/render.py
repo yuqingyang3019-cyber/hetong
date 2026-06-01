@@ -12,6 +12,7 @@ except ModuleNotFoundError:
             return timezone(timedelta(hours=8))
         return timezone.utc
 
+from docx import Document
 from docxtpl import DocxTemplate
 
 from .config import CONTRACTS_DIR, TemplateConfig, ensure_storage, template_docx_path
@@ -89,11 +90,53 @@ def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, b
     return context
 
 
-def render_contract(render_data: dict[str, Any], config: TemplateConfig, contract_id: str, blank_missing: bool = False) -> Path:
+def _non_empty_rows(rows: Any) -> list[list[str]]:
+    if not isinstance(rows, list):
+        return []
+    normalized: list[list[str]] = []
+    for row in rows:
+        if not isinstance(row, list):
+            continue
+        cells = [_stringify(cell) for cell in row]
+        if any(cell.strip() for cell in cells):
+            normalized.append(cells)
+    return normalized
+
+
+def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None) -> None:
+    sheets = quote_attachment.get("sheets") if isinstance(quote_attachment, dict) else None
+    if not isinstance(sheets, list):
+        return
+    doc = Document(str(path))
+    doc.add_page_break()
+    doc.add_heading("附件：报价单明细", level=1)
+    for sheet in sheets:
+        rows = _non_empty_rows(sheet.get("rows") if isinstance(sheet, dict) else None)
+        if not rows:
+            continue
+        sheet_name = str(sheet.get("name") or "Sheet") if isinstance(sheet, dict) else "Sheet"
+        doc.add_heading(sheet_name, level=2)
+        max_cols = max(len(row) for row in rows)
+        table = doc.add_table(rows=len(rows), cols=max_cols)
+        table.style = "Table Grid"
+        for row_index, row in enumerate(rows):
+            for col_index in range(max_cols):
+                table.cell(row_index, col_index).text = row[col_index] if col_index < len(row) else ""
+    doc.save(str(path))
+
+
+def render_contract(
+    render_data: dict[str, Any],
+    config: TemplateConfig,
+    contract_id: str,
+    blank_missing: bool = False,
+    quote_attachment: dict[str, Any] | None = None,
+) -> Path:
     ensure_storage()
     template_path = template_docx_path(config.type)
     output_path = CONTRACTS_DIR / f"{contract_id}.docx"
     doc = DocxTemplate(str(template_path))
     doc.render(build_docxtpl_context(render_data, config, blank_missing=blank_missing))
     doc.save(str(output_path))
+    append_quote_attachment(output_path, quote_attachment)
     return output_path

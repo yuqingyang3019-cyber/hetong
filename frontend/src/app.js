@@ -944,6 +944,7 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
       quoteText,
       extraInfo,
       extractedData,
+      attachmentMode: task.attachmentMode || task.fieldPreview?.attachmentMode || null,
       dingtalkUser: userPreview,
     }),
   });
@@ -1384,6 +1385,21 @@ function calculatePreviewStats(schema, extractedData) {
   return stats;
 }
 
+function attachmentModeEnabled(mode) {
+  return Boolean(mode && typeof mode === "object" && mode.enabled);
+}
+
+function attachmentModeText(mode) {
+  if (!attachmentModeEnabled(mode)) return "";
+  const rowCount = Number(mode.rowCount || 0);
+  const sheetCount = Number(mode.sheetCount || 0);
+  const parts = [];
+  if (sheetCount > 1) parts.push(`${sheetCount} 个工作表`);
+  if (rowCount > 0) parts.push(`${rowCount} 行明细`);
+  const detail = parts.length ? `（${parts.join("，")}）` : "";
+  return `当前报价单已启用附件模式${detail}：AI 只识别合同主字段，完整报价明细会追加到 Word 合同末尾。`;
+}
+
 function syncFieldPreviewSummary(stats) {
   if (!fieldPreviewSummary) return;
   fieldPreviewSummary.className = `hint field-preview-summary${stats.missing ? " has-missing" : " all-recognized"}`;
@@ -1392,6 +1408,11 @@ function syncFieldPreviewSummary(stats) {
     ? `按合同顺序展示：已识别 ${stats.recognized} 项，仍有 ${stats.missing} 项待填写。可直接修改字段，确认生成后空字段会在 Word 合同中留空。`
     : `按合同顺序展示：已识别 ${stats.recognized} 项，没有待填写字段。可直接修改字段后生成合同。`;
   fieldPreviewSummary.append(document.createTextNode(message));
+  const task = activeTask();
+  const attachmentText = attachmentModeText(task?.fieldPreview?.attachmentMode || task?.attachmentMode);
+  if (attachmentText) {
+    fieldPreviewSummary.append(document.createElement("br"), document.createTextNode(attachmentText));
+  }
   if (stats.missing) {
     const jumpButton = createEl("button", "field-preview-jump", "定位第一个待填写字段");
     jumpButton.type = "button";
@@ -1678,6 +1699,10 @@ function renderTablePreview(paper, schema, extractedData, stats, canEditPreview)
 
 async function renderFieldPreview(task) {
   const schema = await loadTemplateSchema(task.templateType);
+  const attachmentMode = task.fieldPreview?.attachmentMode || task.attachmentMode;
+  const previewSchema = attachmentModeEnabled(attachmentMode)
+    ? { ...schema, tables: {} }
+    : schema;
   const extractedData = task.fieldPreview?.extractedData && typeof task.fieldPreview.extractedData === "object" ? task.fieldPreview.extractedData : {};
   const autoFilledKeys = applyAutoDateDefaults(extractedData);
   if (schemaHasScalar(schema, "taxRate")) {
@@ -1700,11 +1725,13 @@ async function renderFieldPreview(task) {
     title.append(
       createEl("p", "contract-preview-kicker", "合同字段确认稿"),
       createEl("h3", "", task.templateName || schema?.template?.id || "合同模板"),
-      createEl("p", "contract-preview-muted", "以下内容按模板字段顺序生成，可直接修改后生成合同。"),
+      createEl("p", "contract-preview-muted", attachmentModeEnabled(attachmentMode)
+        ? "以下只展示合同主字段；报价单明细将作为附件追加到 Word 合同末尾。"
+        : "以下内容按模板字段顺序生成，可直接修改后生成合同。"),
     );
     paper.append(title);
-    renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview);
-    renderTablePreview(paper, schema, extractedData, stats, canEditPreview);
+    renderScalarPreview(paper, previewSchema, extractedData, stats, autoFilledKeys, canEditPreview);
+    renderTablePreview(paper, previewSchema, extractedData, stats, canEditPreview);
     contractPreviewEl.append(paper);
   }
 
@@ -1780,6 +1807,7 @@ function createTask(file) {
     quoteText: "",
     extraInfo: "",
     fieldPreview: null,
+    attachmentMode: null,
     upload: null,
     download: null,
     downloadState: "ready",
@@ -2088,8 +2116,11 @@ async function runParseTask(task) {
     task.quoteText = parsed.quoteText || "";
     task.extraInfo = "";
     task.fieldPreview = null;
+    task.attachmentMode = parsed.parser?.attachmentMode || null;
+    const attachmentHint = attachmentModeText(task.attachmentMode);
     setTaskStatus(task, "needs_text", `解析完成：${parsed.textLength || 0} 字符，请确认文本并识别字段。`);
-    setStatus("任务解析完成，请确认文本。");
+    if (attachmentHint) appendTaskLog(task, `${attachmentHint}\n`);
+    setStatus(attachmentHint || "任务解析完成，请确认文本。", attachmentHint ? "info" : "success");
   } catch (error) {
     const message = formatError(error);
     setTaskStatus(task, "failed", `处理失败：${message}`, task.upload ? "parse" : "upload");
@@ -2105,11 +2136,13 @@ async function runIdentifyTask(task) {
     setTaskStatus(task, "identifying", "字段识别中：AI 正在匹配合同字段，可关闭当前任务详情并新建其他任务。");
     setStatus("字段识别中，可关闭当前任务详情去新建任务，不用停在这里等待。");
     task.fieldPreview = await previewQuoteFields(task.upload.id, task.quoteText.trim(), task.extraInfo, task.templateType);
+    task.attachmentMode = task.fieldPreview.attachmentMode || task.attachmentMode;
     await renderFieldPreview(task);
     const missing = task.fieldPreview.missingFields?.length || 0;
     const supplierPatched = task.fieldPreview.supplierPatch?.appliedFields?.length || 0;
     const supplierHint = supplierPatched ? ` 已从钉盘供应商缓存补齐 ${supplierPatched} 项乙方信息。` : "";
     const supplierNotice = supplierPatchNotice(task.fieldPreview.supplierPatch);
+    const attachmentHint = attachmentModeText(task.attachmentMode);
     const supplierStatus = supplierPatched
       ? `AI 已整理字段，并从钉盘供应商缓存补齐 ${supplierPatched} 项乙方信息。`
       : supplierNotice || (missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。");
@@ -2117,12 +2150,12 @@ async function runIdentifyTask(task) {
       task,
       "needs_fields",
       missing > 0
-        ? `AI 已识别字段，仍有 ${missing} 项需要人工确认。${supplierHint}${supplierNotice ? ` ${supplierNotice}` : ""}`
-        : `AI 已识别字段，未发现缺失字段。${supplierHint}${supplierNotice ? ` ${supplierNotice}` : ""}`,
+        ? `AI 已识别主字段，仍有 ${missing} 项需要人工确认。${supplierHint}${supplierNotice ? ` ${supplierNotice}` : ""}${attachmentHint ? ` ${attachmentHint}` : ""}`
+        : `AI 已识别字段，未发现缺失字段。${supplierHint}${supplierNotice ? ` ${supplierNotice}` : ""}${attachmentHint ? ` ${attachmentHint}` : ""}`,
     );
     setStatus(
-      supplierStatus,
-      supplierNotice || missing > 0 ? "info" : "success",
+      attachmentHint || supplierStatus,
+      attachmentHint || supplierNotice || missing > 0 ? "info" : "success",
     );
   } catch (error) {
     const message = formatError(error);

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pathlib import Path
 import base64
 import json
@@ -5,18 +7,20 @@ import os
 import re
 import sys
 import types
+from io import BytesIO
 from datetime import date
 from unittest.mock import ANY, Mock, patch
 from zipfile import ZipFile
 
 import pytest
+from docx import Document
 from fastapi.testclient import TestClient
 
 from agent.contract import llm as contract_llm
 from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent import dingdrive
-from agent.contract.extract import extract_excel_text, extract_pdf_text
-from agent.contract.render import build_docxtpl_context, merge_render_data, render_contract
+from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
+from agent.contract.render import append_quote_attachment, build_docxtpl_context, merge_render_data, render_contract
 from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
 from agent.yonyou_vendor import (
     EXPLICIT_VENDOR_DATA_FIELDS,
@@ -38,6 +42,19 @@ BMP_BYTES = b"BMquote-image"
 GIF_BYTES = b"GIF89aquote-image"
 TIFF_BYTES = b"II*\x00quote-image"
 WEBP_BYTES = b"RIFF\x0c\x00\x00\x00WEBPquote-image"
+
+
+def xlsx_bytes(rows: list[list[object]], sheet_name: str = "报价") -> bytes:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = sheet_name
+    for row in rows:
+        sheet.append(row)
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
 
 
 def agent_auth_header(userid: str = "uid1", unionid: str = "union-x") -> dict[str, str]:
@@ -207,6 +224,39 @@ def test_extract_excel_text_outputs_tsv_without_html(tmp_path: Path) -> None:
     assert "阀门\t2\t100" in text
     assert "<table" not in text
     assert "<td>" not in text
+
+
+def test_extract_excel_payload_marks_complex_attachment_mode(tmp_path: Path) -> None:
+    content = xlsx_bytes([["品名", "数量"], *[[f"设备{i}", i] for i in range(1, 42)]])
+    path = tmp_path / "quote.xlsx"
+    path.write_bytes(content)
+
+    payload = extract_excel_payload(path)
+
+    assert payload["attachmentMode"]["enabled"] is True
+    assert payload["attachmentMode"]["rowCount"] == 42
+    assert "total_rows_over_threshold" in payload["attachmentMode"]["reasons"]
+    assert payload["sheets"][0]["name"] == "报价"
+
+
+def test_extract_excel_payload_marks_multi_sheet_attachment_mode(tmp_path: Path) -> None:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    workbook.active.title = "报价一"
+    workbook.active.append(["品名", "数量"])
+    workbook.active.append(["阀门", 1])
+    sheet = workbook.create_sheet("报价二")
+    sheet.append(["品名", "数量"])
+    sheet.append(["水泵", 2])
+    path = tmp_path / "multi.xlsx"
+    workbook.save(path)
+
+    payload = extract_excel_payload(path)
+
+    assert payload["attachmentMode"]["enabled"] is True
+    assert payload["attachmentMode"]["sheetCount"] == 2
+    assert "multiple_sheets" in payload["attachmentMode"]["reasons"]
 
 
 def test_extract_pdf_text_outputs_tsv_without_html() -> None:
@@ -693,6 +743,36 @@ def test_field_preview_applies_supplier_cache_patch() -> None:
     assert body["supplierPatch"]["appliedFields"] == ["supplierAddress"]
 
 
+def test_field_preview_complex_excel_uses_scalar_only_contract() -> None:
+    content = xlsx_bytes([["品名", "数量"], *[[f"设备{i}", i] for i in range(1, 42)]])
+    upload_id = upload_quote(
+        original_name="quote.xlsx",
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content=content,
+    )["id"]
+
+    def fake_llm(_quote_text: str, config: object, _extra_info: str | None = None) -> dict:
+        assert getattr(config, "table_bindings") == {}
+        return {"supplierName": "供应商A"}
+
+    with patch("agent.main.extract_template_render_data", side_effect=fake_llm), patch(
+        "agent.main.patch_supplier_fields_from_cache",
+        return_value={"matched": False, "patch": {}, "reason": "cache_not_found"},
+    ):
+        response = client.post(
+            f"/api/uploads/{upload_id}/field-preview",
+            headers=agent_auth_header(),
+            json={"templateType": "caigouhetong", "quoteText": "用户确认报价单文本"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["attachmentMode"]["enabled"] is True
+    assert body["tableRowCounts"] == {}
+    assert not any(field["type"] == "table" for field in body["recognizedFields"])
+    assert not any(field["type"] in {"table", "tableCell"} for field in body["missingFields"])
+
+
 def test_field_preview_timeout_returns_retryable_message() -> None:
     upload_id = upload_quote()["id"]
 
@@ -730,7 +810,7 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
         draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"})
 
     llm.assert_not_called()
-    render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True)
+    render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True, quote_attachment=None)
     supplier_writeback.assert_called_once()
     assert draft["extractedData"] == extracted
     assert draft["extraInfoLength"] == len("补充信息")
@@ -924,6 +1004,26 @@ def test_confirmed_blank_fields_render_empty() -> None:
     assert confirmed_context["supplierName"] == ""
     assert pending_context["items"][0]["name"] == "【待填写：设备名称】"
     assert confirmed_context["items"][0]["name"] == ""
+
+
+def test_append_quote_attachment_adds_excel_tables(tmp_path: Path) -> None:
+    docx_path = tmp_path / "contract.docx"
+    Document().save(docx_path)
+
+    append_quote_attachment(docx_path, {
+        "sheets": [{
+            "name": "报价",
+            "rows": [["品名", "数量"], ["阀门", "2"]],
+        }],
+    })
+
+    document = Document(docx_path)
+    paragraph_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+    table_text = "\n".join(cell.text for table in document.tables for row in table.rows for cell in row.cells)
+    assert "附件：报价单明细" in paragraph_text
+    assert "报价" in paragraph_text
+    assert "品名" in table_text
+    assert "阀门" in table_text
 
 
 @pytest.mark.parametrize("template_type", ["caigouhetong", "nonStandardNoInstall", "nonStandardWithInstall"])

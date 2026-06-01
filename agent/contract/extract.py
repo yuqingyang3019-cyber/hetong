@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+EXCEL_ATTACHMENT_ROW_THRESHOLD = 40
+
 
 def _normalize_cell(value: Any) -> str:
     if value is None:
@@ -29,6 +31,79 @@ def _rows_to_tsv(rows: list[list[str]]) -> str:
     return "\n".join("\t".join(cell.replace("\n", " / ") for cell in row) for row in rows)
 
 
+def _read_excel_sheets(path: Path) -> list[dict[str, Any]]:
+    suffix = path.suffix.lower()
+    sheets: list[dict[str, Any]] = []
+    try:
+        if suffix == ".xlsx":
+            from openpyxl import load_workbook
+
+            workbook = load_workbook(path, data_only=True, read_only=True)
+            for sheet in workbook.worksheets:
+                rows = [[_normalize_cell(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
+                trimmed_rows = _trim_empty_edges(rows)
+                sheets.append({"name": sheet.title, "rows": trimmed_rows, "rowCount": len(trimmed_rows)})
+        elif suffix == ".xls":
+            import xlrd
+
+            workbook = xlrd.open_workbook(str(path))
+            for sheet in workbook.sheets():
+                rows = [[_normalize_cell(sheet.cell_value(r, c)) for c in range(sheet.ncols)] for r in range(sheet.nrows)]
+                trimmed_rows = _trim_empty_edges(rows)
+                sheets.append({"name": sheet.name, "rows": trimmed_rows, "rowCount": len(trimmed_rows)})
+        else:
+            raise ValueError(f"不支持的 Excel 扩展名：{suffix}")
+    except ValueError:
+        raise
+    except Exception as exc:
+        raise ValueError("Excel 报价单格式不正确或文件已损坏，请重新上传") from exc
+    return sheets
+
+
+def excel_attachment_mode(sheets: list[dict[str, Any]], row_threshold: int = EXCEL_ATTACHMENT_ROW_THRESHOLD) -> dict[str, Any]:
+    non_empty_sheets = [sheet for sheet in sheets if sheet.get("rows")]
+    sheet_count = len(non_empty_sheets)
+    row_counts = [int(sheet.get("rowCount") or len(sheet.get("rows") or [])) for sheet in non_empty_sheets]
+    total_rows = sum(row_counts)
+    max_rows = max(row_counts, default=0)
+    reasons: list[str] = []
+    if sheet_count > 1:
+        reasons.append("multiple_sheets")
+    if max_rows > row_threshold:
+        reasons.append("sheet_rows_over_threshold")
+    if total_rows > row_threshold:
+        reasons.append("total_rows_over_threshold")
+    return {
+        "enabled": bool(reasons),
+        "reasons": reasons,
+        "rowThreshold": row_threshold,
+        "sheetCount": sheet_count,
+        "rowCount": total_rows,
+        "maxSheetRowCount": max_rows,
+    }
+
+
+def extract_excel_payload(path: Path) -> dict[str, Any]:
+    sheets = _read_excel_sheets(path)
+    parts: list[str] = []
+    for sheet in sheets:
+        rows = sheet.get("rows") or []
+        if not rows:
+            continue
+        sheet_name = str(sheet.get("name") or "Sheet")
+        parts.append(f"--- 工作表：{sheet_name} ---")
+        parts.append(f"[表格 parser=excel sheet={sheet_name} format=tsv]")
+        parts.append(_rows_to_tsv(rows))
+    text = "\n".join(parts).strip()
+    if not text:
+        raise ValueError("Excel 未解析到非空单元格")
+    return {
+        "quoteText": text,
+        "sheets": sheets,
+        "attachmentMode": excel_attachment_mode(sheets),
+    }
+
+
 def _response_to_map(response: Any) -> dict[str, Any]:
     if hasattr(response, "to_map"):
         value = response.to_map()
@@ -49,41 +124,7 @@ def _flatten_text(value: Any) -> str:
 
 
 def extract_excel_text(path: Path) -> str:
-    suffix = path.suffix.lower()
-    sheets: list[tuple[str, list[list[str]]]] = []
-    try:
-        if suffix == ".xlsx":
-            from openpyxl import load_workbook
-
-            workbook = load_workbook(path, data_only=True, read_only=True)
-            for sheet in workbook.worksheets:
-                rows = [[_normalize_cell(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
-                sheets.append((sheet.title, _trim_empty_edges(rows)))
-        elif suffix == ".xls":
-            import xlrd
-
-            workbook = xlrd.open_workbook(str(path))
-            for sheet in workbook.sheets():
-                rows = [[_normalize_cell(sheet.cell_value(r, c)) for c in range(sheet.ncols)] for r in range(sheet.nrows)]
-                sheets.append((sheet.name, _trim_empty_edges(rows)))
-        else:
-            raise ValueError(f"不支持的 Excel 扩展名：{suffix}")
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError("Excel 报价单格式不正确或文件已损坏，请重新上传") from exc
-
-    parts: list[str] = []
-    for sheet_name, rows in sheets:
-        if not rows:
-            continue
-        parts.append(f"--- 工作表：{sheet_name} ---")
-        parts.append(f"[表格 parser=excel sheet={sheet_name} format=tsv]")
-        parts.append(_rows_to_tsv(rows))
-    text = "\n".join(parts).strip()
-    if not text:
-        raise ValueError("Excel 未解析到非空单元格")
-    return text
+    return str(extract_excel_payload(path)["quoteText"])
 
 
 def extract_pdf_text(path: Path) -> str:

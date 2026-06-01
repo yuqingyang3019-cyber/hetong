@@ -149,6 +149,18 @@ def build_output_shape(config: TemplateConfig) -> dict[str, Any]:
     return shape
 
 
+def scalar_only_template_config(config: TemplateConfig) -> TemplateConfig:
+    schema = dict(config.schema)
+    schema["tables"] = {}
+    return TemplateConfig(
+        type=config.type,
+        display_name=config.display_name,
+        schema=schema,
+        scalar_keys=list(config.scalar_keys),
+        table_bindings={},
+    )
+
+
 def prune_to_shape(shape: Any, patch: Any) -> Any:
     if shape is None:
         return patch if patch is not None else None

@@ -33,8 +33,8 @@ try:
         get_template_config,
         safe_file_name,
     )
-    from .contract.extract import extract_text_from_file, parser_metadata_for_file
-    from .contract.llm import extract_template_render_data, is_timeout_error
+    from .contract.extract import extract_excel_payload, extract_text_from_file, parser_metadata_for_file
+    from .contract.llm import extract_template_render_data, is_timeout_error, scalar_only_template_config
     from .contract.render import merge_render_data, render_contract
 except ImportError:
     from contract.config import (
@@ -44,8 +44,8 @@ except ImportError:
         get_template_config,
         safe_file_name,
     )
-    from contract.extract import extract_text_from_file, parser_metadata_for_file
-    from contract.llm import extract_template_render_data, is_timeout_error
+    from contract.extract import extract_excel_payload, extract_text_from_file, parser_metadata_for_file
+    from contract.llm import extract_template_render_data, is_timeout_error, scalar_only_template_config
     from contract.render import merge_render_data, render_contract
 
 try:
@@ -786,17 +786,53 @@ def classify_extracted_fields(extracted: dict[str, Any], config: Any) -> dict[st
     }
 
 
+def excel_payload_for_upload(upload: dict[str, Any]) -> dict[str, Any] | None:
+    path = Path(upload["path"])
+    parser = parser_metadata_for_file(path, upload.get("mimeType", ""))
+    if parser.get("type") != "excel":
+        return None
+    return extract_excel_payload(path)
+
+
+def attachment_mode_for_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {"enabled": False}
+    mode = payload.get("attachmentMode")
+    return mode if isinstance(mode, dict) else {"enabled": False}
+
+
+def quote_attachment_for_upload(upload: dict[str, Any]) -> dict[str, Any] | None:
+    payload = excel_payload_for_upload(upload)
+    mode = attachment_mode_for_payload(payload)
+    if not mode.get("enabled"):
+        return None
+    return {
+        "type": "excel",
+        "attachmentMode": mode,
+        "sheets": payload.get("sheets") if isinstance(payload, dict) else [],
+    }
+
+
 def extract_quote_text(upload_id: str, current_user: dict[str, Any]) -> tuple[dict[str, Any], str, dict[str, Any]]:
     upload = load_upload(upload_id, current_user)
     extract_start = time.perf_counter()
-    quote_text = extract_text_from_file(Path(upload["path"]), upload.get("mimeType", ""))
     parser = parser_metadata_for_file(Path(upload["path"]), upload.get("mimeType", ""))
+    excel_payload = excel_payload_for_upload(upload) if parser.get("type") == "excel" else None
+    if excel_payload:
+        quote_text = str(excel_payload["quoteText"])
+        parser = {
+            **parser,
+            "attachmentMode": attachment_mode_for_payload(excel_payload),
+        }
+    else:
+        quote_text = extract_text_from_file(Path(upload["path"]), upload.get("mimeType", ""))
     log_info(
         "quote text extracted",
         uploadId=upload_id,
         fileName=upload.get("fileName"),
         parser=parser.get("type"),
         ocrUsed=parser.get("ocrUsed"),
+        attachmentMode=parser.get("attachmentMode"),
         quoteTextLength=len(quote_text),
         elapsedMs=elapsed_ms(extract_start),
     )
@@ -887,6 +923,8 @@ def generate_contract(
     )
     try:
         upload = load_upload(upload_id, current_user)
+        quote_attachment = quote_attachment_for_upload(upload)
+        attachment_mode = quote_attachment.get("attachmentMode") if quote_attachment else {"enabled": False}
         log_info(
             "contract upload loaded",
             uploadId=upload_id,
@@ -894,6 +932,7 @@ def generate_contract(
             originalName=upload.get("originalName"),
             mimeType=upload.get("mimeType"),
             size=upload.get("size"),
+            attachmentMode=attachment_mode,
         )
 
         try:
@@ -930,7 +969,8 @@ def generate_contract(
                 quoteTextLength=len(quote_text),
                 extraInfoLength=len((extra_info or "").strip()),
             )
-            extracted = extract_template_render_data(quote_text, config, extra_info)
+            llm_config = scalar_only_template_config(config) if attachment_mode.get("enabled") else config
+            extracted = extract_template_render_data(quote_text, llm_config, extra_info)
             log_info(
                 "llm extraction finished",
                 uploadId=upload_id,
@@ -962,12 +1002,19 @@ def generate_contract(
 
         render_start = time.perf_counter()
         log_info("contract render start", uploadId=upload_id, contractId=contract_id, fileName=file_name, templateType=config.type)
-        contract_path = render_contract(render_data, config, contract_stem, blank_missing=has_confirmed_data)
+        contract_path = render_contract(
+            render_data,
+            config,
+            contract_stem,
+            blank_missing=has_confirmed_data,
+            quote_attachment=quote_attachment,
+        )
         log_info(
             "contract render finished",
             uploadId=upload_id,
             contractId=contract_id,
             outputFile=contract_path.name,
+            attachmentMode=attachment_mode,
             elapsedMs=elapsed_ms(render_start),
         )
 
@@ -1015,6 +1062,7 @@ def generate_contract(
             "fileName": file_name,
             "contractPath": str(contract_path),
             "dingDrive": ding_drive,
+            "attachmentMode": attachment_mode,
             "supplierCacheWriteback": supplier_cache_writeback,
         }
         (DRAFTS_DIR / f"{contract_id}.json").write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
@@ -1271,6 +1319,8 @@ async def preview_quote_fields_api(
         )
         config = get_template_config(template_type)
         upload = load_upload(upload_id, current_user)
+        quote_attachment = quote_attachment_for_upload(upload)
+        attachment_mode = quote_attachment.get("attachmentMode") if quote_attachment else {"enabled": False}
         log_info(
             "field preview stage",
             stage="context_loaded",
@@ -1282,6 +1332,7 @@ async def preview_quote_fields_api(
             mimeType=upload.get("mimeType"),
             size=upload.get("size"),
             quoteTextSource="request" if quote_text else "upload_extract",
+            attachmentMode=attachment_mode,
             elapsedMs=elapsed_ms(context_start),
         )
     except HTTPException:
@@ -1320,6 +1371,7 @@ async def preview_quote_fields_api(
 
     llm_start = time.perf_counter()
     try:
+        llm_config = scalar_only_template_config(config) if attachment_mode.get("enabled") else config
         log_info(
             "field preview stage",
             stage="llm_start",
@@ -1327,10 +1379,11 @@ async def preview_quote_fields_api(
             templateType=config.type,
             quoteTextLength=len(quote_text),
             extraInfoLength=len(extra_info or ""),
-            scalarCount=len(config.scalar_keys),
-            tableCount=len(config.table_bindings),
+            scalarCount=len(llm_config.scalar_keys),
+            tableCount=len(llm_config.table_bindings),
+            attachmentMode=attachment_mode,
         )
-        extracted = extract_template_render_data(quote_text, config, extra_info)
+        extracted = extract_template_render_data(quote_text, llm_config, extra_info)
         computed_tax_fields = apply_tax_calculations(extracted, config)
         computed_delivery_fields = apply_delivery_date_calculation(extracted, config)
         log_info(
@@ -1380,7 +1433,8 @@ async def preview_quote_fields_api(
         uploadId=upload_id,
         templateType=config.type,
     )
-    field_summary = classify_extracted_fields(extracted, config)
+    classify_config = scalar_only_template_config(config) if attachment_mode.get("enabled") else config
+    field_summary = classify_extracted_fields(extracted, classify_config)
     log_info(
         "field preview stage",
         stage="classify_finished",
@@ -1399,6 +1453,7 @@ async def preview_quote_fields_api(
         extraInfoLength=len(extra_info or ""),
         recognizedCount=len(field_summary["recognizedFields"]),
         missingCount=len(field_summary["missingFields"]),
+        attachmentMode=attachment_mode,
         llmElapsedMs=elapsed_ms(llm_start),
         elapsedMs=elapsed_ms(start),
     )
@@ -1411,6 +1466,7 @@ async def preview_quote_fields_api(
         "templateName": config.display_name,
         "quoteTextLength": len(quote_text),
         "extraInfoLength": len(extra_info or ""),
+        "attachmentMode": attachment_mode,
         "extractedData": extracted,
         "supplierPatch": supplier_patch,
         **field_summary,
