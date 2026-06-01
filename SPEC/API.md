@@ -8,7 +8,7 @@
 | 文档版本 | V1.0 |
 | 创建日期 | 2026-05-23 |
 | 关联文档 | [PRD.md](./PRD.md)、[ARCHITECTURE.md](./ARCHITECTURE.md) |
-| 适用范围 | 前端 H5、BFF 鉴权协同、AgentRun 业务接口、钉盘下载交付 |
+| 适用范围 | 前端 H5、FC 鉴权与业务接口、钉盘下载交付 |
 
 ## 2. 接口分层
 
@@ -17,27 +17,27 @@ V1 接口按职责拆分为三类：
 | 类型 | 域名 | 调用方 | 职责 |
 | --- | --- | --- | --- |
 | 钉钉客户端 JSAPI SDK | 钉钉客户端内置 | 前端 H5 | 获取免登授权码 |
-| BFF 鉴权接口 | 前端 H5 域名 | 前端 H5 | 提供公开配置、使用钉钉官方新版服务端 SDK 完成免登、维护 H5 会话、签发 AgentRun 短期访问凭证 |
-| AgentRun 业务接口 | AgentRun 域名 | 前端 H5 | 处理报价单上传、解析、字段识别、合同生成和钉盘上传 |
+| FC 鉴权接口 | H5 同域 | 前端 H5 | 提供公开配置、使用钉钉官方新版服务端 SDK 完成免登、维护 H5 会话、签发短期业务凭证 |
+| FC 业务接口 | H5 同域 | 前端 H5 | 处理报价单上传、解析、字段识别、合同生成和钉盘上传 |
 
-前端与 BFF 同域，使用 Cookie 维护 H5 登录态；前端与 AgentRun 跨域，使用 `Authorization: Bearer <agentAccessToken>` 访问业务接口。
+前端与 FC 后端同域，使用 Cookie 维护 H5 登录态；业务接口使用 `Authorization: Bearer <agentAccessToken>` 访问。
 
 ## 3. 通用约定
 
 ### 3.1 请求头
 
-调用 AgentRun 业务接口时，前端必须携带：
+调用 FC 业务接口时，前端必须携带：
 
 ```http
 Authorization: Bearer <agentAccessToken>
 Content-Type: application/json
 ```
 
-上传文件可使用 JSON Base64 或 `multipart/form-data`。AG-UI 流式接口使用 `text/event-stream` 响应。
+上传文件可使用 JSON Base64 或 `multipart/form-data`。合同生成使用同步 HTTP JSON 响应。
 
 ### 3.2 业务错误响应
 
-所有 BFF 和 AgentRun JSON 错误响应应尽量保持一致：
+所有 FC JSON 错误响应应尽量保持一致：
 
 ```json
 {
@@ -60,7 +60,7 @@ Content-Type: application/json
 | 错误码 | HTTP 状态 | 说明 |
 | --- | --- | --- |
 | `AUTH_REQUIRED` | 401 | 未登录或 H5 会话失效 |
-| `AGENT_TOKEN_EXPIRED` | 401 | AgentRun 访问凭证过期 |
+| `AGENT_TOKEN_EXPIRED` | 401 | 业务访问凭证过期 |
 | `FORBIDDEN` | 403 | 当前用户无权限访问资源 |
 | `INVALID_ARGUMENT` | 400 | 请求参数错误 |
 | `UNSUPPORTED_FILE_TYPE` | 400 | 报价单格式不支持 |
@@ -97,16 +97,16 @@ Content-Type: application/json
 
 ### 4.2 下载钉盘合同
 
-合同生成完成后，AgentRun 返回钉盘文件信息。前端调用 AgentRun 下载接口，AgentRun 使用钉盘官方新版 SDK 获取文件下载信息并代理返回合同文件流。
+合同生成完成后，FC 后端返回钉盘文件信息。前端调用下载接口，FC 后端使用钉盘官方新版 SDK 获取文件下载信息并代理返回合同文件流。
 
 输入：
 
 | 字段 | 来源 | 说明 |
 | --- | --- | --- |
-| `spaceId` | AgentRun `contract_generated` 事件 | 钉盘空间 ID |
-| `fileId` | AgentRun `contract_generated` 事件 | 钉盘文件 ID |
-| `fileName` | AgentRun `contract_generated` 事件 | 合同文件名 |
-| `downloadUrl` | 前端内部接口 | AgentRun 下载接口路径 |
+| `spaceId` | `POST /api/contracts/generate` 响应 | 钉盘空间 ID |
+| `fileId` | `POST /api/contracts/generate` 响应 | 钉盘文件 ID |
+| `fileName` | `POST /api/contracts/generate` 响应 | 合同文件名 |
+| `downloadUrl` | 前端内部接口 | FC 下载接口路径 |
 
 前端下载完成后应提示用户文件会保存到浏览器或钉钉客户端默认下载目录；如系统弹窗提示，可选择目标保存位置。
 
@@ -118,7 +118,7 @@ Content-Type: application/json
 GET /bff/auth/config
 ```
 
-用途：返回前端公开配置和 AgentRun 业务入口。
+用途：返回前端公开配置。纯 FC 同域部署时 `agentBaseUrl` 可为空字符串，前端使用相对路径访问业务接口。
 
 响应：
 
@@ -127,7 +127,7 @@ GET /bff/auth/config
   "ok": true,
   "corpId": "ding-corp-id",
   "clientId": "ding-client-id",
-  "agentBaseUrl": "https://agent.example.com",
+  "agentBaseUrl": "",
   "agentTokenTtlSeconds": 1800
 }
 ```
@@ -162,7 +162,7 @@ GET /bff/auth/me
 POST /bff/auth/dingtalk-login
 ```
 
-用途：BFF 接收前端通过钉钉客户端 JSAPI SDK 获取的免登 `code`，服务端使用钉钉官方新版服务端 SDK 换取用户身份，写入 H5 会话，并返回 AgentRun 短期访问凭证。
+用途：FC 后端接收前端通过钉钉客户端 JSAPI SDK 获取的免登 `code`，服务端使用钉钉官方新版服务端 SDK 换取用户身份，写入 H5 会话，并返回短期业务访问凭证。
 
 请求：
 
@@ -184,7 +184,7 @@ POST /bff/auth/dingtalk-login
     "unionid": "unionid001",
     "deptNames": ["销售部"]
   },
-  "agentBaseUrl": "https://agent.example.com",
+  "agentBaseUrl": "",
   "agentAccessToken": "eyJhbGciOiJIUzI1NiJ9...",
   "expiresAt": "2026-05-23T11:00:00Z"
 }
@@ -196,26 +196,26 @@ POST /bff/auth/dingtalk-login
 - `agentAccessToken` 应短期有效，建议 30 分钟以内。
 - `agentAccessToken` 中应包含用户标识、`unionid`、签发方、过期时间和必要权限范围。
 
-### 5.4 刷新 AgentRun 访问凭证
+### 5.4 刷新业务访问凭证
 
 ```http
 POST /bff/auth/agent-token
 ```
 
-用途：在 H5 会话仍有效时刷新 AgentRun 短期访问凭证。
+用途：在 H5 会话仍有效时刷新短期业务访问凭证。
 
 响应：
 
 ```json
 {
   "ok": true,
-  "agentBaseUrl": "https://agent.example.com",
+  "agentBaseUrl": "",
   "agentAccessToken": "eyJhbGciOiJIUzI1NiJ9...",
   "expiresAt": "2026-05-23T11:30:00Z"
 }
 ```
 
-## 6. AgentRun 业务接口
+## 6. FC 业务接口
 
 ### 6.1 上传报价单
 
@@ -224,7 +224,7 @@ POST /api/uploads
 Authorization: Bearer <agentAccessToken>
 ```
 
-用途：前端直连 AgentRun 上传报价单文件。
+用途：前端上传报价单文件。
 
 JSON Base64 请求：
 
@@ -335,53 +335,29 @@ Authorization: Bearer <agentAccessToken>
 ### 6.4 生成合同
 
 ```http
-POST /ag-ui/agent
+POST /api/contracts/generate
 Authorization: Bearer <agentAccessToken>
-Accept: text/event-stream
 ```
 
-用途：前端提交用户确认后的字段数据，AgentRun 生成合同、使用钉盘官方新版 SDK 上传钉盘，并通过 SSE 返回过程事件和钉盘文件信息。
+用途：前端提交用户确认后的字段数据，FC 后端同步生成合同、使用钉盘官方新版 SDK 上传钉盘，并一次性返回钉盘文件信息。
 
-请求关键字段：
+请求：
 
 ```json
 {
-  "threadId": "task_xxx",
-  "runId": "run_xxx",
-  "messages": [
-    {
-      "id": "msg_xxx",
-      "role": "user",
-      "content": "生成合同"
-    }
-  ],
-  "forwardedProps": {
-    "uploadId": "upload_xxx",
-    "templateType": "caigouhetong",
-    "quoteText": "用户确认后的报价单文本",
-    "extraInfo": "补充信息",
-    "extractedData": {}
-  }
+  "uploadId": "upload_xxx",
+  "templateType": "caigouhetong",
+  "quoteText": "用户确认后的报价单文本",
+  "extraInfo": "补充信息",
+  "extractedData": {}
 }
 ```
 
-关键事件：
-
-```text
-event: message
-data: {"type":"TEXT_MESSAGE_CONTENT","delta":"正在生成合同..."}
-
-event: message
-data: {"type":"CUSTOM","name":"contract_generated","value":{...}}
-
-event: message
-data: {"type":"RUN_FINISHED"}
-```
-
-`contract_generated.value`：
+响应：
 
 ```json
 {
+  "ok": true,
   "contractId": "contract_xxx",
   "fileName": "20260523_供应商A.docx",
   "dingDrive": {
@@ -407,7 +383,7 @@ data: {"type":"RUN_FINISHED"}
 约束：
 
 - `extractedData` 必须来自用户确认后的字段预览结果。
-- AgentRun 上传钉盘后返回必要文件元数据和下载提示信息。
+- FC 后端上传钉盘后返回必要文件元数据和下载提示信息。
 - 前端通过 `POST /api/dingdrive/download` 带 Bearer Token 下载合同文件，不直接暴露钉盘下载签名 URL 和 headers。
 
 ### 6.5 下载钉盘合同
@@ -427,7 +403,7 @@ Authorization: Bearer <agentAccessToken>
 }
 ```
 
-用途：AgentRun 调用钉盘 `GetFileDownloadInfo` 获取下载 URL 和 headers，并代理返回合同文件流。前端收到文件流后触发浏览器或钉钉客户端下载，并提示用户保存路径。
+用途：FC 后端调用钉盘 `GetFileDownloadInfo` 获取下载 URL 和 headers，并代理返回合同文件流。前端收到文件流后触发浏览器或钉钉客户端下载，并提示用户保存路径。
 
 ### 6.6 同步用友供应商
 
@@ -436,7 +412,7 @@ POST /api/suppliers/sync
 Authorization: Bearer <agentAccessToken>
 ```
 
-用途：前端触发 AgentRun 从用友 YonBIP 同步供应商档案，生成 `.xlsx` 缓存文件并上传至钉盘。
+用途：前端触发 FC 后端从用友 YonBIP 同步供应商档案，生成 `.xlsx` 缓存文件并上传至钉盘。
 
 请求：
 
@@ -475,8 +451,8 @@ Authorization: Bearer <agentAccessToken>
 
 同步规则：
 
-- AgentRun 使用服务端配置的 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
-- AgentRun 分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含显式供应商主档字段、`queryOrders: [{ field: "code", order: "asc" }]` 和 `partParam.vendorbanks.data: "*,openaccountbank.name"`。
+- FC 后端使用服务端配置的 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
+- FC 后端分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含显式供应商主档字段、`queryOrders: [{ field: "code", order: "asc" }]` 和 `partParam.vendorbanks.data: "*,openaccountbank.name"`。
 - 供应商记录按 `id` 去重；同一 `id` 出现多条记录时，优先保留可用且默认组织更匹配的记录。
 - 同步前应读取钉盘现有 `supplier-cache.xlsx`；同步按钮只按供应商 `id` 追加缓存中不存在的用友供应商，已存在 `id` 不更新、不覆盖。
 - `vendorbanks` 中优先选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；否则选择第一条未停用账户。
@@ -501,15 +477,15 @@ Authorization: Bearer <agentAccessToken>
 
 规则：
 
-- AgentRun 根据字段识别结果中的 `supplierName` 读取钉盘缓存并按供应商名称精确匹配。
+- FC 后端根据字段识别结果中的 `supplierName` 读取钉盘缓存并按供应商名称精确匹配。
 - 仅回填当前合同字段中的空值，不覆盖报价单、用户额外信息或字段确认中已有的值。
-- 用户点击生成合同时，AgentRun 应把最终确认的乙方抬头信息写回 `supplier-cache.xlsx`；同名供应商更新用户确认字段，不存在则追加新行。
+- 用户点击生成合同时，FC 后端应把最终确认的乙方抬头信息写回 `supplier-cache.xlsx`；同名供应商更新用户确认字段，不存在则追加新行。
 
 ## 7. SDK 使用约束
 
 - 前端只使用钉钉客户端 JSAPI SDK 获取免登授权码。
 - BFF 必须使用钉钉官方新版服务端 SDK 完成免登 code 换取、用户身份查询和必要的通讯录信息查询。
-- AgentRun 必须使用钉盘官方新版 SDK 上传合同、获取钉盘文件元数据和下载信息。
+- FC 后端必须使用钉盘官方新版 SDK 上传合同、获取钉盘文件元数据和下载信息。
 - 新增实现不得继续引入旧版 OAPI/Storage API 手写 HTTP 调用；确需保留旧实现时，只能作为迁移期兼容路径，并必须在当前实现差距中标注。
 - SDK 抛出的异常必须转换为本文档定义的稳定错误码，不允许将 SDK 原始错误直接透传给前端。
 
@@ -520,15 +496,14 @@ Authorization: Bearer <agentAccessToken>
 | 接口 | 原因 |
 | --- | --- |
 | `GET /api/contracts/{contractId}/download` | 合同成功上传钉盘后通过钉盘文件信息下载，不暴露本地合同下载 |
-| `POST /api/contracts/generate` | H5 主路径统一使用 AG-UI SSE 生成合同 |
-| BFF 代理 `/api`、`/ag-ui` | 目标设计为前端带短期凭证直连 AgentRun 业务接口 |
+| BFF 代理 `/api` | 纯 FC 同域部署，前端带短期凭证直接调用同域业务接口 |
 
 ## 9. 当前实现差距
 
 | 项目 | 目标接口设计 | 当前实现 | 待办 |
 | --- | --- | --- | --- |
-| 鉴权职责 | BFF 使用钉钉官方新版服务端 SDK 完成免登并签发 AgentRun 短期凭证 | 已迁移为 `/bff/auth/*` + AgentRun Bearer 鉴权，BFF 内部钉钉调用使用官方新版 SDK | 后续在真实钉钉环境验证新版 SDK 免登字段稳定性 |
-| 业务请求路径 | 前端直连 AgentRun | 已改为 `agentBaseUrl` + `Authorization: Bearer` | 部署时确保 AgentRun CORS 允许 H5 域名 |
-| 合同交付 | AgentRun 使用钉盘官方新版 SDK 返回钉盘文件信息，前端通过 AgentRun 下载合同 | 已返回 `dingDrive` 和 `download` 结构，并通过 `/api/dingdrive/download` 下载 | 继续确认钉盘下载信息接口在真实环境的权限配置 |
-| 图片 OCR | AgentRun 解析图片报价单 | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |
-| 供应商同步 | AgentRun 分页读取用友供应商档案，生成 `.xlsx` 缓存文件并上传钉盘 | 规划接入 `POST /api/suppliers/sync` | 需配置 YonBIP 密钥并在真实环境验证分页、限流和钉盘文件权限 |
+| 鉴权职责 | FC 后端使用钉钉官方新版服务端 SDK 完成免登并签发短期业务凭证 | 已迁移为同一 FC 内的 `/bff/auth/*` + Bearer 鉴权 | 后续在真实钉钉环境验证新版 SDK 免登字段稳定性 |
+| 业务请求路径 | 前端同域调用 FC 业务接口 | 已改为相对路径 + `Authorization: Bearer` | 部署时确认自定义域名指向单个 FC 服务 |
+| 合同交付 | FC 后端使用钉盘官方新版 SDK 返回钉盘文件信息，前端通过 FC 下载合同 | 已返回 `dingDrive` 和 `download` 结构，并通过 `/api/dingdrive/download` 下载 | 继续确认钉盘下载信息接口在真实环境的权限配置 |
+| 图片 OCR | FC 后端解析图片报价单 | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |
+| 供应商同步 | FC 后端分页读取用友供应商档案，生成 `.xlsx` 缓存文件并上传钉盘 | 已接入 `POST /api/suppliers/sync` | 需配置 YonBIP 密钥并在真实环境验证分页、限流和钉盘文件权限 |

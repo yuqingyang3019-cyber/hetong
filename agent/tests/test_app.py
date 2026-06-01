@@ -17,7 +17,7 @@ from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, ge
 from agent import dingdrive
 from agent.contract.extract import extract_excel_text, extract_pdf_text
 from agent.contract.render import build_docxtpl_context, merge_render_data, render_contract
-from agent.main import app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
+from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
 from agent.yonyou_vendor import (
     EXPLICIT_VENDOR_DATA_FIELDS,
     append_new_supplier_rows,
@@ -81,9 +81,9 @@ def test_health() -> None:
     assert response.json() == {"ok": True}
 
 
-def test_h5_page_is_not_served_by_agent() -> None:
+def test_h5_page_returns_not_found_without_static_build() -> None:
     response = client.get("/h5")
-    assert response.status_code == 404
+    assert response.status_code == (200 if STATIC_DIR.exists() else 404)
 
 
 def test_upload_multipart_pdf() -> None:
@@ -615,32 +615,29 @@ def test_upload_rejects_empty_file() -> None:
     assert "文件内容" in response.json()["message"]
 
 
-def test_agui_uses_confirmed_quote_text() -> None:
+def test_contract_generate_uses_confirmed_quote_text() -> None:
     upload_id = upload_quote(content=b"%PDF-1.4 raw quote")["id"]
 
     with patch("agent.main.generate_contract") as generate_contract:
-        generate_contract.return_value = {"contractId": "contract_test", "templateType": "caigouhetong", "quoteTextLength": 4}
+        generate_contract.return_value = {
+            "contractId": "contract_test",
+            "templateType": "caigouhetong",
+            "quoteTextLength": 4,
+            "dingDrive": {"spaceId": "space1", "fileId": "file1", "fileName": "confirmed.docx"},
+        }
         response = client.post(
-            "/ag-ui/agent",
+            "/api/contracts/generate",
             headers=agent_auth_header(),
             json={
-                "threadId": "t1",
-                "runId": "r1",
-                "state": {},
-                "messages": [{"id": "m1", "role": "user", "content": "生成合同"}],
-                "tools": [],
-                "context": [],
-                "forwardedProps": {
-                    "uploadId": upload_id,
-                    "templateType": "caigouhetong",
-                    "quoteText": " 用户确认文本 ",
-                },
+                "uploadId": upload_id,
+                "templateType": "caigouhetong",
+                "quoteText": " 用户确认文本 ",
             },
         )
 
     assert response.status_code == 200
     generate_contract.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", None, None, ANY)
-    assert "已确认报价单文本" in response.text
+    assert response.json()["dingDrive"]["fileId"] == "file1"
 
 
 def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
@@ -992,35 +989,32 @@ def test_equipment_item_rows_render_vertically(template_type: str) -> None:
     assert row_a < row_b
 
 
-def test_agui_passes_confirmed_extracted_data() -> None:
+def test_contract_generate_passes_confirmed_extracted_data() -> None:
     upload_id = upload_quote(content=b"%PDF-1.4 raw quote")["id"]
     extracted = {"supplierName": "供应商A", "items": []}
 
     with patch("agent.main.generate_contract") as generate_contract_mock:
-        generate_contract_mock.return_value = {"contractId": "contract_test", "templateType": "caigouhetong", "quoteTextLength": 4}
+        generate_contract_mock.return_value = {
+            "contractId": "contract_test",
+            "templateType": "caigouhetong",
+            "quoteTextLength": 4,
+            "dingDrive": {"spaceId": "space1", "fileId": "file1", "fileName": "confirmed.docx"},
+        }
         response = client.post(
-            "/ag-ui/agent",
+            "/api/contracts/generate",
             headers=agent_auth_header(),
             json={
-                "threadId": "t1",
-                "runId": "r1",
-                "state": {},
-                "messages": [{"id": "m1", "role": "user", "content": "生成合同"}],
-                "tools": [],
-                "context": [],
-                "forwardedProps": {
-                    "uploadId": upload_id,
-                    "templateType": "caigouhetong",
-                    "quoteText": " 用户确认文本 ",
-                    "extraInfo": " 补充信息 ",
-                    "extractedData": extracted,
-                },
+                "uploadId": upload_id,
+                "templateType": "caigouhetong",
+                "quoteText": " 用户确认文本 ",
+                "extraInfo": " 补充信息 ",
+                "extractedData": extracted,
             },
         )
 
     assert response.status_code == 200
     generate_contract_mock.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", "补充信息", extracted, ANY)
-    assert "已确认字段识别结果" in response.text
+    assert response.json()["download"]["type"] == "agent_proxy"
 
 
 def test_templates_exist() -> None:
@@ -1085,19 +1079,14 @@ def test_upload_requires_login_when_enforced(monkeypatch) -> None:
     assert response.status_code == 401
 
 
-def test_agui_requires_login_when_enforced(monkeypatch) -> None:
+def test_contract_generate_requires_login_when_enforced(monkeypatch) -> None:
     monkeypatch.setenv("APP_SESSION_SECRET", "enforce-secret-key-123456789012")
     isolated = TestClient(app)
     response = isolated.post(
-        "/ag-ui/agent",
+        "/api/contracts/generate",
         json={
-            "threadId": "t1",
-            "runId": "r1",
-            "state": {},
-            "messages": [{"id": "m1", "role": "user", "content": "x"}],
-            "tools": [],
-            "context": [],
-            "forwardedProps": {},
+            "uploadId": "upload_missing",
+            "templateType": "caigouhetong",
         },
     )
     assert response.status_code == 401

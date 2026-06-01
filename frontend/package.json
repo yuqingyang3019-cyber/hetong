@@ -4,12 +4,6 @@
   "private": true,
   "scripts": {
     "build": "node build.mjs",
-    "start": "node dist/index.cjs"
-  },
-  "dependencies": {
-    "@alicloud/dingtalk": "^2.2.34",
-    "@alicloud/gateway-dingtalk": "^1.0.2",
-    "@alicloud/openapi-client": "^0.4.15",
-    "@alicloud/tea-util": "^1.4.11"
+    "start": "node build.mjs"
   }
 }

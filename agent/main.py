@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import hmac
 import json
 import logging
-import mimetypes
 import os
 import requests
 import sys
@@ -15,7 +13,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
-from typing import Any, AsyncGenerator, Optional
+from typing import Any, Optional
 from urllib.parse import quote
 
 try:
@@ -25,7 +23,7 @@ except ModuleNotFoundError:
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 try:
     from .contract.config import (
@@ -51,6 +49,7 @@ except ImportError:
     from contract.render import merge_render_data, render_contract
 
 try:
+    from . import dingtalk_oapi
     from .dingdrive import (
         download_supplier_cache_from_dingdrive,
         get_contract_download_info,
@@ -68,6 +67,7 @@ try:
         write_supplier_cache_xlsx,
     )
 except ImportError:
+    import dingtalk_oapi  # type: ignore[no-redef]
     from dingdrive import download_supplier_cache_from_dingdrive  # type: ignore[no-redef]
     from dingdrive import get_contract_download_info  # type: ignore[no-redef]
     from dingdrive import upload_contract_to_dingdrive  # type: ignore[no-redef]
@@ -142,6 +142,36 @@ def error_code_message(exc: Exception) -> tuple[str, str]:
     return "CONTRACT_GENERATE_FAILED", "合同生成失败，请根据原因调整字段后重试"
 
 AGENT_TOKEN_TYPE = "agent"
+H5_SESSION_TYPE = "h5"
+H5_SESSION_COOKIE_NAME = "hetong_h5_session"
+BFF_AUTH_PREFIX = "/bff/auth"
+STATIC_DIR = Path(os.getenv("H5_STATIC_DIR") or Path(__file__).resolve().parent / "static")
+
+
+def env_int(name: str, default: int) -> int:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"环境变量 {name} 必须是整数") from exc
+
+
+def dingtalk_corp_id() -> str:
+    return (os.getenv("DINGTALK_CORP_ID") or "").strip()
+
+
+def dingtalk_client_id() -> str:
+    return (os.getenv("DINGTALK_CLIENT_ID") or "").strip()
+
+
+def agent_token_ttl_seconds() -> int:
+    return env_int("AGENT_TOKEN_TTL_SEC", 1800)
+
+
+def h5_session_ttl_seconds() -> int:
+    return env_int("H5_SESSION_TTL_SEC", 7 * 24 * 3600)
 
 
 def _b64url_encode(data: bytes) -> str:
@@ -200,11 +230,64 @@ def get_current_user(request: Request) -> dict[str, Any]:
     auth = request.headers.get("authorization") or ""
     scheme, _, token = auth.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
-        raise HTTPException(status_code=401, detail={"code": "AUTH_REQUIRED", "message": "缺少 AgentRun 访问凭证"})
+        raise HTTPException(status_code=401, detail={"code": "AUTH_REQUIRED", "message": "缺少业务访问凭证"})
     payload = verify_signed_payload(token.strip(), AGENT_TOKEN_TYPE)
     if not payload:
-        raise HTTPException(status_code=401, detail={"code": "AGENT_TOKEN_EXPIRED", "message": "AgentRun 访问凭证无效或已过期"})
+        raise HTTPException(status_code=401, detail={"code": "AGENT_TOKEN_EXPIRED", "message": "业务访问凭证无效或已过期"})
     return payload
+
+
+def public_user_from_session(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "userid": payload.get("userid"),
+        "name": payload.get("name"),
+        "nick": payload.get("nick") or None,
+        "mobile": payload.get("mobile") or "",
+        "title": payload.get("title") or "",
+        "jobNumber": payload.get("job_number") or "",
+        "email": payload.get("email") or "",
+        "avatar": payload.get("avatar") or "",
+        "deptIds": payload.get("dept_ids") or [],
+        "deptNames": payload.get("dept_names") or [],
+        "unionid": payload.get("unionid") or "",
+    }
+
+
+def sign_agent_token(session_payload: dict[str, Any]) -> dict[str, Any]:
+    exp = time.time() + agent_token_ttl_seconds()
+    token = sign_session_payload({
+        "typ": AGENT_TOKEN_TYPE,
+        "iss": "hetong-fc",
+        "exp": exp,
+        "userid": session_payload.get("userid"),
+        "name": session_payload.get("name"),
+        "nick": session_payload.get("nick") or "",
+        "mobile": session_payload.get("mobile") or "",
+        "title": session_payload.get("title") or "",
+        "job_number": session_payload.get("job_number") or "",
+        "email": session_payload.get("email") or "",
+        "avatar": session_payload.get("avatar") or "",
+        "dept_ids": session_payload.get("dept_ids") or [],
+        "dept_names": session_payload.get("dept_names") or [],
+        "unionid": session_payload.get("unionid") or "",
+    })
+    return {"token": token, "exp": exp}
+
+
+def set_h5_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=H5_SESSION_COOKIE_NAME,
+        value=token,
+        max_age=h5_session_ttl_seconds(),
+        path="/",
+        httponly=True,
+        secure=os.getenv("COOKIE_SECURE", "").lower() == "true" or os.getenv("NODE_ENV") == "production",
+        samesite="lax",
+    )
+
+
+def h5_session_from_request(request: Request) -> dict[str, Any] | None:
+    return verify_signed_payload(request.cookies.get(H5_SESSION_COOKIE_NAME, ""), H5_SESSION_TYPE)
 
 
 agentrun_logger = logging.getLogger("agentrun")
@@ -250,11 +333,6 @@ def contract_file_name(render_data: dict[str, Any], generated_at: datetime | Non
     supplier = str(render_data.get("supplierName") or "未知乙方").strip() or "未知乙方"
     timestamp = (generated_at or datetime.now()).strftime("%Y%m%d_%H%M%S")
     return f"{timestamp}_{safe_file_name(supplier)}.docx"
-
-
-def sse_event(event: dict[str, Any]) -> bytes:
-    payload = {"timestamp": int(time.time() * 1000), **event}
-    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n".encode("utf-8")
 
 
 def contract_download_payload(draft: dict[str, Any]) -> dict[str, Any]:
@@ -507,31 +585,6 @@ async def read_upload_payload(request: Request, file: UploadFile | None) -> tupl
     return content, file.filename or "quote.bin", file.content_type or "application/octet-stream", None, "multipart"
 
 
-def last_user_message(input_data: dict[str, Any]) -> dict[str, Any] | None:
-    messages = input_data.get("messages") or []
-    for message in reversed(messages):
-        if message.get("role") == "user":
-            return message
-    return None
-
-
-def summarize_agui_input(input_data: dict[str, Any]) -> dict[str, Any]:
-    messages = input_data.get("messages") if isinstance(input_data.get("messages"), list) else []
-    message = last_user_message(input_data)
-    content = message.get("content") if message else None
-    forwarded = input_data.get("forwardedProps") if isinstance(input_data.get("forwardedProps"), dict) else {}
-    state = input_data.get("state") if isinstance(input_data.get("state"), dict) else {}
-    return {
-        "threadId": input_data.get("threadId"),
-        "runId": input_data.get("runId"),
-        "messageCount": len(messages),
-        "contentKind": "multimodal" if isinstance(content, list) else type(content).__name__,
-        "contentTypes": [part.get("type") for part in content if isinstance(part, dict)] if isinstance(content, list) else None,
-        "forwardedPropKeys": sorted(forwarded.keys()),
-        "stateKeys": sorted(state.keys()),
-    }
-
-
 def table_row_counts(data: dict[str, Any]) -> dict[str, int]:
     return {key: len(value) for key, value in data.items() if isinstance(value, list)}
 
@@ -731,40 +784,6 @@ def classify_extracted_fields(extracted: dict[str, Any], config: Any) -> dict[st
         "missingFields": missing_fields,
         "tableRowCounts": table_row_counts(extracted),
     }
-
-
-def extract_agui_attachment(input_data: dict[str, Any], current_user: dict[str, Any]) -> dict[str, Any] | None:
-    message = last_user_message(input_data)
-    content = message.get("content") if message else None
-    if not isinstance(content, list):
-        return None
-    for part in content:
-        if not isinstance(part, dict) or part.get("type") not in {"document", "image"}:
-            continue
-        source = part.get("source")
-        if not isinstance(source, dict):
-            continue
-        metadata = part.get("metadata") if isinstance(part.get("metadata"), dict) else {}
-        source_type = source.get("type")
-        mime_type = source.get("mimeType") or "application/octet-stream"
-        file_name = metadata.get("fileName") or metadata.get("filename") or metadata.get("name") or f"quote{mimetypes.guess_extension(mime_type) or '.bin'}"
-        log_info("agui attachment detected", sourceType=source_type, fileName=file_name, mimeType=mime_type)
-        if source_type == "data":
-            parse_start = time.perf_counter()
-            content_bytes, parsed_mime = parse_data_source(source.get("value", ""), mime_type)
-            validate_supported_quote_file(file_name, parsed_mime)
-            if not content_bytes:
-                raise api_error(400, "INVALID_ARGUMENT", "上传文件为空，请重新选择报价单文件")
-            parsed_mime = validate_quote_file_signature(content_bytes, file_name, parsed_mime)
-            log_info(
-                "agui attachment decoded",
-                fileName=file_name,
-                mimeType=parsed_mime,
-                size=len(content_bytes),
-                elapsedMs=elapsed_ms(parse_start),
-            )
-            return save_upload_bytes(content_bytes, file_name, parsed_mime, current_user)
-    return None
 
 
 def extract_quote_text(upload_id: str, current_user: dict[str, Any]) -> tuple[dict[str, Any], str, dict[str, Any]]:
@@ -1019,6 +1038,80 @@ def generate_contract(
 @app.get("/health")
 def health() -> dict:
     return {"ok": True}
+
+
+@app.get(f"{BFF_AUTH_PREFIX}/config")
+def bff_auth_config() -> dict[str, Any]:
+    return {
+        "ok": True,
+        "corpId": dingtalk_corp_id() or None,
+        "clientId": dingtalk_client_id() or None,
+        "agentBaseUrl": "",
+        "agentTokenTtlSeconds": agent_token_ttl_seconds(),
+        "dingtalkConfigured": dingtalk_oapi.dingtalk_configured(),
+    }
+
+
+@app.get(f"{BFF_AUTH_PREFIX}/me")
+def bff_auth_me(request: Request) -> dict[str, Any]:
+    session = h5_session_from_request(request)
+    if not session:
+        return {"ok": True, "loggedIn": False, "user": None}
+    return {
+        "ok": True,
+        "loggedIn": True,
+        "user": public_user_from_session(session),
+        "agentTokenExpiresAt": session.get("agent_exp"),
+    }
+
+
+@app.post(f"{BFF_AUTH_PREFIX}/agent-token")
+def bff_auth_agent_token(request: Request, response: Response) -> dict[str, Any]:
+    session = h5_session_from_request(request)
+    if not session:
+        raise api_error(401, "AUTH_REQUIRED", "登录已失效，请重新进入钉钉应用")
+    agent = sign_agent_token(session)
+    session["agent_exp"] = agent["exp"]
+    set_h5_session_cookie(response, sign_session_payload(session))
+    return {
+        "ok": True,
+        "agentBaseUrl": "",
+        "agentAccessToken": agent["token"],
+        "expiresAt": agent["exp"],
+    }
+
+
+@app.post(f"{BFF_AUTH_PREFIX}/dingtalk-login")
+async def bff_auth_dingtalk_login(request: Request, response: Response) -> dict[str, Any]:
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise api_error(400, "INVALID_ARGUMENT", "请求体必须是 JSON 对象") from exc
+    if not isinstance(payload, dict):
+        raise api_error(400, "INVALID_ARGUMENT", "请求体必须是 JSON 对象")
+    code = str(payload.get("code") or "").strip()
+    corp_id = str(payload.get("corpId") or dingtalk_corp_id() or "").strip()
+    if not code:
+        raise api_error(400, "INVALID_ARGUMENT", "缺少免登授权码 code")
+    if not corp_id:
+        raise api_error(400, "INVALID_ARGUMENT", "缺少 corpId")
+    try:
+        session_payload = dingtalk_oapi.exchange_dingtalk_code(code, corp_id)
+    except Exception as exc:
+        log_exception("dingtalk login failed", exc, corpId=corp_id, codeLength=len(code))
+        raise api_error(502, "DINGTALK_AUTH_FAILED", "钉钉免登失败，请稍后重试或联系管理员", str(exc)) from exc
+    session_payload["typ"] = H5_SESSION_TYPE
+    session_payload["exp"] = time.time() + h5_session_ttl_seconds()
+    agent = sign_agent_token(session_payload)
+    session_payload["agent_exp"] = agent["exp"]
+    set_h5_session_cookie(response, sign_session_payload(session_payload))
+    return {
+        "ok": True,
+        "user": public_user_from_session(session_payload),
+        "agentBaseUrl": "",
+        "agentAccessToken": agent["token"],
+        "expiresAt": agent["exp"],
+    }
 
 
 @app.post("/api/uploads")
@@ -1324,6 +1417,56 @@ async def preview_quote_fields_api(
     }
 
 
+@app.post("/api/contracts/generate")
+async def generate_contract_api(request: Request, current_user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    start = time.perf_counter()
+    client_host = request.client.host if request.client else None
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise api_error(400, "INVALID_ARGUMENT", "生成合同请求体格式不正确") from exc
+    if not isinstance(payload, dict):
+        raise api_error(400, "INVALID_ARGUMENT", "生成合同请求体格式不正确")
+    upload_id = str(payload.get("uploadId") or "").strip()
+    template_type = str(payload.get("templateType") or "caigouhetong").strip()
+    quote_text_value = payload.get("quoteText")
+    quote_text = quote_text_value.strip() if isinstance(quote_text_value, str) and quote_text_value.strip() else None
+    extra_info_value = payload.get("extraInfo")
+    extra_info = extra_info_value.strip() if isinstance(extra_info_value, str) and extra_info_value.strip() else None
+    extracted_data_value = payload.get("extractedData")
+    extracted_data = extracted_data_value if isinstance(extracted_data_value, dict) else None
+    if not upload_id:
+        raise api_error(400, "INVALID_ARGUMENT", "缺少上传文件 ID")
+    log_info(
+        "contract generate api request start",
+        clientHost=client_host,
+        uploadId=upload_id,
+        templateType=template_type,
+        confirmedQuoteText=bool(quote_text),
+        extraInfoLength=len(extra_info or ""),
+        confirmedExtractedData=bool(extracted_data),
+        dingtalkUserId=current_user.get("userid"),
+    )
+    try:
+        draft = generate_contract(upload_id, template_type, quote_text, extra_info, extracted_data, current_user)
+        download_payload = contract_download_payload(draft)
+        log_info(
+            "contract generate api request finished",
+            clientHost=client_host,
+            uploadId=upload_id,
+            templateType=template_type,
+            contractId=draft.get("contractId"),
+            elapsedMs=elapsed_ms(start),
+        )
+        return {"ok": True, **download_payload}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        code, message = error_code_message(exc)
+        log_exception("contract generate api request failed", exc, uploadId=upload_id, templateType=template_type, code=code, elapsedMs=elapsed_ms(start))
+        raise api_error(500, code, message, str(exc)) from exc
+
+
 @app.post("/api/suppliers/sync")
 def sync_suppliers_api(current_user: dict = Depends(get_current_user)) -> dict:
     start = time.perf_counter()
@@ -1435,127 +1578,29 @@ def download_dingdrive_contract(payload: dict = Body(...), current_user: dict = 
     )
 
 
-async def agui_stream(input_data: dict[str, Any], request: Request, current_user: dict[str, Any]) -> AsyncGenerator[bytes, None]:
-    start = time.perf_counter()
-    thread_id = input_data.get("threadId") or new_id("thread")
-    run_id = input_data.get("runId") or new_id("run")
-    message_id = new_id("msg")
-    run_summary = summarize_agui_input(input_data)
-    run_summary.update({
-        "threadId": thread_id,
-        "runId": run_id,
-        "messageId": message_id,
-        "dingtalkUserId": current_user.get("userid"),
-    })
-    log_info("agui run start", **run_summary)
-    yield sse_event({"type": "RUN_STARTED", "threadId": thread_id, "runId": run_id})
-    yield sse_event({"type": "TEXT_MESSAGE_START", "messageId": message_id, "role": "assistant"})
-    try:
-        forwarded = input_data.get("forwardedProps") if isinstance(input_data.get("forwardedProps"), dict) else {}
-        state = input_data.get("state") if isinstance(input_data.get("state"), dict) else {}
-        upload_id = forwarded.get("uploadId") or state.get("uploadId")
-        template_type = forwarded.get("templateType") or state.get("templateType") or "caigouhetong"
-        quote_text_value = forwarded.get("quoteText") or state.get("quoteText")
-        quote_text = quote_text_value.strip() if isinstance(quote_text_value, str) and quote_text_value.strip() else None
-        extra_info_value = forwarded.get("extraInfo") or state.get("extraInfo")
-        extra_info = extra_info_value.strip() if isinstance(extra_info_value, str) and extra_info_value.strip() else None
-        extracted_data_value = forwarded.get("extractedData") or state.get("extractedData")
-        extracted_data = extracted_data_value if isinstance(extracted_data_value, dict) else None
-        log_info(
-            "agui run context resolved",
-            threadId=thread_id,
-            runId=run_id,
-            uploadId=upload_id,
-            templateType=template_type,
-            confirmedQuoteText=bool(quote_text),
-            extraInfoLength=len(extra_info or ""),
-            confirmedExtractedData=bool(extracted_data),
-        )
-        if not upload_id:
-            log_info("agui attachment lookup start", threadId=thread_id, runId=run_id)
-            attachment = extract_agui_attachment(input_data, current_user)
-            if attachment:
-                upload_id = attachment["id"]
-                log_info(
-                    "agui attachment saved",
-                    threadId=thread_id,
-                    runId=run_id,
-                    uploadId=upload_id,
-                    originalName=attachment["originalName"],
-                    size=attachment["size"],
-                )
-                yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": f"已收到附件：{attachment['originalName']}\n"})
-            else:
-                log_warning("agui run missing upload", threadId=thread_id, runId=run_id)
-                raise api_error(400, "INVALID_ARGUMENT", "未收到报价单文件，请先在 H5 页面上传报价单")
-
-        if quote_text:
-            yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "已确认报价单文本。\n"})
-        else:
-            yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "正在解析报价单...\n"})
-        if extracted_data:
-            yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "已确认字段识别结果。\n"})
-        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "正在生成合同...\n"})
-        log_info(
-            "agui contract generation dispatch",
-            threadId=thread_id,
-            runId=run_id,
-            uploadId=upload_id,
-            templateType=template_type,
-            confirmedQuoteText=bool(quote_text),
-            extraInfoLength=len(extra_info or ""),
-            confirmedExtractedData=bool(extracted_data),
-        )
-        draft = await asyncio.to_thread(generate_contract, upload_id, template_type, quote_text, extra_info, extracted_data, current_user)
-        download_payload = contract_download_payload(draft)
-        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": "合同已生成并已存入钉盘。"})
-        yield sse_event({"type": "CUSTOM", "name": "contract_generated", "value": download_payload})
-        yield sse_event({"type": "TEXT_MESSAGE_END", "messageId": message_id})
-        yield sse_event({
-            "type": "RUN_FINISHED",
-            "threadId": thread_id,
-            "runId": run_id,
-            "result": {
-                "contractId": download_payload["contractId"],
-                "preview": download_payload.get("preview"),
-                "openUrl": download_payload.get("openUrl"),
-                "dingDrive": download_payload.get("dingDrive"),
-            },
-        })
-        log_info(
-            "agui run finished",
-            threadId=thread_id,
-            runId=run_id,
-            uploadId=upload_id,
-            contractId=draft["contractId"],
-            elapsedMs=elapsed_ms(start),
-        )
-    except Exception as exc:
-        code, message = error_code_message(exc)
-        log_exception("agui run failed", exc, threadId=thread_id, runId=run_id, code=code, elapsedMs=elapsed_ms(start))
-        yield sse_event({"type": "TEXT_MESSAGE_CONTENT", "messageId": message_id, "delta": f"处理失败：{message}"})
-        yield sse_event({"type": "TEXT_MESSAGE_END", "messageId": message_id})
-        yield sse_event({"type": "RUN_ERROR", "code": code, "message": message})
-
-
-@app.post("/ag-ui/agent")
-async def agui_agent(request: Request) -> StreamingResponse:
-    start = time.perf_counter()
-    client_host = request.client.host if request.client else None
-    try:
-        input_data = await request.json()
-    except Exception as exc:
-        log_exception("agui request json parse failed", exc, clientHost=client_host, elapsedMs=elapsed_ms(start))
-        raise
-    current_user = get_current_user(request)
-    log_info(
-        "agui request received",
-        clientHost=client_host,
-        dingtalkUserId=current_user.get("userid"),
-        elapsedMs=elapsed_ms(start),
-        **summarize_agui_input(input_data),
+@app.get("/config.js")
+def frontend_config_js() -> Response:
+    body = (
+        f"window.__DINGTALK_CLIENT_ID__ = {json.dumps(dingtalk_client_id(), ensure_ascii=False)};\n"
+        f"window.__DINGTALK_CORP_ID__ = {json.dumps(dingtalk_corp_id(), ensure_ascii=False)};\n"
     )
-    return StreamingResponse(agui_stream(input_data, request, current_user), media_type="text/event-stream")
+    return Response(content=body, media_type="application/javascript; charset=utf-8")
+
+
+@app.get("/{path:path}")
+def serve_frontend(path: str) -> FileResponse:
+    if not STATIC_DIR.exists():
+        raise api_error(404, "NOT_FOUND", "H5 静态资源未构建")
+    relative = "index.html" if path in {"", "h5"} else path
+    candidate = (STATIC_DIR / relative).resolve()
+    static_root = STATIC_DIR.resolve()
+    if static_root not in candidate.parents and candidate != static_root:
+        raise api_error(404, "NOT_FOUND", "资源不存在")
+    if not candidate.is_file():
+        candidate = static_root / "index.html"
+    if not candidate.is_file():
+        raise api_error(404, "NOT_FOUND", "资源不存在")
+    return FileResponse(candidate)
 
 
 if __name__ == "__main__":

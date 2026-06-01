@@ -1,4 +1,4 @@
-name: Deploy to AgentRun
+name: Deploy to FC
 
 on:
   push:
@@ -63,7 +63,7 @@ jobs:
         run: npm run build
 
       - name: Node syntax check
-        run: node --check frontend/dist/index.cjs
+        run: node --check frontend/dist/app.js
 
   deploy:
     needs: test
@@ -92,7 +92,7 @@ jobs:
       APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
       AGENT_ALLOWED_ORIGINS: ${{ secrets.AGENT_ALLOWED_ORIGINS }}
     concurrency:
-      group: agentrun-deploy
+      group: fc-deploy
       cancel-in-progress: true
     steps:
       - name: Checkout code
@@ -123,10 +123,6 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Vendor H5 Node dependencies
-        working-directory: frontend/dist
-        run: npm ci --omit=dev --ignore-scripts
-
       - name: Build Agent Python wheelhouse
         run: |
           rm -rf agent/wheelhouse
@@ -156,7 +152,7 @@ jobs:
             DINGTALK_CLIENT_ID DINGTALK_CLIENT_SECRET DINGTALK_CORP_ID \
             DINGTALK_DRIVE_SPACE_ID DINGTALK_DRIVE_PARENT_ID \
             YONBIP_APP_KEY YONBIP_APP_SECRET \
-            APP_SESSION_SECRET AGENT_ALLOWED_ORIGINS; do
+            APP_SESSION_SECRET; do
             val="$(printenv "$var" || true)"
             if [ -z "$val" ]; then
               missing="$missing $var"
@@ -168,38 +164,35 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy to AgentRun
+      - name: Deploy to FC
         run: s deploy -t s.yaml --assume-yes
 
-      - name: Get endpoint URL
+      - name: Get FC URL
         id: get-url
         run: |
           s info -t s.yaml
           URLS=$(s info -t s.yaml 2>/dev/null | grep -Eo 'https?://[^[:space:]]+')
-          ENDPOINT_URL=$(echo "$URLS" | grep 'agentrun-data' | head -1)
-          H5_URL=$(echo "$URLS" | grep -v 'agentrun-data' | tail -1)
-          echo "endpoint_url=$ENDPOINT_URL" >> "$GITHUB_OUTPUT"
-          echo "h5_url=$H5_URL" >> "$GITHUB_OUTPUT"
-          echo "Endpoint URL: $ENDPOINT_URL"
-          echo "H5 URL: $H5_URL"
+          APP_URL=$(echo "$URLS" | tail -1)
+          echo "app_url=$APP_URL" >> "$GITHUB_OUTPUT"
+          echo "FC URL: $APP_URL"
 
       - name: H5 page check
-        if: steps.get-url.outputs.h5_url != ''
+        if: steps.get-url.outputs.app_url != ''
         run: |
-          H5_URL="${{ steps.get-url.outputs.h5_url }}"
-          PAGE="$(curl --fail-with-body --connect-timeout 10 --max-time 60 "$H5_URL")"
+          APP_URL="${{ steps.get-url.outputs.app_url }}"
+          PAGE="$(curl --fail-with-body --connect-timeout 10 --max-time 60 "$APP_URL")"
           echo "$PAGE" | grep "合同生成助手"
           echo "$PAGE" | grep "上传报价单 → 补充信息 → 确认字段 → 生成合同"
           echo "$PAGE" | grep "accessModal"
 
-      - name: Agent health check
-        if: steps.get-url.outputs.endpoint_url != ''
+      - name: FC health check
+        if: steps.get-url.outputs.app_url != ''
         run: |
           sleep 30
-          ENDPOINT_URL="${{ steps.get-url.outputs.endpoint_url }}"
-          curl --fail-with-body --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 10 --retry-all-errors "${ENDPOINT_URL}/health"
+          APP_URL="${{ steps.get-url.outputs.app_url }}"
+          curl --fail-with-body --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 10 --retry-all-errors "${APP_URL}/health"
 
-      - name: Dump AgentRun logs on failure
+      - name: Dump FC logs on failure
         if: failure()
         run: |
           s info -t s.yaml || true

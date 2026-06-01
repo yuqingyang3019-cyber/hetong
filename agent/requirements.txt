@@ -11,4 +11,3 @@ xlrd
 requests
 alibabacloud_dingtalk
 alibabacloud_ocr_api20210707
-ag-ui-protocol

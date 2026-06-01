@@ -104,8 +104,8 @@ function apiUrl(path) {
 
 function agentUrl(path) {
   const base = (agentAuth.baseUrl || authContext.agentBaseUrl || "").replace(/\/$/, "");
-  if (!base) throw new Error("缺少 AgentRun 业务入口，请重新登录");
-  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  return base ? `${base}${normalizedPath}` : normalizedPath;
 }
 
 function fetchBff(url, options = {}) {
@@ -121,7 +121,7 @@ async function refreshAgentToken() {
   const response = await fetchBff(apiUrl("/bff/auth/agent-token"), { method: "POST" });
   const body = await response.json().catch(() => ({}));
   if (!response.ok || !body.ok) {
-    throw new Error(body.message || body.detail || "刷新 AgentRun 访问凭证失败");
+    throw new Error(body.message || body.detail || "刷新业务访问凭证失败");
   }
   agentAuth = {
     baseUrl: body.agentBaseUrl || authContext.agentBaseUrl || "",
@@ -749,7 +749,7 @@ async function initAuth() {
       setStatus("");
     } catch (error) {
       const message = `登录态刷新失败：${formatError(error)}，请重新打开应用。`;
-      appendStageLog("刷新 AgentRun 访问凭证失败", message);
+      appendStageLog("刷新业务访问凭证失败", message);
       setInteractionEnabled(false);
       setStatus(message, "error");
       if (loginHintEl) loginHintEl.textContent = message;
@@ -822,7 +822,7 @@ async function initAuth() {
       }
       showUserBar(body.user, "已通过钉钉免登。");
     }
-    appendStageLog("免登完成", "已通过钉钉免登并获取 AgentRun 访问凭证");
+    appendStageLog("免登完成", "已通过钉钉免登并获取业务访问凭证");
     setInteractionEnabled(true);
     setStatus("");
     if (loginHintEl) loginHintEl.textContent = "";
@@ -926,28 +926,6 @@ async function downloadDingDriveContract(payload) {
   };
 }
 
-function parseSseChunk(chunk) {
-  return chunk
-    .map((chunk) => chunk.trim())
-    .filter(Boolean)
-    .map((chunk) => chunk.replace(/^data:\s*/, ""))
-    .map((chunk) => {
-      try {
-        return JSON.parse(chunk);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-}
-
-function consumeSseBuffer(buffer) {
-  const lastBoundary = buffer.lastIndexOf("\n\n");
-  if (lastBoundary < 0) return { events: [], rest: buffer };
-  const complete = buffer.slice(0, lastBoundary);
-  return { events: parseSseChunk(complete.split("\n\n")), rest: buffer.slice(lastBoundary + 2) };
-}
-
 async function generateContract(task, quoteText, extraInfo, extractedData) {
   let userPreview = null;
   try {
@@ -956,61 +934,35 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
     userPreview = null;
   }
 
-  const response = await fetchAgent("/ag-ui/agent", {
+  appendTaskLog(task, "开始生成合同并上传钉盘。");
+  const response = await fetchAgent("/api/contracts/generate", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      threadId: `h5-${task.id}`,
-      runId: `run-${task.id}-${Date.now()}`,
-      state: {},
-      messages: [{ id: `message-${task.id}`, role: "user", content: "生成合同" }],
-      tools: [],
-      context: userPreview ? [{ type: "user_profile", data: userPreview }] : [],
-      forwardedProps: {
-        uploadId: task.upload.id,
-        templateType: task.templateType,
-        quoteText,
-        extraInfo,
-        extractedData,
-        dingtalkUser: userPreview,
-      },
+      uploadId: task.upload.id,
+      templateType: task.templateType,
+      quoteText,
+      extraInfo,
+      extractedData,
+      dingtalkUser: userPreview,
     }),
   });
 
-  if (!response.ok || !response.body) {
-    const body = await response.json().catch(() => ({}));
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || !body.ok) {
     throw new Error(body.message || body.detail || "生成请求失败");
   }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finished = false;
-  let generated = null;
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parsed = consumeSseBuffer(buffer);
-    buffer = parsed.rest;
-    for (const event of parsed.events) {
-      if (event.type === "TEXT_MESSAGE_CONTENT") appendTaskLog(task, event.delta || "");
-      if (event.type === "CUSTOM" && event.name === "contract_generated") {
-        generated = event.value || {};
-        task.download = generated;
-      }
-      if (event.type === "RUN_ERROR") throw new Error(event.message || "生成失败");
-      if (event.type === "RUN_FINISHED") finished = true;
-    }
-  }
-  const hasDownload = Boolean(generated?.dingDrive?.spaceId && generated?.dingDrive?.fileId);
-  if (!finished || !generated || !hasDownload) {
+  const hasDownload = Boolean(body?.dingDrive?.spaceId && body?.dingDrive?.fileId);
+  if (!hasDownload) {
     throw new Error("合同生成未返回钉盘文件下载信息，请重试。");
   }
-  return generated;
+  task.download = body;
+  appendTaskLog(task, "合同已生成并已存入钉盘。");
+  return body;
+}
+
+function activeGeneratingTask(taskId = "") {
+  return tasks.find((task) => task.status === "generating" && task.id !== taskId) || null;
 }
 
 function createEl(tagName, className, text) {
@@ -2095,7 +2047,9 @@ async function syncActiveTaskEditor() {
   }
   if (generateButton) {
     generateButton.hidden = !(hasEditorContent && task.status === "needs_fields");
-    generateButton.textContent = "确认识别结果并生成合同";
+    const generatingTask = activeGeneratingTask(task.id);
+    generateButton.disabled = Boolean(generatingTask);
+    generateButton.textContent = generatingTask ? "已有合同生成中，请稍候" : "确认识别结果并生成合同";
   }
   if (identifyFieldsButton) {
     identifyFieldsButton.hidden = !(hasEditorContent && task.status === "needs_text");
@@ -2179,6 +2133,12 @@ async function runIdentifyTask(task) {
 
 async function runGenerateTask(task) {
   if (!task.upload || !task.fieldPreview?.extractedData) return;
+  const generatingTask = activeGeneratingTask(task.id);
+  if (generatingTask) {
+    setStatus("已有合同正在生成，请等待当前生成完成后再继续。", "error");
+    appendTaskLog(task, `等待任务「${generatingTask.title || generatingTask.fileName || generatingTask.id}」生成完成后再提交。`);
+    return;
+  }
   try {
     task.quoteText = quoteTextPreview.value.trim() || task.quoteText;
     task.extraInfo = extraInfoText?.value.trim() || task.extraInfo || "";

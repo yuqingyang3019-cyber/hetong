@@ -4,95 +4,62 @@ access: default
 
 vars:
   region: cn-hangzhou
-  agent_name: hetong-agui
-  role: acs:ram::${env("ALIYUN_ACCOUNT_ID")}:role/AliyunAgentRunFunAgentRole
+  function_name: hetong-agui
 
 resources:
-  agent:
-    component: agentrun
-    props:
-      region: ${vars.region}
-      agent:
-        name: ${vars.agent_name}
-        description: 合同生成 Agent H5 一体化应用
-        role: ${vars.role}
-        code:
-          src: ./agent
-          language: python3.12
-          command:
-            - sh
-            - bootstrap.sh
-        cpu: 1.0
-        memory: 2048
-        port: 9000
-        instanceConcurrency: 20
-        internetAccess: true
-        environmentVariables:
-          PORT: "9000"
-          PYTHONPATH: /code:/code/python:/opt/python
-          DASHSCOPE_API_KEY: ${env("DASHSCOPE_API_KEY")}
-          DASHSCOPE_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
-          DASHSCOPE_MODEL: ${env("DASHSCOPE_MODEL")}
-          DASHSCOPE_FALLBACK_MODELS: ${env("DASHSCOPE_FALLBACK_MODELS", "")}
-          DASHSCOPE_ENABLE_THINKING: ${env("DASHSCOPE_ENABLE_THINKING", "false")}
-          DASHSCOPE_TIMEOUT_SECONDS: ${env("DASHSCOPE_TIMEOUT_SECONDS", "60")}
-          ALIYUN_ACCESS_KEY_ID: ${env("ALIYUN_ACCESS_KEY_ID")}
-          ALIYUN_ACCESS_KEY_SECRET: ${env("ALIYUN_ACCESS_KEY_SECRET")}
-          ALIYUN_OCR_ENDPOINT: ocr-api.cn-hangzhou.aliyuncs.com
-          ALIYUN_OCR_REGION_ID: cn-hangzhou
-          ALIYUN_OCR_SCENE: Advanced
-          ALIYUN_OCR_OUTPUT_TABLE: "true"
-          ALIYUN_OCR_LINELESS_TABLE: "false"
-          DINGTALK_CLIENT_ID: ${env("DINGTALK_CLIENT_ID")}
-          DINGTALK_CLIENT_SECRET: ${env("DINGTALK_CLIENT_SECRET")}
-          DINGTALK_CORP_ID: ${env("DINGTALK_CORP_ID")}
-          DINGTALK_DRIVE_SPACE_ID: ${env("DINGTALK_DRIVE_SPACE_ID")}
-          DINGTALK_DRIVE_PARENT_ID: ${env("DINGTALK_DRIVE_PARENT_ID")}
-          DINGTALK_DRIVE_CONFLICT_POLICY: ${env("DINGTALK_DRIVE_CONFLICT_POLICY", "AUTO_RENAME")}
-          YONBIP_APP_KEY: ${env("YONBIP_APP_KEY", "")}
-          YONBIP_APP_SECRET: ${env("YONBIP_APP_SECRET", "")}
-          YONBIP_GATEWAY_URL: ${env("YONBIP_GATEWAY_URL", "https://c3.yonyoucloud.com/iuap-api-gateway")}
-          YONBIP_TOKEN_URL: ${env("YONBIP_TOKEN_URL", "https://c3.yonyoucloud.com/iuap-api-gateway")}
-          YONBIP_TENANT_ID: ${env("YONBIP_TENANT_ID", "")}
-          YONBIP_ORG_ID: ${env("YONBIP_ORG_ID", "")}
-          YONBIP_VENDOR_PAGE_SIZE: ${env("YONBIP_VENDOR_PAGE_SIZE", "500")}
-          APP_SESSION_SECRET: ${env("APP_SESSION_SECRET")}
-          AGENT_ALLOWED_ORIGINS: ${env("AGENT_ALLOWED_ORIGINS")}
-          AGENT_ALLOWED_ORIGIN_REGEX: ${env("AGENT_ALLOWED_ORIGIN_REGEX", "")}
-        endpoints:
-          - name: Default
-            version: LATEST
-            description: 默认入口
-
-  h5-web:
+  app:
     component: fc3
     props:
       region: ${vars.region}
-      functionName: ${vars.agent_name}_h5_web
-      description: 合同生成助手 H5 前端
-      runtime: custom.debian10
-      code: ./frontend/dist
-      layers:
-        - acs:fc:${vars.region}:official:layers/Nodejs20/versions/1
+      functionName: ${vars.function_name}
+      description: 合同生成助手 H5 与业务 API
+      runtime: custom.debian11
+      code: ./agent
       customRuntimeConfig:
         command:
           - /bin/bash
-          - start.sh
-        port: 8000
+          - bootstrap.sh
+        port: 9000
       cpu: 0.5
-      memorySize: 512
+      memorySize: 1024
       diskSize: 512
-      timeout: 3600
-      instanceConcurrency: 100
+      timeout: 300
+      instanceConcurrency: 10
       internetAccess: true
       environmentVariables:
-        PORT: "8000"
-        PATH: /opt/nodejs20/bin:/usr/local/bin:/usr/bin:/bin
-        AGENT_ENDPOINT: ${resources.agent.output.agent.endpoints.0.url}
+        PORT: "9000"
+        H5_STATIC_DIR: /code/static
+        PATH: /var/fc/lang/python3.12/bin:/usr/local/bin:/usr/bin:/bin
+        PYTHONPATH: /code:/code/python:/opt/python
+        DASHSCOPE_API_KEY: ${env("DASHSCOPE_API_KEY")}
+        DASHSCOPE_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
+        DASHSCOPE_MODEL: ${env("DASHSCOPE_MODEL")}
+        DASHSCOPE_FALLBACK_MODELS: ${env("DASHSCOPE_FALLBACK_MODELS", "")}
+        DASHSCOPE_ENABLE_THINKING: ${env("DASHSCOPE_ENABLE_THINKING", "false")}
+        DASHSCOPE_TIMEOUT_SECONDS: ${env("DASHSCOPE_TIMEOUT_SECONDS", "60")}
+        ALIYUN_ACCESS_KEY_ID: ${env("ALIYUN_ACCESS_KEY_ID")}
+        ALIYUN_ACCESS_KEY_SECRET: ${env("ALIYUN_ACCESS_KEY_SECRET")}
+        ALIYUN_OCR_ENDPOINT: ocr-api.cn-hangzhou.aliyuncs.com
+        ALIYUN_OCR_REGION_ID: cn-hangzhou
+        ALIYUN_OCR_SCENE: Advanced
+        ALIYUN_OCR_OUTPUT_TABLE: "true"
+        ALIYUN_OCR_LINELESS_TABLE: "false"
         DINGTALK_CLIENT_ID: ${env("DINGTALK_CLIENT_ID")}
         DINGTALK_CLIENT_SECRET: ${env("DINGTALK_CLIENT_SECRET")}
         DINGTALK_CORP_ID: ${env("DINGTALK_CORP_ID")}
+        DINGTALK_DRIVE_SPACE_ID: ${env("DINGTALK_DRIVE_SPACE_ID")}
+        DINGTALK_DRIVE_PARENT_ID: ${env("DINGTALK_DRIVE_PARENT_ID")}
+        DINGTALK_DRIVE_CONFLICT_POLICY: ${env("DINGTALK_DRIVE_CONFLICT_POLICY", "AUTO_RENAME")}
+        YONBIP_APP_KEY: ${env("YONBIP_APP_KEY", "")}
+        YONBIP_APP_SECRET: ${env("YONBIP_APP_SECRET", "")}
+        YONBIP_GATEWAY_URL: ${env("YONBIP_GATEWAY_URL", "https://c3.yonyoucloud.com/iuap-api-gateway")}
+        YONBIP_TOKEN_URL: ${env("YONBIP_TOKEN_URL", "https://c3.yonyoucloud.com/iuap-api-gateway")}
+        YONBIP_TENANT_ID: ${env("YONBIP_TENANT_ID", "")}
+        YONBIP_ORG_ID: ${env("YONBIP_ORG_ID", "")}
+        YONBIP_VENDOR_PAGE_SIZE: ${env("YONBIP_VENDOR_PAGE_SIZE", "500")}
         APP_SESSION_SECRET: ${env("APP_SESSION_SECRET")}
+        AGENT_ALLOWED_ORIGINS: ${env("AGENT_ALLOWED_ORIGINS", "")}
+        AGENT_ALLOWED_ORIGIN_REGEX: ${env("AGENT_ALLOWED_ORIGIN_REGEX", "")}
         AGENT_TOKEN_TTL_SEC: "1800"
       customDomain:
         protocol: HTTP

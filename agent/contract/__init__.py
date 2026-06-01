@@ -1,1 +1,1 @@
-"""Contract generation helpers for the AgentRun H5 app."""
+"""Contract generation helpers for the FC H5 app."""
