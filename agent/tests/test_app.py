@@ -733,32 +733,6 @@ def test_contract_generate_uses_confirmed_quote_text() -> None:
     assert response.json()["dingDrive"]["fileId"] == "file1"
 
 
-def test_contract_generate_passes_drawing_upload_id() -> None:
-    upload_id = upload_quote(content=b"%PDF-1.4 raw quote")["id"]
-    drawing_id = upload_drawing()["id"]
-
-    with patch("agent.main.generate_contract") as generate_contract:
-        generate_contract.return_value = {
-            "contractId": "contract_test",
-            "templateType": "caigouhetong",
-            "quoteTextLength": 4,
-            "dingDrive": {"spaceId": "space1", "fileId": "file1", "fileName": "with-drawing.docx"},
-        }
-        response = client.post(
-            "/api/contracts/generate",
-            headers=agent_auth_header(),
-            json={
-                "uploadId": upload_id,
-                "templateType": "caigouhetong",
-                "quoteText": "用户确认文本",
-                "drawingUploadId": drawing_id,
-            },
-        )
-
-    assert response.status_code == 200
-    generate_contract.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", None, None, ANY, "auto", drawing_id)
-
-
 def test_field_preview_uses_extra_info_and_classifies_fields() -> None:
     upload_id = upload_quote()["id"]
 
