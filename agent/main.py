@@ -316,9 +316,11 @@ def new_id(prefix: str) -> str:
 
 
 def contract_file_name(render_data: dict[str, Any], generated_at: datetime | None = None) -> str:
-    supplier = str(render_data.get("supplierName") or "未知乙方").strip() or "未知乙方"
     timestamp = (generated_at or datetime.now()).strftime("%Y%m%d_%H%M%S")
-    return f"{timestamp}_{safe_file_name(supplier)}.docx"
+    contract_no = str(render_data.get("contractNo") or "").strip() or timestamp
+    supplier = str(render_data.get("supplierName") or "").strip() or "未知乙方"
+    project = str(render_data.get("projectName") or "").strip() or "未知项目"
+    return "_".join(safe_file_name(part) for part in (contract_no, supplier, project)) + ".docx"
 
 
 def contract_download_payload(draft: dict[str, Any]) -> dict[str, Any]:
@@ -787,9 +789,31 @@ def attachment_mode_for_payload(payload: dict[str, Any] | None) -> dict[str, Any
     return mode if isinstance(mode, dict) else {"enabled": False}
 
 
-def quote_attachment_for_upload(upload: dict[str, Any]) -> dict[str, Any] | None:
+def normalize_table_mode(value: Any) -> str:
+    mode = str(value or "auto").strip()
+    return mode if mode in {"auto", "template", "attachment"} else "auto"
+
+
+def selected_attachment_mode(payload: dict[str, Any] | None, table_mode: str = "auto") -> dict[str, Any]:
+    normalized_mode = normalize_table_mode(table_mode)
+    auto_mode = attachment_mode_for_payload(payload)
+    if normalized_mode == "template":
+        return {"enabled": False, "tableMode": "template"}
+    if normalized_mode == "attachment":
+        if not isinstance(payload, dict):
+            return {"enabled": False, "tableMode": "attachment", "reason": "not_excel"}
+        return {
+            **auto_mode,
+            "enabled": True,
+            "tableMode": "attachment",
+            "reasons": sorted(set([*(auto_mode.get("reasons") or []), "user_selected_attachment"])),
+        }
+    return {**auto_mode, "tableMode": "auto"}
+
+
+def quote_attachment_for_upload(upload: dict[str, Any], table_mode: str = "auto") -> dict[str, Any] | None:
     payload = excel_payload_for_upload(upload)
-    mode = attachment_mode_for_payload(payload)
+    mode = selected_attachment_mode(payload, table_mode)
     if not mode.get("enabled"):
         return None
     return {
@@ -832,6 +856,7 @@ def generate_contract(
     extra_info: str | None = None,
     extracted_data: dict[str, Any] | None = None,
     current_user: dict[str, Any] | None = None,
+    table_mode: str = "auto",
 ) -> dict[str, Any]:
     start = time.perf_counter()
     has_confirmed_text = bool(quote_text and quote_text.strip())
@@ -845,8 +870,13 @@ def generate_contract(
     )
     try:
         upload = load_upload(upload_id, current_user)
-        quote_attachment = quote_attachment_for_upload(upload)
-        attachment_mode = quote_attachment.get("attachmentMode") if quote_attachment else {"enabled": False}
+        table_mode = normalize_table_mode(table_mode)
+        quote_attachment = quote_attachment_for_upload(upload, table_mode)
+        if quote_attachment:
+            attachment_mode = quote_attachment.get("attachmentMode") if quote_attachment else {"enabled": False}
+        else:
+            excel_payload = excel_payload_for_upload(upload)
+            attachment_mode = selected_attachment_mode(excel_payload, table_mode)
         log_info(
             "contract upload loaded",
             uploadId=upload_id,
@@ -855,6 +885,7 @@ def generate_contract(
             mimeType=upload.get("mimeType"),
             size=upload.get("size"),
             attachmentMode=attachment_mode,
+            tableMode=table_mode,
         )
 
         try:
@@ -964,6 +995,7 @@ def generate_contract(
             "contractPath": str(contract_path),
             "dingDrive": ding_drive,
             "attachmentMode": attachment_mode,
+            "tableMode": table_mode,
         }
         (DRAFTS_DIR / f"{contract_id}.json").write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
         removed_paths = remove_upload(upload)
@@ -1194,6 +1226,7 @@ async def preview_quote_fields_api(
         raise api_error(400, "INVALID_ARGUMENT", "字段识别请求体格式不正确")
 
     template_type = str(payload.get("templateType") or "caigouhetong")
+    table_mode = normalize_table_mode(payload.get("tableMode"))
     quote_text_value = payload.get("quoteText")
     extra_info_value = payload.get("extraInfo")
     quote_text = quote_text_value.strip() if isinstance(quote_text_value, str) and quote_text_value.strip() else None
@@ -1204,6 +1237,7 @@ async def preview_quote_fields_api(
         clientHost=client_host,
         uploadId=upload_id,
         templateType=template_type,
+        tableMode=table_mode,
         quoteTextProvided=bool(quote_text),
         quoteTextLength=len(quote_text or ""),
         extraInfoLength=len(extra_info or ""),
@@ -1219,8 +1253,8 @@ async def preview_quote_fields_api(
         )
         config = get_template_config(template_type)
         upload = load_upload(upload_id, current_user)
-        quote_attachment = quote_attachment_for_upload(upload)
-        attachment_mode = quote_attachment.get("attachmentMode") if quote_attachment else {"enabled": False}
+        excel_payload = excel_payload_for_upload(upload)
+        attachment_mode = selected_attachment_mode(excel_payload, table_mode)
         log_info(
             "field preview stage",
             stage="context_loaded",
@@ -1233,6 +1267,7 @@ async def preview_quote_fields_api(
             size=upload.get("size"),
             quoteTextSource="request" if quote_text else "upload_extract",
             attachmentMode=attachment_mode,
+            tableMode=table_mode,
             elapsedMs=elapsed_ms(context_start),
         )
     except HTTPException:
@@ -1372,6 +1407,7 @@ async def preview_quote_fields_api(
         "quoteTextLength": len(quote_text),
         "extraInfoLength": len(extra_info or ""),
         "attachmentMode": attachment_mode,
+        "tableMode": table_mode,
         "extractedData": extracted,
         "supplierPatch": supplier_patch,
         **field_summary,
@@ -1390,6 +1426,7 @@ async def generate_contract_api(request: Request, current_user: dict = Depends(g
         raise api_error(400, "INVALID_ARGUMENT", "生成合同请求体格式不正确")
     upload_id = str(payload.get("uploadId") or "").strip()
     template_type = str(payload.get("templateType") or "caigouhetong").strip()
+    table_mode = normalize_table_mode(payload.get("tableMode"))
     quote_text_value = payload.get("quoteText")
     quote_text = quote_text_value.strip() if isinstance(quote_text_value, str) and quote_text_value.strip() else None
     extra_info_value = payload.get("extraInfo")
@@ -1403,13 +1440,14 @@ async def generate_contract_api(request: Request, current_user: dict = Depends(g
         clientHost=client_host,
         uploadId=upload_id,
         templateType=template_type,
+        tableMode=table_mode,
         confirmedQuoteText=bool(quote_text),
         extraInfoLength=len(extra_info or ""),
         confirmedExtractedData=bool(extracted_data),
         dingtalkUserId=current_user.get("userid"),
     )
     try:
-        draft = generate_contract(upload_id, template_type, quote_text, extra_info, extracted_data, current_user)
+        draft = generate_contract(upload_id, template_type, quote_text, extra_info, extracted_data, current_user, table_mode)
         download_payload = contract_download_payload(draft)
         log_info(
             "contract generate api request finished",

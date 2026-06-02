@@ -1091,6 +1091,49 @@ button:disabled {
   margin: 0;
 }
 
+.table-mode-field {
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.table-mode-field[hidden] {
+  display: none;
+}
+
+.table-mode-option {
+  align-items: flex-start;
+  background: rgba(248, 250, 252, 0.82);
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: var(--radius-sm);
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+}
+
+.table-mode-option input {
+  margin-top: 3px;
+}
+
+.table-mode-option span {
+  display: grid;
+  gap: 2px;
+}
+
+.table-mode-option strong {
+  color: var(--color-primary);
+  font-size: 0.875rem;
+}
+
+.table-mode-option small {
+  color: var(--color-text-muted);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .field-preview-summary {
   align-items: center;
   border: 1px solid var(--color-border);

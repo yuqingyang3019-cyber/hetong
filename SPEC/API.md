@@ -309,7 +309,8 @@ Authorization: Bearer <agentAccessToken>
 {
   "templateType": "caigouhetong",
   "quoteText": "用户确认后的报价单文本",
-  "extraInfo": "付款比例、交货地点等补充信息"
+  "extraInfo": "付款比例、交货地点等补充信息",
+  "tableMode": "auto"
 }
 ```
 
@@ -326,11 +327,18 @@ Authorization: Bearer <agentAccessToken>
   },
   "recognizedFields": [],
   "missingFields": [],
+  "attachmentMode": {
+    "enabled": true,
+    "tableMode": "attachment"
+  },
+  "tableMode": "attachment",
   "tableRowCounts": {
     "items": 3
   }
 }
 ```
+
+`tableMode` 取值为 `auto`、`template`、`attachment`：`auto` 按 Excel 是否超过 5 行或多 sheet 自动选择；`template` 强制按合同模板识别并填表；`attachment` 强制只识别主字段并将 Excel 原表追加到合同末尾。
 
 ### 6.4 生成合同
 
@@ -349,7 +357,8 @@ Authorization: Bearer <agentAccessToken>
   "templateType": "caigouhetong",
   "quoteText": "用户确认后的报价单文本",
   "extraInfo": "补充信息",
-  "extractedData": {}
+  "extractedData": {},
+  "tableMode": "attachment"
 }
 ```
 
@@ -359,12 +368,12 @@ Authorization: Bearer <agentAccessToken>
 {
   "ok": true,
   "contractId": "contract_xxx",
-  "fileName": "20260523_供应商A.docx",
+  "fileName": "HT001_供应商A_项目A.docx",
   "dingDrive": {
     "spaceId": "space_xxx",
     "fileId": "file_xxx",
-    "fileName": "20260523_供应商A.docx",
-    "filePath": "合同/2026/05/20260523_供应商A.docx"
+    "fileName": "HT001_供应商A_项目A.docx",
+    "filePath": "合同/2026/05/HT001_供应商A_项目A.docx"
   },
   "preview": {
     "type": "dingtalk_drive",
@@ -374,7 +383,7 @@ Authorization: Bearer <agentAccessToken>
   },
   "download": {
     "type": "agent_proxy",
-    "fileName": "20260523_供应商A.docx",
+    "fileName": "HT001_供应商A_项目A.docx",
     "savePathHint": "文件将保存到浏览器或钉钉客户端的默认下载目录；如系统弹窗提示，请选择目标保存位置。"
   }
 }
@@ -383,6 +392,7 @@ Authorization: Bearer <agentAccessToken>
 约束：
 
 - `extractedData` 必须来自用户确认后的字段预览结果。
+- 合同文件名使用 `合同编号_供应商名称_项目名称.docx`；合同编号为空时用生成时间兜底，供应商或项目为空时用 `未知乙方`、`未知项目`。
 - FC 后端上传钉盘后返回必要文件元数据和下载提示信息。
 - 前端通过 `POST /api/dingdrive/download` 带 Bearer Token 下载合同文件，不直接暴露钉盘下载签名 URL 和 headers。
 
@@ -421,9 +431,9 @@ Authorization: Bearer <agentAccessToken>
 
 规则：
 
-- FC 后端根据字段识别结果中的 `supplierName` 实时调用用友 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体使用 `condition.simpleVOs = [{ field: "name", op: "eq", value1: supplierName }]`，并通过 `partParam.vendorbanks.data = "*,openaccountbank.name"` 请求银行子表。
+- FC 后端根据字段识别结果中的 `supplierName` 实时调用用友 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体使用 `condition.simpleVOs = [{ field: "name", op: "eq", value1: supplierName }]`，并通过 `partParam.vendorbanks.data = "*,openaccountbank.name"` 请求银行子表，通过 `partParam.vendorcontactss.data = "*"` 请求联系人子表。
 - 仅命中唯一可用供应商时自动覆盖乙方抬头字段；未命中、多条命中或接口失败时返回 `supplierPatch.matched=false` 和稳定 `reason`，不阻塞字段确认。
-- 用友返回的乙方抬头信息作为权威数据，可覆盖 `supplierName`、`supplierTaxNo`、`supplierAddress`、`supplierPhone`、`supplierBank`、`supplierAccount` 等字段。
+- 用友返回的乙方抬头信息作为权威数据，可覆盖 `supplierName`、`supplierTaxNo`、`supplierAddress`、`supplierPhone`、`supplierBank`、`supplierAccount`、`supplierRepresentativeName`、`supplierRepresentativePhone`、`supplierRepresentativeEmail` 等字段。
 - 银行账户优先选择 `defaultbank=true` 且 `stopstatus=false` 的记录，否则选择第一条未停用账户。
 - 若用友缺少税号、地址、电话、开户行或银行账号等合同需要的抬头字段，`missingYonbipFields` 应列出缺失字段，前端提示用户到用友系统补充供应商抬头信息或先手动填写。
 - FC 后端不生成、不下载、不上传 `supplier-cache.xlsx`，不在本地或钉盘长期保存供应商档案。

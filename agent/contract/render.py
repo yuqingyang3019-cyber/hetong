@@ -13,9 +13,35 @@ except ModuleNotFoundError:
         return timezone.utc
 
 from docx import Document
-from docxtpl import DocxTemplate
+from docxtpl import DocxTemplate, RichText
 
 from .config import CONTRACTS_DIR, TemplateConfig, ensure_storage, template_docx_path
+
+RICH_TEXT_FONT = "eastAsia:仿宋"
+RICH_TEXT_SIZE = 21
+UNDERLINE_BLANK = "        "
+NO_UNDERLINE_SCALAR_KEYS = {
+    "signYear",
+    "signMonth",
+    "signDay",
+    "signatureYear",
+    "signatureMonth",
+    "signatureDay",
+    "supplierName",
+    "supplierAddress",
+    "supplierBank",
+    "supplierAccount",
+    "supplierTaxNo",
+    "supplierPhone",
+    "supplierFax",
+    "supplierRepresentativeName",
+    "supplierRepresentativeIdNo",
+    "supplierRepresentativePhone",
+    "supplierRepresentativeAddress",
+    "supplierRepresentativeEmail",
+    "buyerAuthorizedRepresentative",
+    "supplierAuthorizedRepresentative",
+}
 
 
 def _stringify(value: Any, fallback: str = "") -> str:
@@ -34,6 +60,15 @@ def _value_for_context(value: Any, label: str, blank_missing: bool = False) -> s
             return ""
         return _pending(label)
     return str(value)
+
+
+def _rich_text(value: Any, label: str, blank_missing: bool = False, underline: bool = False) -> RichText:
+    text = _value_for_context(value, label, blank_missing)
+    if underline and blank_missing and not text.strip():
+        text = UNDERLINE_BLANK
+    rich_text = RichText()
+    rich_text.add(text, font=RICH_TEXT_FONT, size=RICH_TEXT_SIZE, underline=underline)
+    return rich_text
 
 
 def _today_parts() -> dict[str, str]:
@@ -73,7 +108,12 @@ def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, b
     scalar_labels = {field["key"]: field["label"] for field in config.schema.get("scalars", [])}
     context: dict[str, Any] = {}
     for key in config.scalar_keys:
-        context[key] = _value_for_context(render_data.get(key), scalar_labels.get(key, key), blank_missing)
+        context[key] = _rich_text(
+            render_data.get(key),
+            scalar_labels.get(key, key),
+            blank_missing,
+            underline=key not in NO_UNDERLINE_SCALAR_KEYS,
+        )
     for table_name, columns in config.table_bindings.items():
         table_def = config.schema.get("tables", {}).get(table_name, {})
         labels = {column["key"]: column["label"] for column in table_def.get("columns", [])}
@@ -83,7 +123,7 @@ def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, b
             for row in rows:
                 source = row if isinstance(row, dict) else {}
                 mapped_rows.append({
-                    column: _value_for_context(source.get(column), labels.get(column, column), blank_missing)
+                    column: _rich_text(source.get(column), labels.get(column, column), blank_missing, underline=False)
                     for column in columns
                 })
         context[table_name] = mapped_rows

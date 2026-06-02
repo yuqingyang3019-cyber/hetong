@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-EXCEL_ATTACHMENT_ROW_THRESHOLD = 40
+EXCEL_ATTACHMENT_ROW_THRESHOLD = 5
 
 
 def _normalize_cell(value: Any) -> str:

@@ -20,7 +20,7 @@ from agent.contract import llm as contract_llm
 from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
 from agent.contract.render import append_quote_attachment, build_docxtpl_context, merge_render_data, render_contract
-from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, generate_contract, sign_session_payload
+from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, contract_file_name, generate_contract, sign_session_payload
 from agent.yonyou_vendor import (
     EXPLICIT_VENDOR_DATA_FIELDS,
     apply_yonbip_supplier_patch,
@@ -224,14 +224,14 @@ def test_extract_excel_text_outputs_tsv_without_html(tmp_path: Path) -> None:
 
 
 def test_extract_excel_payload_marks_complex_attachment_mode(tmp_path: Path) -> None:
-    content = xlsx_bytes([["品名", "数量"], *[[f"设备{i}", i] for i in range(1, 42)]])
+    content = xlsx_bytes([["品名", "数量"], *[[f"设备{i}", i] for i in range(1, 6)]])
     path = tmp_path / "quote.xlsx"
     path.write_bytes(content)
 
     payload = extract_excel_payload(path)
 
     assert payload["attachmentMode"]["enabled"] is True
-    assert payload["attachmentMode"]["rowCount"] == 42
+    assert payload["attachmentMode"]["rowCount"] == 6
     assert "total_rows_over_threshold" in payload["attachmentMode"]["reasons"]
     assert payload["sheets"][0]["name"] == "报价"
 
@@ -293,6 +293,7 @@ def test_yonbip_vendor_query_uses_explicit_fields() -> None:
 
     assert payload["data"] == EXPLICIT_VENDOR_DATA_FIELDS
     assert "vendorbanks" in payload["partParam"]
+    assert "vendorcontactss" in payload["partParam"]
 
 
 def test_yonbip_vendor_lookup_filters_by_supplier_name() -> None:
@@ -301,6 +302,7 @@ def test_yonbip_vendor_lookup_filters_by_supplier_name() -> None:
     assert payload["data"] == EXPLICIT_VENDOR_DATA_FIELDS
     assert payload["condition"]["simpleVOs"] == [{"field": "name", "op": "eq", "value1": "供应商A"}]
     assert payload["partParam"]["vendorbanks"]["data"] == "*,openaccountbank.name"
+    assert payload["partParam"]["vendorcontactss"]["data"] == "*"
 
 
 def test_supplier_patch_from_yonbip_overwrites_title_fields() -> None:
@@ -320,6 +322,9 @@ def test_supplier_patch_from_yonbip_overwrites_title_fields() -> None:
             {"defaultbank": False, "stopstatus": False, "openaccountbank_name": "非默认银行", "account": "111"},
             {"defaultbank": True, "stopstatus": False, "openaccountbank_name": "默认银行", "account": "222"},
         ],
+        "vendorcontactss": [
+            {"defaultcontact": True, "contactname": "李四", "contactmobile": "13800000000", "contactemail": "li@example.com"},
+        ],
     }]
 
     with patch("agent.yonyou_vendor.query_supplier_by_name", return_value={"recordCount": 1, "records": records}):
@@ -329,11 +334,43 @@ def test_supplier_patch_from_yonbip_overwrites_title_fields() -> None:
     assert patch_payload["matched"] is True
     assert patch_payload["source"] == "yonbip"
     assert patch_payload["missingYonbipFields"] == []
-    assert changed == {"supplierName", "supplierTaxNo", "supplierAddress", "supplierPhone", "supplierBank", "supplierAccount"}
+    assert changed == {
+        "supplierName",
+        "supplierTaxNo",
+        "supplierAddress",
+        "supplierPhone",
+        "supplierBank",
+        "supplierAccount",
+        "supplierRepresentativeName",
+        "supplierRepresentativePhone",
+        "supplierRepresentativeEmail",
+    }
     assert extracted["supplierName"] == "用友供应商A"
     assert extracted["supplierAddress"] == "用友地址"
     assert extracted["supplierBank"] == "默认银行"
     assert extracted["supplierAccount"] == "222"
+    assert extracted["supplierRepresentativeName"] == "李四"
+    assert extracted["supplierRepresentativePhone"] == "13800000000"
+
+
+def test_supplier_patch_from_yonbip_uses_detail_contacts_when_missing_from_page() -> None:
+    extracted = {"supplierName": "供应商A"}
+    records = [{"id": "vendor-1", "name": "用友供应商A"}]
+    detail = {
+        "vendorcontactss": [
+            {"contactname": "王五", "contactmobile": "13900000000", "contactemail": "wang@example.com"},
+        ],
+    }
+
+    with patch("agent.yonyou_vendor.query_supplier_by_name", return_value={"recordCount": 1, "records": records}), patch(
+        "agent.yonyou_vendor.query_supplier_detail",
+        return_value=detail,
+    ):
+        patch_payload = supplier_patch_from_yonbip(extracted)
+
+    assert patch_payload["patch"]["supplierRepresentativeName"] == "王五"
+    assert patch_payload["patch"]["supplierRepresentativePhone"] == "13900000000"
+    assert patch_payload["patch"]["supplierRepresentativeEmail"] == "wang@example.com"
 
 
 def test_supplier_patch_from_yonbip_not_found_and_ambiguous() -> None:
@@ -726,7 +763,7 @@ def test_field_preview_yonbip_failure_does_not_block() -> None:
 
 
 def test_field_preview_complex_excel_uses_scalar_only_contract() -> None:
-    content = xlsx_bytes([["品名", "数量"], *[[f"设备{i}", i] for i in range(1, 42)]])
+    content = xlsx_bytes([["品名", "数量"], *[[f"设备{i}", i] for i in range(1, 6)]])
     upload_id = upload_quote(
         original_name="quote.xlsx",
         mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -753,6 +790,35 @@ def test_field_preview_complex_excel_uses_scalar_only_contract() -> None:
     assert body["tableRowCounts"] == {}
     assert not any(field["type"] == "table" for field in body["recognizedFields"])
     assert not any(field["type"] in {"table", "tableCell"} for field in body["missingFields"])
+
+
+def test_field_preview_template_table_mode_keeps_table_contract() -> None:
+    content = xlsx_bytes([["品名", "数量"], *[[f"设备{i}", i] for i in range(1, 6)]])
+    upload_id = upload_quote(
+        original_name="quote.xlsx",
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content=content,
+    )["id"]
+
+    def fake_llm(_quote_text: str, config: object, _extra_info: str | None = None) -> dict:
+        assert getattr(config, "table_bindings") != {}
+        return {"supplierName": "供应商A", "items": [{"name": "设备1", "quantity": "1"}]}
+
+    with patch("agent.main.extract_template_render_data", side_effect=fake_llm), patch(
+        "agent.main.supplier_patch_from_yonbip",
+        return_value={"source": "yonbip", "matched": False, "patch": {}, "reason": "not_found"},
+    ):
+        response = client.post(
+            f"/api/uploads/{upload_id}/field-preview",
+            headers=agent_auth_header(),
+            json={"templateType": "caigouhetong", "quoteText": "用户确认报价单文本", "tableMode": "template"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["attachmentMode"]["enabled"] is False
+    assert body["tableMode"] == "template"
+    assert body["tableRowCounts"]["items"] == 1
 
 
 def test_field_preview_timeout_returns_retryable_message() -> None:
@@ -794,6 +860,49 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
     assert draft["extraInfoLength"] == len("补充信息")
     assert "supplierCacheWriteback" not in draft
     assert draft["dingDrive"]["fileId"] == "file1"
+
+
+def test_generate_contract_attachment_table_mode_passes_quote_attachment() -> None:
+    content = xlsx_bytes([["品名", "数量"], ["设备1", 1]])
+    upload_id = upload_quote(
+        original_name="quote.xlsx",
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content=content,
+    )["id"]
+    extracted = {"supplierName": "供应商A", "items": []}
+
+    with patch("agent.main.extract_template_render_data") as llm, patch(
+        "agent.main.render_contract",
+        return_value=Path("agent/storage/contracts/attachment.docx"),
+    ) as render_contract_mock, patch(
+        "agent.main.upload_contract_to_dingdrive",
+        return_value={"spaceId": "space1", "fileId": "file1", "fileName": "attachment.docx", "filePath": "/attachment.docx"},
+    ):
+        draft = generate_contract(
+            upload_id,
+            "caigouhetong",
+            "确认文本",
+            "补充信息",
+            extracted,
+            {"userid": "uid1", "unionid": "union-x"},
+            table_mode="attachment",
+        )
+
+    llm.assert_not_called()
+    quote_attachment = render_contract_mock.call_args.kwargs["quote_attachment"]
+    assert quote_attachment["attachmentMode"]["enabled"] is True
+    assert quote_attachment["attachmentMode"]["tableMode"] == "attachment"
+    assert draft["attachmentMode"]["enabled"] is True
+    assert draft["tableMode"] == "attachment"
+
+
+def test_contract_file_name_uses_contract_supplier_and_project() -> None:
+    assert contract_file_name({
+        "contractNo": "HT/001",
+        "supplierName": "供应商A",
+        "projectName": "项目:一",
+    }) == "HT_001_供应商A_项目_一.docx"
+    assert contract_file_name({}, generated_at=date(2026, 6, 1)) == "20260601_000000_未知乙方_未知项目.docx"
 
 
 def test_tax_fields_are_calculated_from_total_amount() -> None:
@@ -973,15 +1082,22 @@ def test_generate_contract_keeps_process_files_when_dingdrive_fails() -> None:
 
 def test_confirmed_blank_fields_render_empty() -> None:
     config = get_template_config("caigouhetong")
-    render_data = {"supplierName": "", "items": [{"index": "1", "name": ""}]}
+    render_data = {"projectName": "", "supplierName": "", "items": [{"index": "1", "name": ""}]}
 
     pending_context = build_docxtpl_context(render_data, config)
     confirmed_context = build_docxtpl_context(render_data, config, blank_missing=True)
 
-    assert pending_context["supplierName"] == "【待填写：乙方名称】"
-    assert confirmed_context["supplierName"] == ""
-    assert pending_context["items"][0]["name"] == "【待填写：设备名称】"
-    assert confirmed_context["items"][0]["name"] == ""
+    assert "【待填写：项目名称】" in str(pending_context["projectName"])
+    assert "【待填写：乙方名称】" in str(pending_context["supplierName"])
+    project_xml = str(confirmed_context["projectName"])
+    supplier_xml = str(confirmed_context["supplierName"])
+    item_xml = str(confirmed_context["items"][0]["name"])
+    assert 'w:eastAsia="仿宋"' in project_xml
+    assert 'w:sz w:val="21"' in project_xml
+    assert '<w:u w:val="single"/>' in project_xml
+    assert "        " in project_xml
+    assert '<w:u w:val="single"/>' not in supplier_xml
+    assert '<w:u w:val="single"/>' not in item_xml
 
 
 def test_append_quote_attachment_adds_excel_tables(tmp_path: Path) -> None:

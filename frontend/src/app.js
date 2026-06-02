@@ -6,6 +6,8 @@ const previewCard = document.querySelector("#previewCard");
 const fieldPreviewCard = document.querySelector("#fieldPreviewCard");
 const quoteTextPreview = document.querySelector("#quoteTextPreview");
 const extraInfoText = document.querySelector("#extraInfoText");
+const tableModeField = document.querySelector("#tableModeField");
+const tableModeInputs = Array.from(document.querySelectorAll("input[name='tableMode']"));
 const fieldPreviewSummary = document.querySelector("#fieldPreviewSummary");
 const contractPreviewEl = document.querySelector("#contractPreview");
 const templateType = document.querySelector("#templateType");
@@ -811,7 +813,7 @@ async function parseUploadedQuote(uploadId, taskTemplateType) {
   return response.json();
 }
 
-async function previewQuoteFields(uploadId, quoteText, extraInfo, taskTemplateType) {
+async function previewQuoteFields(uploadId, quoteText, extraInfo, taskTemplateType, tableMode = "auto") {
   const response = await fetchAgent(`/api/uploads/${encodeURIComponent(uploadId)}/field-preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -819,6 +821,7 @@ async function previewQuoteFields(uploadId, quoteText, extraInfo, taskTemplateTy
       templateType: taskTemplateType,
       quoteText,
       extraInfo,
+      tableMode,
     }),
   });
   if (!response.ok) {
@@ -887,6 +890,7 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
       quoteText,
       extraInfo,
       extractedData,
+      tableMode: effectiveTableMode(task),
       attachmentMode: task.attachmentMode || task.fieldPreview?.attachmentMode || null,
       dingtalkUser: userPreview,
     }),
@@ -1332,6 +1336,28 @@ function attachmentModeEnabled(mode) {
   return Boolean(mode && typeof mode === "object" && mode.enabled);
 }
 
+function quoteIsExcelTask(task) {
+  return Boolean(task?.attachmentMode && typeof task.attachmentMode === "object");
+}
+
+function normalizeTableMode(value) {
+  return value === "attachment" || value === "template" ? value : "auto";
+}
+
+function defaultTableMode(attachmentMode) {
+  return attachmentModeEnabled(attachmentMode) ? "attachment" : "template";
+}
+
+function effectiveTableMode(task) {
+  const mode = normalizeTableMode(task?.tableMode);
+  if (mode !== "auto") return mode;
+  return defaultTableMode(task?.attachmentMode);
+}
+
+function tableModeUsesAttachment(task) {
+  return effectiveTableMode(task) === "attachment";
+}
+
 function attachmentModeText(mode) {
   if (!attachmentModeEnabled(mode)) return "";
   const rowCount = Number(mode.rowCount || 0);
@@ -1341,6 +1367,33 @@ function attachmentModeText(mode) {
   if (rowCount > 0) parts.push(`${rowCount} 行明细`);
   const detail = parts.length ? `（${parts.join("，")}）` : "";
   return `当前报价单已启用附件模式${detail}：AI 只识别合同主字段，完整报价明细会追加到 Word 合同末尾。`;
+}
+
+function taskAttachmentModeText(task) {
+  if (!tableModeUsesAttachment(task)) return "";
+  return attachmentModeText(task?.fieldPreview?.attachmentMode || task?.attachmentMode)
+    || "当前已选择附件模式：AI 只识别合同主字段，完整报价明细会追加到 Word 合同末尾。";
+}
+
+function syncTableModeControls(task) {
+  if (!tableModeField || !tableModeInputs.length) return;
+  const show = Boolean(task && quoteIsExcelTask(task) && task.status !== "completed");
+  tableModeField.hidden = !show;
+  if (!show) return;
+  const selectedMode = effectiveTableMode(task);
+  const disabled = taskIsBusy(task) || task.status !== "needs_text";
+  tableModeInputs.forEach((input) => {
+    input.checked = input.value === selectedMode;
+    input.disabled = disabled;
+  });
+}
+
+function setTaskTableMode(task, mode) {
+  if (!task) return;
+  task.tableMode = normalizeTableMode(mode);
+  task.attachmentMode = task.attachmentMode || null;
+  task.fieldPreview = null;
+  setTaskStatus(task, "needs_text", "表格处理方式已更新，请重新识别字段。");
 }
 
 function syncFieldPreviewSummary(stats) {
@@ -1656,8 +1709,7 @@ function renderTablePreview(paper, schema, extractedData, stats, canEditPreview)
 
 async function renderFieldPreview(task) {
   const schema = await loadTemplateSchema(task.templateType);
-  const attachmentMode = task.fieldPreview?.attachmentMode || task.attachmentMode;
-  const previewSchema = attachmentModeEnabled(attachmentMode)
+  const previewSchema = tableModeUsesAttachment(task)
     ? { ...schema, tables: {} }
     : schema;
   const extractedData = task.fieldPreview?.extractedData && typeof task.fieldPreview.extractedData === "object" ? task.fieldPreview.extractedData : {};
@@ -1682,7 +1734,7 @@ async function renderFieldPreview(task) {
     title.append(
       createEl("p", "contract-preview-kicker", "合同字段确认稿"),
       createEl("h3", "", task.templateName || schema?.template?.id || "合同模板"),
-      createEl("p", "contract-preview-muted", attachmentModeEnabled(attachmentMode)
+      createEl("p", "contract-preview-muted", tableModeUsesAttachment(task)
         ? "以下只展示合同主字段；报价单明细将作为附件追加到 Word 合同末尾。"
         : "以下内容按模板字段顺序生成，可直接修改后生成合同。"),
     );
@@ -1720,6 +1772,7 @@ function clearActiveEditor() {
   setDrawerBusy(null);
   quoteTextPreview.value = "";
   if (extraInfoText) extraInfoText.value = "";
+  syncTableModeControls(null);
   if (identifyFieldsButton) {
     identifyFieldsButton.hidden = true;
     identifyFieldsButton.textContent = "识别当前任务字段";
@@ -1766,6 +1819,7 @@ function createTask(file) {
     extraInfo: "",
     fieldPreview: null,
     attachmentMode: null,
+    tableMode: "auto",
     upload: null,
     download: null,
     downloadState: "ready",
@@ -2053,6 +2107,7 @@ async function syncActiveTaskEditor() {
 
   quoteTextPreview.value = task.quoteText || "";
   if (extraInfoText) extraInfoText.value = task.extraInfo || "";
+  syncTableModeControls(task);
 
   if (task.fieldPreview?.extractedData) {
     await renderFieldPreview(task);
@@ -2075,7 +2130,8 @@ async function runParseTask(task) {
     task.extraInfo = "";
     task.fieldPreview = null;
     task.attachmentMode = parsed.parser?.attachmentMode || null;
-    const attachmentHint = attachmentModeText(task.attachmentMode);
+    task.tableMode = quoteIsExcelTask(task) ? defaultTableMode(task.attachmentMode) : "auto";
+    const attachmentHint = taskAttachmentModeText(task);
     setTaskStatus(task, "needs_text", `解析完成：${parsed.textLength || 0} 字符，请确认文本并识别字段。`);
     if (attachmentHint) appendTaskLog(task, `${attachmentHint}\n`);
     setStatus(attachmentHint || "任务解析完成，请确认文本。", attachmentHint ? "info" : "success");
@@ -2093,14 +2149,15 @@ async function runIdentifyTask(task) {
     task.fieldPreview = null;
     setTaskStatus(task, "identifying", "字段识别中：AI 正在匹配合同字段，可关闭当前任务详情并新建其他任务。");
     setStatus("字段识别中，可关闭当前任务详情去新建任务，不用停在这里等待。");
-    task.fieldPreview = await previewQuoteFields(task.upload.id, task.quoteText.trim(), task.extraInfo, task.templateType);
+    task.fieldPreview = await previewQuoteFields(task.upload.id, task.quoteText.trim(), task.extraInfo, task.templateType, effectiveTableMode(task));
+    task.tableMode = normalizeTableMode(task.fieldPreview.tableMode || task.tableMode);
     task.attachmentMode = task.fieldPreview.attachmentMode || task.attachmentMode;
     await renderFieldPreview(task);
     const missing = task.fieldPreview.missingFields?.length || 0;
     const supplierPatched = task.fieldPreview.supplierPatch?.overwrittenFields?.length || task.fieldPreview.supplierPatch?.appliedFields?.length || 0;
     const supplierHint = supplierPatched ? ` 已从用友供应商档案回填 ${supplierPatched} 项乙方信息。` : "";
     const supplierNotice = supplierPatchNotice(task.fieldPreview.supplierPatch);
-    const attachmentHint = attachmentModeText(task.attachmentMode);
+    const attachmentHint = taskAttachmentModeText(task);
     const supplierStatus = supplierPatched
       ? `AI 已整理字段，并从用友供应商档案回填 ${supplierPatched} 项乙方信息。`
       : supplierNotice
@@ -2246,6 +2303,12 @@ generateButton.addEventListener("click", async () => {
 closeTaskDrawerButton?.addEventListener("click", closeTaskDrawer);
 taskDrawerBackdrop?.addEventListener("click", closeTaskDrawer);
 closeAccessModalButton?.addEventListener("click", closeAccessModal);
+tableModeInputs.forEach((input) => {
+  input.addEventListener("change", () => {
+    if (!input.checked) return;
+    setTaskTableMode(activeTask(), input.value);
+  });
+});
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (taskDrawer && !taskDrawer.hidden) {

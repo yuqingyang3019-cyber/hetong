@@ -226,11 +226,13 @@ flowchart TD
    - `condition.simpleVOs: [{ field: "name", op: "eq", value1: supplierName }]`
    - `queryOrders: [{ field: "code", order: "asc" }]`
    - `partParam.vendorbanks.data: "*,openaccountbank.name"`
+   - `partParam.vendorcontactss.data: "*"`
 4. FC 后端只接受唯一可用供应商；未命中、多条命中或接口失败时返回提示，不阻塞字段确认和合同生成。
 5. FC 后端从 `vendorbanks` 中选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；若不存在默认账户，则选择第一条未停用账户。
-6. FC 后端以用友返回的乙方抬头信息为准，覆盖乙方名称、税号、地址、电话、开户行、银行账号等字段。
-7. 若用友未返回合同需要的抬头字段，`supplierPatch.missingYonbipFields` 返回缺失项，前端提示用户到用友系统补充供应商档案。
-8. FC 后端不生成、不下载、不上传 `supplier-cache.xlsx`，也不在合同生成后写回供应商档案。
+6. FC 后端从 `vendorcontactss` 中选择 `defaultcontact=true` 的联系人；若分页响应没有联系人子表，则按唯一供应商补查详情接口。
+7. FC 后端以用友返回的乙方抬头信息为准，覆盖乙方名称、税号、地址、电话、开户行、银行账号、乙方代表姓名、电话、邮箱等字段。
+8. 若用友未返回合同需要的抬头字段，`supplierPatch.missingYonbipFields` 返回缺失项，前端提示用户到用友系统补充供应商档案。
+9. FC 后端不生成、不下载、不上传 `supplier-cache.xlsx`，也不在合同生成后写回供应商档案。
 
 ## 7. 鉴权设计
 

@@ -16,6 +16,7 @@ DEFAULT_YONBIP_GATEWAY_URL = "https://c3.yonyoucloud.com/iuap-api-gateway"
 DEFAULT_YONBIP_TOKEN_URL = "https://c3.yonyoucloud.com/iuap-api-gateway"
 TOKEN_PATH = "/open-auth/selfAppAuth/getAccessToken"
 VENDOR_QUERY_PATH = "/yonbip/digitalModel/vendor/queryByPage"
+VENDOR_DETAIL_PATH = "/yonbip/digitalModel/vendor/detail"
 DEFAULT_LOOKUP_PAGE_SIZE = 10
 EXPLICIT_VENDOR_DATA_FIELDS = ",".join([
     "id",
@@ -40,6 +41,9 @@ SUPPLIER_FIELD_MAP = {
     "supplierAccount": "bankAccount",
     "supplierTaxNo": "creditcode",
     "supplierPhone": "contactphone",
+    "supplierRepresentativeName": "contactName",
+    "supplierRepresentativePhone": "contactMobile",
+    "supplierRepresentativeEmail": "contactEmail",
 }
 
 
@@ -159,6 +163,9 @@ def vendor_query_payload(page_index: int, page_size: int) -> dict[str, Any]:
         "partParam": {
             "vendorbanks": {
                 "data": "*,openaccountbank.name",
+            },
+            "vendorcontactss": {
+                "data": "*",
             }
         },
     }
@@ -221,6 +228,23 @@ def query_supplier_by_name(supplier_name: str, page_size: int = DEFAULT_LOOKUP_P
     }
 
 
+def query_supplier_detail(record: dict[str, Any]) -> dict[str, Any]:
+    vendor_id = as_text(record.get("id"))
+    if not vendor_id:
+        return {}
+    gateway_url, token_url = resolve_endpoints()
+    access_token, _expire = get_access_token(token_url)
+    params: dict[str, Any] = {"access_token": access_token, "id": vendor_id}
+    org_id = as_text(record.get("orgId") or record.get("org"))
+    if org_id:
+        params["orgId"] = org_id
+    body = api_get(f"{gateway_url}{VENDOR_DETAIL_PATH}", params)
+    if not success_code(body, "200"):
+        raise RuntimeError(f"用友供应商详情查询失败：{body.get('message') or body}")
+    data = body.get("data") if isinstance(body.get("data"), dict) else {}
+    return data
+
+
 def vendor_is_available(record: dict[str, Any]) -> bool:
     freeze_status = record.get("freezestatus")
     is_frozen = freeze_status is True or str(freeze_status) == "1"
@@ -245,8 +269,17 @@ def openaccountbank_name(bank: dict[str, Any]) -> str:
     return as_text(nested) if isinstance(nested, dict) else ""
 
 
+def choose_contact(contacts: Any) -> dict[str, Any]:
+    rows = [contact for contact in contacts if isinstance(contact, dict)] if isinstance(contacts, list) else []
+    for contact in rows:
+        if contact.get("defaultcontact") is True:
+            return contact
+    return rows[0] if rows else {}
+
+
 def vendor_cache_row(record: dict[str, Any]) -> dict[str, Any]:
     bank = choose_bank(record.get("vendorbanks"))
+    contact = choose_contact(record.get("vendorcontactss"))
     return {
         "id": as_text(record.get("id")),
         "code": as_text(record.get("code")),
@@ -257,6 +290,9 @@ def vendor_cache_row(record: dict[str, Any]) -> dict[str, Any]:
         "openaccountbankName": openaccountbank_name(bank),
         "bankAccount": as_text(bank.get("account")),
         "bankAccountName": as_text(bank.get("accountname")),
+        "contactName": as_text(contact.get("contactname") or contact.get("name")),
+        "contactMobile": as_text(contact.get("contactmobile") or contact.get("mobile") or contact.get("phone")),
+        "contactEmail": as_text(contact.get("contactemail") or contact.get("email")),
         "vendorFax": as_text(record.get("vendorfax")),
         "org": as_text(record.get("orgId") or record.get("org")),
         "orgName": as_text(record.get("org_name") or record.get("orgName")),
@@ -294,7 +330,14 @@ def supplier_patch_from_yonbip(extracted: dict[str, Any], page_size: int = DEFAU
             "candidateCount": len(available_records),
         }
 
-    row = vendor_cache_row(available_records[0])
+    selected = available_records[0]
+    if not selected.get("vendorcontactss"):
+        try:
+            detail = query_supplier_detail(selected)
+            selected = {**selected, **detail}
+        except Exception:
+            pass
+    row = vendor_cache_row(selected)
     patch: dict[str, str] = {}
     missing_fields: list[str] = []
     for field_key, row_key in SUPPLIER_FIELD_MAP.items():
