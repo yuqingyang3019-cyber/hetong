@@ -339,7 +339,7 @@ Authorization: Bearer <agentAccessToken>
 }
 ```
 
-`tableMode` 取值为 `auto`、`template`、`attachment`：`auto` 按 Excel 是否超过 5 行或多 sheet 自动选择；`template` 强制按合同模板识别并填表；`attachment` 强制只识别主字段并将 Excel 原表追加到合同末尾。
+`tableMode` 取值为 `template`、`attachment`，兼容旧值 `auto`：前端默认传 `template`，按合同模板识别并填表；用户显式勾选“将表格作为附件”后传 `attachment`，只识别主字段并将 Excel 原表追加到合同末尾。`auto` 仅作为兼容值按服务端自动规则处理，新交互不默认使用。
 
 ### 6.4 上传图纸附件
 
@@ -348,7 +348,7 @@ POST /api/drawings
 Authorization: Bearer <agentAccessToken>
 ```
 
-用途：字段识别完成后，前端可上传可选 DXF 图纸。图纸不参与报价单解析或字段识别，只在合同生成时转换为图片并追加到 Word 合同末尾。
+用途：字段识别完成后，前端可上传可选 DXF 图纸。图纸不参与报价单解析或字段识别，只在用户选择或拖拽文件并确认上传后保存，合同生成时转换为图片并追加到 Word 合同末尾。
 
 JSON Base64 请求：
 

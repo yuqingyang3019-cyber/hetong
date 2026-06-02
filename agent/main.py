@@ -1014,16 +1014,55 @@ def generate_contract(
         contract_id = new_id("contract")
         file_name = contract_file_name(render_data)
         contract_stem = Path(file_name).stem
-        drawing = load_drawing(drawing_upload_id, current_user) if drawing_upload_id else None
+        drawing = None
+        if drawing_upload_id:
+            drawing_load_start = time.perf_counter()
+            log_info("drawing load start", uploadId=upload_id, drawingUploadId=drawing_upload_id)
+            drawing = load_drawing(drawing_upload_id, current_user)
+            log_info(
+                "drawing load finished",
+                uploadId=upload_id,
+                drawingUploadId=drawing_upload_id,
+                drawingId=drawing.get("id"),
+                originalName=drawing.get("originalName"),
+                size=drawing.get("size"),
+                elapsedMs=elapsed_ms(drawing_load_start),
+            )
         drawing_image_path: Path | None = None
         drawing_attachment: dict[str, Any] | None = None
         if drawing:
+            drawing_convert_start = time.perf_counter()
             drawing_image_path = DRAWINGS_DIR / f"{drawing['id']}.png"
-            render_dxf_to_png(Path(drawing["path"]), drawing_image_path)
+            log_info(
+                "drawing convert start",
+                uploadId=upload_id,
+                contractId=contract_id,
+                drawingId=drawing.get("id"),
+                originalName=drawing.get("originalName"),
+                outputPath=str(drawing_image_path),
+            )
+            render_dxf_to_png(
+                Path(drawing["path"]),
+                drawing_image_path,
+                logger=log_info,
+                log_meta={
+                    "uploadId": upload_id,
+                    "contractId": contract_id,
+                    "drawingId": drawing.get("id"),
+                },
+            )
             drawing_attachment = {
                 "imagePath": str(drawing_image_path),
                 "originalName": drawing.get("originalName"),
             }
+            log_info(
+                "drawing attachment prepared",
+                uploadId=upload_id,
+                contractId=contract_id,
+                drawingId=drawing.get("id"),
+                imagePath=str(drawing_image_path),
+                elapsedMs=elapsed_ms(drawing_convert_start),
+            )
 
         render_start = time.perf_counter()
         log_info(
@@ -1041,6 +1080,7 @@ def generate_contract(
             blank_missing=has_confirmed_data,
             quote_attachment=quote_attachment,
             drawing_attachment=drawing_attachment,
+            logger=lambda message, **meta: log_info(message, uploadId=upload_id, contractId=contract_id, **meta),
         )
         log_info(
             "contract render finished",
@@ -1078,9 +1118,18 @@ def generate_contract(
             "tableMode": table_mode,
             "drawing": drawing,
         }
+        cleanup_start = time.perf_counter()
         removed_paths = remove_upload(upload)
         removed_paths.extend(remove_drawing(drawing, drawing_image_path))
         removed_paths.extend(remove_contract_files(contract_path))
+        log_info(
+            "contract cleanup finished",
+            uploadId=upload_id,
+            contractId=contract_id,
+            removedCount=len(removed_paths),
+            removedPaths=[str(path) for path in removed_paths],
+            elapsedMs=elapsed_ms(cleanup_start),
+        )
         log_info(
             "contract generation finished",
             uploadId=upload_id,

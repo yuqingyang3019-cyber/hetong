@@ -989,6 +989,7 @@ button:disabled {
 }
 
 .table-mode-field {
+  background: rgba(248, 250, 252, 0.8);
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: var(--radius-md);
   display: grid;
@@ -1003,12 +1004,21 @@ button:disabled {
 
 .table-mode-option {
   align-items: flex-start;
-  background: rgba(248, 250, 252, 0.82);
+  background: var(--color-card);
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: var(--radius-sm);
+  cursor: pointer;
   display: flex;
   gap: 8px;
   padding: 8px;
+  transition:
+    border-color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out);
+}
+
+.table-mode-option.is-selected {
+  border-color: rgba(15, 108, 189, 0.34);
+  box-shadow: 0 0 0 3px rgba(15, 108, 189, 0.09);
 }
 
 .table-mode-option input {
@@ -1054,9 +1064,8 @@ button:disabled {
 }
 
 .drawing-attachment-panel {
-  align-items: center;
-  background: rgba(239, 246, 255, 0.72);
-  border: 1px dashed rgba(15, 108, 189, 0.28);
+  background: rgba(248, 250, 252, 0.9);
+  border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: var(--radius-md);
   display: grid;
   gap: var(--space-2);
@@ -1074,8 +1083,61 @@ button:disabled {
   font-weight: 700;
 }
 
-.drawing-upload-button {
-  justify-self: start;
+.drawing-attachment-header {
+  display: grid;
+  gap: 2px;
+}
+
+.drawing-dropzone {
+  background:
+    linear-gradient(var(--color-card), var(--color-card)) padding-box,
+    linear-gradient(135deg, rgba(15, 108, 189, 0.42), rgba(5, 150, 105, 0.24)) border-box;
+  border: 1px dashed transparent;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  padding: 14px;
+  transition:
+    border-color var(--duration) var(--ease-out),
+    box-shadow var(--duration) var(--ease-out),
+    transform var(--duration) var(--ease-out);
+}
+
+.drawing-dropzone:hover,
+.drawing-attachment-panel.is-dragging .drawing-dropzone {
+  box-shadow: 0 0 0 4px rgba(15, 108, 189, 0.1);
+}
+
+.drawing-attachment-panel.is-dragging .drawing-dropzone {
+  transform: translateY(-1px);
+}
+
+.drawing-dropzone.is-disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.drawing-dropzone-title {
+  color: var(--color-primary);
+  font-weight: 800;
+}
+
+.drawing-dropzone-meta {
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.drawing-attachment-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.drawing-attachment-actions .task-secondary-button {
+  width: auto;
 }
 
 .field-preview-jump {

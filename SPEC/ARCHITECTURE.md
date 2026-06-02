@@ -189,7 +189,7 @@ flowchart TD
 
 字段识别完成后，用户可选上传 DXF 图纸附件：
 
-1. 前端调用 `POST /api/drawings` 上传 `.dxf`。
+1. 前端允许用户选择或拖拽 `.dxf`，用户点击确认后调用 `POST /api/drawings` 上传。
 2. FC 后端保存 DXF 源文件和图纸上传记录。
 3. 用户确认生成合同时，前端在 `POST /api/contracts/generate` 中传入 `drawingUploadId`。
 4. FC 后端将 DXF 渲染为 PNG，并在 Word 合同末尾追加“附件：图纸”页。

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 try:
     from zoneinfo import ZoneInfo
@@ -21,6 +22,7 @@ from .config import CONTRACTS_DIR, TemplateConfig, ensure_storage, template_docx
 RICH_TEXT_FONT = "eastAsia:仿宋"
 RICH_TEXT_SIZE = 21
 UNDERLINE_BLANK = "        "
+LogFunc = Callable[..., None]
 NO_UNDERLINE_SCALAR_KEYS = {
     "signYear",
     "signMonth",
@@ -144,17 +146,29 @@ def _non_empty_rows(rows: Any) -> list[list[str]]:
     return normalized
 
 
-def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None) -> None:
+def _elapsed_ms(start: float) -> int:
+    return int((time.perf_counter() - start) * 1000)
+
+
+def _log(logger: LogFunc | None, message: str, **meta: Any) -> None:
+    if logger:
+        logger(message, **meta)
+
+
+def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None, logger: LogFunc | None = None) -> None:
     sheets = quote_attachment.get("sheets") if isinstance(quote_attachment, dict) else None
     if not isinstance(sheets, list):
         return
+    start = time.perf_counter()
     doc = Document(str(path))
     doc.add_page_break()
     doc.add_heading("附件：报价单明细", level=1)
+    appended_sheet_count = 0
     for sheet in sheets:
         rows = _non_empty_rows(sheet.get("rows") if isinstance(sheet, dict) else None)
         if not rows:
             continue
+        appended_sheet_count += 1
         sheet_name = str(sheet.get("name") or "Sheet") if isinstance(sheet, dict) else "Sheet"
         doc.add_heading(sheet_name, level=2)
         max_cols = max(len(row) for row in rows)
@@ -164,14 +178,16 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None)
             for col_index in range(max_cols):
                 table.cell(row_index, col_index).text = row[col_index] if col_index < len(row) else ""
     doc.save(str(path))
+    _log(logger, "quote attachment appended", outputFile=path.name, sheetCount=appended_sheet_count, elapsedMs=_elapsed_ms(start))
 
 
-def append_drawing_attachment(path: Path, drawing_attachment: dict[str, Any] | None) -> None:
+def append_drawing_attachment(path: Path, drawing_attachment: dict[str, Any] | None, logger: LogFunc | None = None) -> None:
     if not isinstance(drawing_attachment, dict):
         return
     image_path = Path(str(drawing_attachment.get("imagePath") or ""))
     if not image_path.exists():
         return
+    start = time.perf_counter()
     original_name = str(drawing_attachment.get("originalName") or "图纸")
     doc = Document(str(path))
     doc.add_page_break()
@@ -179,6 +195,14 @@ def append_drawing_attachment(path: Path, drawing_attachment: dict[str, Any] | N
     doc.add_paragraph(original_name)
     doc.add_picture(str(image_path), width=Inches(6.5))
     doc.save(str(path))
+    _log(
+        logger,
+        "drawing attachment appended",
+        outputFile=path.name,
+        imagePath=str(image_path),
+        originalName=original_name,
+        elapsedMs=_elapsed_ms(start),
+    )
 
 
 def render_contract(
@@ -188,13 +212,16 @@ def render_contract(
     blank_missing: bool = False,
     quote_attachment: dict[str, Any] | None = None,
     drawing_attachment: dict[str, Any] | None = None,
+    logger: LogFunc | None = None,
 ) -> Path:
     ensure_storage()
     template_path = template_docx_path(config.type)
     output_path = CONTRACTS_DIR / f"{contract_id}.docx"
+    template_start = time.perf_counter()
     doc = DocxTemplate(str(template_path))
     doc.render(build_docxtpl_context(render_data, config, blank_missing=blank_missing))
     doc.save(str(output_path))
-    append_quote_attachment(output_path, quote_attachment)
-    append_drawing_attachment(output_path, drawing_attachment)
+    _log(logger, "contract template rendered", outputFile=output_path.name, templateType=config.type, elapsedMs=_elapsed_ms(template_start))
+    append_quote_attachment(output_path, quote_attachment, logger)
+    append_drawing_attachment(output_path, drawing_attachment, logger)
     return output_path
