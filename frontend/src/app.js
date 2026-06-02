@@ -20,11 +20,7 @@ const taskList = document.querySelector("#taskList");
 const taskQueueHint = document.querySelector("#taskQueueHint");
 const activeTaskTitle = document.querySelector("#activeTaskTitle");
 const activeTaskHint = document.querySelector("#activeTaskHint");
-const userBar = document.querySelector("#userBar");
-const userAvatar = document.querySelector("#userAvatar");
 const userNameEl = document.querySelector("#userName");
-const userDeptEl = document.querySelector("#userDept");
-const loginHintEl = document.querySelector("#loginHint");
 const uploadDropzone = document.querySelector("#uploadDropzone");
 const fileNameText = document.querySelector("#fileNameText");
 const fileMetaText = document.querySelector("#fileMetaText");
@@ -87,7 +83,7 @@ const completedStatuses = new Set(["completed"]);
 const templateSchemaCache = new Map();
 const tasks = [];
 
-let authContext = { dingtalkConfigured: false, corpId: "", clientId: "", agentBaseUrl: "", agentTokenTtlSeconds: 1800 };
+let authContext = { dingtalkConfigured: false, corpId: "", clientId: "", agentBaseUrl: "" };
 let agentAuth = { baseUrl: "", token: "", expiresAt: 0 };
 let sessionReady = false;
 let activeTaskId = null;
@@ -430,10 +426,8 @@ function setDrawerBusy(task) {
 function syncProcessingPanel(task) {
   if (!processingCard) return;
   const show = Boolean(task && (taskIsBusy(task) || (!task.quoteText && task.status === "failed")));
-  processingCard.classList.remove("is-uploading", "is-parsing", "is-identifying", "is-generating", "is-failed");
   processingCard.hidden = !show;
   if (!show) return;
-  processingCard.classList.add(`is-${task.status}`);
   const smartTitles = {
     uploading: "智能助手正在接收报价单",
     parsing: "AI 正在读取报价单内容",
@@ -511,24 +505,17 @@ function closeAccessModal() {
 function blockNonDingTalkAccess(message = "请在钉钉客户端内打开合同生成助手。") {
   sessionReady = false;
   setInteractionEnabled(false);
-  hideUserBar();
   appendStageLog("环境检查失败", message);
   setStatus("当前环境不可用", "error");
   showAccessModal("合同生成助手仅支持从钉钉微应用访问。请返回钉钉客户端后重新打开应用。");
-  if (loginHintEl) loginHintEl.textContent = message;
 }
 
-function showUserBar(user, hint) {
+function showUserBar(user) {
   if (userNameEl) {
     const base = user?.name || user?.nick || "已登录";
     const nick = user?.nick && user.nick !== user.name ? user.nick : null;
     userNameEl.textContent = nick ? `${base}（${nick}）` : base;
   }
-  if (userBar) userBar.hidden = true;
-}
-
-function hideUserBar() {
-  if (userBar) userBar.hidden = true;
 }
 
 async function refreshAuthMe() {
@@ -666,10 +653,8 @@ async function initAuth() {
   if (!authContext.dingtalkConfigured) {
     sessionReady = false;
     setInteractionEnabled(false);
-    hideUserBar();
     appendStageLog("免登配置失败", "服务端未配置钉钉应用");
     setStatus("服务端未配置钉钉应用，无法免登。", "error");
-    if (loginHintEl) loginHintEl.textContent = "请联系管理员配置钉钉新版 SDK 凭证。";
     return;
   }
 
@@ -689,7 +674,7 @@ async function initAuth() {
     }
     try {
       await refreshAgentToken();
-      showUserBar(me.user, "已通过钉钉免登。");
+      showUserBar(me.user);
       setInteractionEnabled(true);
       setStatus("");
     } catch (error) {
@@ -697,16 +682,13 @@ async function initAuth() {
       appendStageLog("刷新业务访问凭证失败", message);
       setInteractionEnabled(false);
       setStatus(message, "error");
-      if (loginHintEl) loginHintEl.textContent = message;
     }
     return;
   }
 
   sessionReady = false;
   setInteractionEnabled(false);
-  hideUserBar();
   setStatus("正在钉钉内免登…");
-  if (loginHintEl) loginHintEl.textContent = "正在获取免登授权码…";
 
   const searchParams = new URLSearchParams(window.location.search);
   const corpIdFromUrl = searchParams.get("corpid") || searchParams.get("corpId") || "";
@@ -717,14 +699,12 @@ async function initAuth() {
     sessionReady = false;
     appendStageLog("免登配置失败", "缺少 corpId");
     setStatus("缺少 corpId：请在微应用首页 URL 附带 corpId= 或在服务端配置 DINGTALK_CORP_ID。", "error");
-    if (loginHintEl) loginHintEl.textContent = "config.js 可注入 __DINGTALK_CORP_ID__。";
     return;
   }
   if (!clientId) {
     sessionReady = false;
     appendStageLog("免登配置失败", "缺少 clientId");
     setStatus("缺少钉钉 Client ID，无法免登。", "error");
-    if (loginHintEl) loginHintEl.textContent = "config.js 可注入 __DINGTALK_CLIENT_ID__。";
     return;
   }
 
@@ -765,18 +745,16 @@ async function initAuth() {
       } catch {
         /* ignore */
       }
-      showUserBar(body.user, "已通过钉钉免登。");
+      showUserBar(body.user);
     }
     appendStageLog("免登完成", "已通过钉钉免登并获取业务访问凭证");
     setInteractionEnabled(true);
     setStatus("");
-    if (loginHintEl) loginHintEl.textContent = "";
   }).catch((error) => {
     sessionReady = false;
     const message = error instanceof Error ? error.message : "免登失败";
     appendStageLog("免登失败", message);
     setStatus(message, "error");
-    if (loginHintEl) loginHintEl.textContent = message;
     setInteractionEnabled(false);
   });
 }
@@ -979,16 +957,6 @@ function dateFieldGroupForKey(key) {
 
 function dateFieldGroupCanRender(group, schemaKeys) {
   return group.keys.every((key) => schemaKeys.has(key));
-}
-
-function dateGroupValueForEditor(group, extractedData) {
-  return group.keys
-    .map((key, index) => {
-      const value = fieldValueForEditor(getByDotPath(extractedData, key));
-      return value ? `${value}${group.suffixes[index] || ""}` : "";
-    })
-    .filter(Boolean)
-    .join("");
 }
 
 function dateGroupHasMissing(group, extractedData) {
@@ -1481,15 +1449,6 @@ function toggleMissingOnlyPreview() {
   }
   if (contractPreviewEl.classList.contains("show-missing-only")) scrollToFirstMissingField();
   if (stats) syncFieldPreviewSummary(stats);
-}
-
-function createGhostParagraph(index) {
-  const paragraph = createEl("p", "contract-preview-ghost");
-  paragraph.append(
-    createEl("span", "ghost-line is-wide"),
-    createEl("span", index % 2 ? "ghost-line is-mid" : "ghost-line is-short"),
-  );
-  return paragraph;
 }
 
 function createContractField(label, value, stats, prefix = "", options = {}) {

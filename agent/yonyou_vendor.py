@@ -185,25 +185,6 @@ def vendor_lookup_payload(supplier_name: str, page_index: int = 1, page_size: in
     return payload
 
 
-def query_vendor_page(gateway_url: str, access_token: str, page_index: int, page_size: int) -> dict[str, Any]:
-    body = api_post(
-        f"{gateway_url}{VENDOR_QUERY_PATH}",
-        {"access_token": access_token},
-        vendor_query_payload(page_index, page_size),
-    )
-    if not success_code(body, "200"):
-        raise RuntimeError(f"用友供应商分页查询失败：{body.get('message') or body}")
-    data = body.get("data") if isinstance(body.get("data"), dict) else {}
-    records = data.get("recordList") if isinstance(data.get("recordList"), list) else []
-    return {
-        "recordCount": int(data.get("recordCount") or 0),
-        "pageIndex": int(data.get("pageIndex") or page_index),
-        "pageSize": int(data.get("pageSize") or page_size),
-        "pageCount": int(data.get("pageCount") or 0),
-        "records": [record for record in records if isinstance(record, dict)],
-    }
-
-
 def query_supplier_by_name(supplier_name: str, page_size: int = DEFAULT_LOOKUP_PAGE_SIZE) -> dict[str, Any]:
     name = as_text(supplier_name)
     if not name:

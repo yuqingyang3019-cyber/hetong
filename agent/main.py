@@ -27,7 +27,6 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 
 try:
     from .contract.config import (
-        DRAFTS_DIR,
         UPLOADS_DIR,
         ensure_storage,
         get_template_config,
@@ -38,7 +37,6 @@ try:
     from .contract.render import merge_render_data, render_contract
 except ImportError:
     from contract.config import (
-        DRAFTS_DIR,
         UPLOADS_DIR,
         ensure_storage,
         get_template_config,
@@ -997,9 +995,8 @@ def generate_contract(
             "attachmentMode": attachment_mode,
             "tableMode": table_mode,
         }
-        (DRAFTS_DIR / f"{contract_id}.json").write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
         removed_paths = remove_upload(upload)
-        removed_paths.extend(remove_contract_files(contract_id, contract_path))
+        removed_paths.extend(remove_contract_files(contract_path))
         log_info(
             "contract generation finished",
             uploadId=upload_id,
@@ -1464,11 +1461,6 @@ async def generate_contract_api(request: Request, current_user: dict = Depends(g
         code, message = error_code_message(exc)
         log_exception("contract generate api request failed", exc, uploadId=upload_id, templateType=template_type, code=code, elapsedMs=elapsed_ms(start))
         raise api_error(500, code, message, str(exc)) from exc
-
-
-@app.post("/api/suppliers/sync")
-def sync_suppliers_api(current_user: dict = Depends(get_current_user)) -> dict:
-    raise api_error(410, "SUPPLIER_SYNC_DEPRECATED", "供应商同步已停用，字段识别后会实时查询用友供应商档案")
 
 
 @app.post("/api/dingdrive/download")

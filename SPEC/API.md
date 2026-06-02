@@ -68,7 +68,6 @@ Content-Type: application/json
 | `LLM_FAILED` | 502 | 字段识别失败 |
 | `YONBIP_AUTH_FAILED` | 502 | 用友 YonBIP 访问令牌获取失败 |
 | `YONBIP_SUPPLIER_LOOKUP_FAILED` | 502 | 用友供应商抬头查询失败 |
-| `YONBIP_SUPPLIER_LOOKUP_FAILED` | 502 | 用友供应商抬头查询失败 |
 | `CONTRACT_GENERATE_FAILED` | 500 | 合同生成失败 |
 | `DINGDRIVE_UPLOAD_FAILED` | 502 | 钉盘上传失败 |
 | `DINGDRIVE_DOWNLOAD_FAILED` | 502 | 钉盘下载失败 |
@@ -437,15 +436,6 @@ Authorization: Bearer <agentAccessToken>
 - 银行账户优先选择 `defaultbank=true` 且 `stopstatus=false` 的记录，否则选择第一条未停用账户。
 - 若用友缺少税号、地址、电话、开户行或银行账号等合同需要的抬头字段，`missingYonbipFields` 应列出缺失字段，前端提示用户到用友系统补充供应商抬头信息或先手动填写。
 - FC 后端不生成、不下载、不上传 `supplier-cache.xlsx`，不在本地或钉盘长期保存供应商档案。
-
-### 6.6 已废弃：同步用友供应商
-
-```http
-POST /api/suppliers/sync
-Authorization: Bearer <agentAccessToken>
-```
-
-该接口不属于当前正式主路径，前端不再展示同步入口。供应商抬头改为字段识别阶段实时只读查询用友档案。
 
 ## 7. SDK 使用约束
 

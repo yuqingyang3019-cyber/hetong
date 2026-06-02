@@ -13,7 +13,6 @@ TEMPLATE_ROOT = CONTRACT_ROOT / "templates" / "zhanweifu"
 STORAGE_ROOT = APP_ROOT / "storage"
 UPLOADS_DIR = STORAGE_ROOT / "uploads"
 CONTRACTS_DIR = STORAGE_ROOT / "contracts"
-DRAFTS_DIR = STORAGE_ROOT / "drafts"
 
 
 TEMPLATE_BASENAME: dict[str, str] = {
@@ -45,7 +44,7 @@ class TemplateConfig:
 
 
 def ensure_storage() -> None:
-    for directory in (UPLOADS_DIR, CONTRACTS_DIR, DRAFTS_DIR):
+    for directory in (UPLOADS_DIR, CONTRACTS_DIR):
         directory.mkdir(parents=True, exist_ok=True)
 
 
@@ -63,13 +62,6 @@ def template_basename(template_type: str) -> str:
     if template_type not in TEMPLATE_BASENAME:
         raise ValueError(f"不支持的合同模板：{template_type}")
     return TEMPLATE_BASENAME[template_type]
-
-
-def template_options() -> list[dict[str, str]]:
-    return [
-        {"type": key, "displayName": TEMPLATE_DISPLAY_NAME[key]}
-        for key in TEMPLATE_BASENAME
-    ]
 
 
 def template_docx_path(template_type: str) -> Path:

@@ -10,7 +10,6 @@ tmp/
 # Local environment files
 .env
 .env.*
-!.env.example
 
 # Generated app artifacts
 frontend/node_modules/
@@ -21,14 +20,14 @@ agent/storage/uploads/*
 !agent/storage/uploads/.gitkeep
 agent/storage/contracts/*
 !agent/storage/contracts/.gitkeep
-agent/storage/drafts/*
-!agent/storage/drafts/.gitkeep
 frontend/dist/
 agent/static/
 
 # Local source documents and deployment archives
 /*.docx
 /*.xlsx
+/*.jpg
+/*.jpeg
 /*.png
 /*.rar
 /*.zip
@@ -39,6 +38,5 @@ agent/static/
 /scripts/*
 !/scripts/
 !/scripts/yonyou_vendor_probe.py
-!/scripts/yonyou_supplier_sync.py
 /合同模板/
 /报价单/

@@ -283,7 +283,6 @@ sequenceDiagram
 | --- | --- | --- |
 | 上传报价单 | `agent/storage/uploads` | 上传后保存，合同生成成功后清理 |
 | 生成合同 | `agent/storage/contracts` | 渲染后保存，上传钉盘成功后清理 |
-| 草稿或中间文件 | `agent/storage/drafts` | 按具体流程临时使用 |
 | 合同模板 | `agent/contract/templates/zhanweifu` | 随代码发布 |
 | 模板字段契约 | `*.placeholders.json` | 随模板维护 |
 

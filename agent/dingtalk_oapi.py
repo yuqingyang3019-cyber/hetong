@@ -12,11 +12,6 @@ _lock = threading.Lock()
 _cached_access_tokens: dict[str, tuple[str, float]] = {}
 
 
-def clear_token_cache() -> None:
-    with _lock:
-        _cached_access_tokens.clear()
-
-
 def get_client_credentials() -> tuple[str, str, str]:
     client_id = (os.getenv("DINGTALK_CLIENT_ID") or "").strip()
     client_secret = (os.getenv("DINGTALK_CLIENT_SECRET") or "").strip()

@@ -17,7 +17,7 @@ from docx import Document
 from fastapi.testclient import TestClient
 
 from agent.contract import llm as contract_llm
-from agent.contract.config import DRAFTS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
+from agent.contract.config import TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
 from agent.contract.render import append_quote_attachment, build_docxtpl_context, merge_render_data, render_contract
 from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, contract_file_name, generate_contract, sign_session_payload
@@ -1009,7 +1009,7 @@ def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None
     assert not Path(record["path"]).exists()
     assert not (UPLOADS_DIR / f"{upload_id}.json").exists()
     assert not rendered_path.exists()
-    assert not (DRAFTS_DIR / f"{draft['contractId']}.json").exists()
+    assert not list(UPLOADS_DIR.parent.glob(f"**/{draft['contractId']}.json"))
 
 
 def test_contract_download_payload_returns_dingdrive_download_info() -> None:

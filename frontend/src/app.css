@@ -18,7 +18,6 @@
   --color-destructive: #dc2626;
   --color-ring: #0f172a;
   --color-card: #ffffff;
-  --color-soft-card: rgba(255, 255, 255, 0.82);
   --color-success: #059669;
   --color-success-hover: #047857;
   --color-warning: #b45309;
@@ -177,62 +176,11 @@ h1 .user-name {
   max-width: 720px;
 }
 
-.identity-panel {
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(15, 108, 189, 0.12);
-  border-radius: var(--radius-md);
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  justify-content: space-between;
-  min-width: 0;
-  overflow: auto;
-  padding: 10px 12px;
-}
-
-.identity-main {
-  align-items: center;
-  display: flex;
-  gap: var(--space-2);
-  min-width: 0;
-}
-
-.user-avatar {
-  border: 1px solid var(--color-border);
-  border-radius: 50%;
-  flex-shrink: 0;
-  object-fit: cover;
-}
-
-.user-summary {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
 .user-name {
   color: var(--color-primary);
   font-size: 1rem;
   font-weight: 800;
   margin: 0;
-}
-
-.login-hint {
-  color: var(--color-text-muted);
-  font-size: 0.8125rem;
-  margin: 0;
-}
-
-.identity-next-step {
-  color: var(--color-secondary);
-  font-size: 0.8125rem;
-  font-weight: 700;
-  margin: 0;
-}
-
-.muted {
-  color: var(--color-text-muted) !important;
 }
 
 .card {
@@ -263,57 +211,6 @@ h1 .user-name {
 .task-queue-panel {
   display: grid;
   gap: var(--space-3);
-}
-
-.supplier-sync-panel {
-  align-items: center;
-  color: var(--color-text-muted);
-  display: flex;
-  gap: var(--space-2);
-  justify-content: space-between;
-  padding: 0 var(--space-1) var(--space-2);
-}
-
-.supplier-sync-button {
-  appearance: none;
-  background: transparent;
-  border: 0;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.8125rem;
-  padding: var(--space-1);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.supplier-sync-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.supplier-sync-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.supplier-sync-label {
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-
-.supplier-sync-result {
-  font-size: 0.75rem;
-  line-height: 1.5;
-}
-
-.supplier-sync-result.is-success {
-  color: var(--color-success);
-}
-
-.supplier-sync-result.is-error {
-  color: var(--color-destructive);
 }
 
 .task-queue-heading {
@@ -1217,32 +1114,6 @@ button:disabled {
   letter-spacing: 0.16em;
 }
 
-.contract-preview-ghost {
-  display: grid;
-  gap: 8px;
-  margin: 0;
-  opacity: 0.56;
-}
-
-.ghost-line {
-  background: linear-gradient(90deg, rgba(148, 163, 184, 0.28), rgba(226, 232, 240, 0.2));
-  border-radius: 999px;
-  display: block;
-  height: 10px;
-}
-
-.ghost-line.is-wide {
-  width: 100%;
-}
-
-.ghost-line.is-mid {
-  width: 74%;
-}
-
-.ghost-line.is-short {
-  width: 48%;
-}
-
 .contract-preview-section {
   border-top: 1px dashed rgba(148, 163, 184, 0.5);
   display: grid;
@@ -1605,10 +1476,6 @@ pre {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .contract-preview-ghost {
-    grid-column: 1 / -1;
-  }
-
   .contract-preview-field {
     grid-template-columns: minmax(96px, 0.42fr) minmax(0, 1fr);
   }
@@ -1646,17 +1513,6 @@ pre {
 
   .hero-copy {
     padding: var(--space-3);
-  }
-
-  .identity-main {
-    align-items: center;
-    display: flex;
-    gap: 6px;
-  }
-
-  .user-summary {
-    display: grid;
-    gap: 4px;
   }
 
   .drawer-shell {
@@ -1721,7 +1577,6 @@ pre {
   --color-border: #d7e3f0;
   --color-ring: #1677ff;
   --color-card: #ffffff;
-  --color-soft-card: rgba(255, 255, 255, 0.86);
   --color-success: #0b8067;
   --color-success-hover: #086c57;
   --color-warning: #b46014;
@@ -1785,10 +1640,6 @@ h1 .user-name {
   font-weight: 800;
   padding: 8px 10px;
   text-align: center;
-}
-
-.identity-panel {
-  background: rgba(255, 255, 255, 0.82);
 }
 
 .workbench-card {
@@ -2039,8 +1890,7 @@ button:disabled {
 }
 
 .contract-preview-shell.show-missing-only .contract-preview-field.is-recognized,
-.contract-preview-shell.show-missing-only .contract-preview-table td.is-recognized,
-.contract-preview-shell.show-missing-only .contract-preview-ghost {
+.contract-preview-shell.show-missing-only .contract-preview-table td.is-recognized {
   display: none;
 }
 
