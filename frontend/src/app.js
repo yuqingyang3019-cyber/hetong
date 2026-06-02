@@ -2248,7 +2248,6 @@ document.addEventListener("keydown", (event) => {
 
 updateSelectedFile();
 renderTaskList();
-updateSupplierSyncUi();
 clearActiveEditor();
 updateActionAvailability();
 void initAuth();
