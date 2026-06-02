@@ -1379,18 +1379,28 @@ function refreshFieldPreviewSummary(schema, extractedData) {
 
 function supplierPatchNotice(supplierPatch) {
   if (!supplierPatch) return "";
-  const supplierName = supplierPatch.supplierName ? `「${supplierPatch.supplierName}」` : "当前乙方";
   const missingFields = Array.isArray(supplierPatch.missingYonbipFields) ? supplierPatch.missingYonbipFields : [];
   if (supplierPatch.matched && missingFields.length) {
-    return `用友供应商档案缺少${supplierName}的部分抬头信息，请到用友系统补充后重试或先手动填写。`;
+    return "用友抬头信息不完整，请补齐缺失项。";
   }
   if (supplierPatch.matched || supplierPatch.appliedFields?.length) return "";
   const reason = supplierPatch.reason || "";
-  if (reason === "not_found") return `未在用友供应商档案找到${supplierName}的抬头信息，请到用友系统补充后重试或先手动填写。`;
-  if (reason === "ambiguous") return `用友供应商档案中存在多个${supplierName}匹配项，乙方抬头信息未自动补齐，请人工确认。`;
-  if (reason === "missing_supplier_name") return "未识别到乙方名称，无法从用友供应商档案匹配抬头信息。";
-  if (reason === "lookup_error") return "读取用友供应商档案失败，乙方抬头信息未自动补齐，请稍后重试或先手动填写。";
+  if (reason === "not_found") return "用友未找到该乙方，请手动填写抬头。";
+  if (reason === "ambiguous") return "用友存在多个匹配乙方，请人工确认抬头。";
+  if (reason === "missing_supplier_name") return "未识别到乙方名称，请手动填写抬头。";
+  if (reason === "lookup_error") return "用友查询失败，请手动填写抬头。";
   return "";
+}
+
+function renderSupplierPatchNotice(paper, supplierPatch) {
+  const notice = supplierPatchNotice(supplierPatch);
+  if (!notice) return;
+  const section = createEl("section", "contract-preview-section supplier-title-notice");
+  section.append(
+    createEl("h4", "", "乙方抬头提示"),
+    createEl("p", "", notice),
+  );
+  paper.append(section);
 }
 
 function scrollToFirstMissingField() {
@@ -1678,6 +1688,7 @@ async function renderFieldPreview(task) {
     );
     paper.append(title);
     renderScalarPreview(paper, previewSchema, extractedData, stats, autoFilledKeys, canEditPreview);
+    renderSupplierPatchNotice(paper, task.fieldPreview?.supplierPatch);
     renderTablePreview(paper, previewSchema, extractedData, stats, canEditPreview);
     contractPreviewEl.append(paper);
   }
@@ -2092,13 +2103,15 @@ async function runIdentifyTask(task) {
     const attachmentHint = attachmentModeText(task.attachmentMode);
     const supplierStatus = supplierPatched
       ? `AI 已整理字段，并从用友供应商档案回填 ${supplierPatched} 项乙方信息。`
-      : supplierNotice || (missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。");
+      : supplierNotice
+        ? "AI 已整理字段，请在确认稿中查看用友抬头提示。"
+        : (missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。");
     setTaskStatus(
       task,
       "needs_fields",
       missing > 0
-        ? `AI 已识别主字段，仍有 ${missing} 项需要人工确认。${supplierHint}${supplierNotice ? ` ${supplierNotice}` : ""}${attachmentHint ? ` ${attachmentHint}` : ""}`
-        : `AI 已识别字段，未发现缺失字段。${supplierHint}${supplierNotice ? ` ${supplierNotice}` : ""}${attachmentHint ? ` ${attachmentHint}` : ""}`,
+        ? `AI 已识别主字段，仍有 ${missing} 项需要人工确认。${supplierHint}${supplierNotice ? " 请在确认稿中查看用友抬头提示。" : ""}${attachmentHint ? ` ${attachmentHint}` : ""}`
+        : `AI 已识别字段，未发现缺失字段。${supplierHint}${supplierNotice ? " 请在确认稿中查看用友抬头提示。" : ""}${attachmentHint ? ` ${attachmentHint}` : ""}`,
     );
     setStatus(
       attachmentHint || supplierStatus,

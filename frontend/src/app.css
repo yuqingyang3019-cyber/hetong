@@ -1213,6 +1213,26 @@ button:disabled {
   margin: 0;
 }
 
+.supplier-title-notice {
+  background: rgba(254, 242, 242, 0.58);
+  border: 1px solid rgba(220, 38, 38, 0.18);
+  border-left: 4px solid var(--color-destructive);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.supplier-title-notice h4 {
+  color: #991b1b;
+}
+
+.supplier-title-notice p {
+  color: #991b1b;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.55;
+  margin: 0;
+}
+
 .contract-preview-flow {
   display: grid;
   gap: 6px;
