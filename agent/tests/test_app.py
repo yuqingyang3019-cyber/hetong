@@ -9,6 +9,7 @@ import sys
 import types
 from io import BytesIO
 from datetime import date
+from typing import Any
 from unittest.mock import ANY, Mock, patch
 from zipfile import ZipFile
 
@@ -904,7 +905,7 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
         draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"})
 
     llm.assert_not_called()
-    render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True, quote_attachment=None, drawing_attachment=None)
+    render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True, quote_attachment=None, drawing_attachment=None, logger=ANY)
     assert draft["extractedData"] == extracted
     assert draft["extraInfoLength"] == len("补充信息")
     assert "supplierCacheWriteback" not in draft
@@ -1069,8 +1070,10 @@ def test_generate_contract_appends_drawing_and_removes_drawing_files() -> None:
     rendered_path = Path("agent/storage/contracts/with-drawing.docx")
     extracted = {"supplierName": "供应商A", "items": []}
 
-    def fake_convert(source: Path, output: Path) -> Path:
+    def fake_convert(source: Path, output: Path, **kwargs: Any) -> Path:
         assert source == Path(drawing_record["path"])
+        assert kwargs["logger"] is not None
+        assert kwargs["log_meta"]["drawingId"] == drawing["id"]
         output.write_bytes(VALID_PNG_BYTES)
         return output
 
