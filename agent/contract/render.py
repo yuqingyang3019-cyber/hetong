@@ -13,6 +13,7 @@ except ModuleNotFoundError:
         return timezone.utc
 
 from docx import Document
+from docx.shared import Inches
 from docxtpl import DocxTemplate, RichText
 
 from .config import CONTRACTS_DIR, TemplateConfig, ensure_storage, template_docx_path
@@ -165,12 +166,28 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None)
     doc.save(str(path))
 
 
+def append_drawing_attachment(path: Path, drawing_attachment: dict[str, Any] | None) -> None:
+    if not isinstance(drawing_attachment, dict):
+        return
+    image_path = Path(str(drawing_attachment.get("imagePath") or ""))
+    if not image_path.exists():
+        return
+    original_name = str(drawing_attachment.get("originalName") or "图纸")
+    doc = Document(str(path))
+    doc.add_page_break()
+    doc.add_heading("附件：图纸", level=1)
+    doc.add_paragraph(original_name)
+    doc.add_picture(str(image_path), width=Inches(6.5))
+    doc.save(str(path))
+
+
 def render_contract(
     render_data: dict[str, Any],
     config: TemplateConfig,
     contract_id: str,
     blank_missing: bool = False,
     quote_attachment: dict[str, Any] | None = None,
+    drawing_attachment: dict[str, Any] | None = None,
 ) -> Path:
     ensure_storage()
     template_path = template_docx_path(config.type)
@@ -179,4 +196,5 @@ def render_contract(
     doc.render(build_docxtpl_context(render_data, config, blank_missing=blank_missing))
     doc.save(str(output_path))
     append_quote_attachment(output_path, quote_attachment)
+    append_drawing_attachment(output_path, drawing_attachment)
     return output_path

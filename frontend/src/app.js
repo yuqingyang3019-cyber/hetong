@@ -10,6 +10,10 @@ const tableModeField = document.querySelector("#tableModeField");
 const tableModeInputs = Array.from(document.querySelectorAll("input[name='tableMode']"));
 const fieldPreviewSummary = document.querySelector("#fieldPreviewSummary");
 const contractPreviewEl = document.querySelector("#contractPreview");
+const drawingAttachmentPanel = document.querySelector("#drawingAttachmentPanel");
+const drawingFile = document.querySelector("#drawingFile");
+const drawingFileNameText = document.querySelector("#drawingFileNameText");
+const removeDrawingButton = document.querySelector("#removeDrawingButton");
 const templateType = document.querySelector("#templateType");
 const taskCreatePanel = document.querySelector("#taskCreatePanel");
 const openCreateTaskButton = document.querySelector("#openCreateTaskButton");
@@ -54,6 +58,7 @@ const supportedQuoteFileExtensions = new Set([
   ".tiff",
   ".webp",
 ]);
+const supportedDrawingFileExtensions = new Set([".dxf"]);
 const templateSchemaFiles = Object.freeze({
   caigouhetong: "caigouhetong",
   nonStandardNoInstall: "non-standard-no-install",
@@ -213,6 +218,13 @@ function validateQuoteFile(file) {
   if (!file) return "请先选择报价单文件。";
   if (file.size === 0) return "报价单文件为空，请重新选择文件。";
   if (!supportedQuoteFileExtensions.has(quoteFileExtension(file))) return "仅支持 PDF、Excel 和常见图片格式报价单。";
+  return "";
+}
+
+function validateDrawingFile(file) {
+  if (!file) return "请先选择 DXF 图纸。";
+  if (file.size === 0) return "图纸文件为空，请重新选择文件。";
+  if (!supportedDrawingFileExtensions.has(quoteFileExtension(file))) return "仅支持 DXF 图纸附件。";
   return "";
 }
 
@@ -778,6 +790,25 @@ async function uploadQuote(file) {
   return response.json();
 }
 
+async function uploadDrawing(file) {
+  const data = await fileToDataUrl(file);
+  const response = await fetchAgent("/api/drawings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      originalName: file.name || "drawing.dxf",
+      mimeType: file.type || "application/dxf",
+      size: file.size,
+      data,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.message || body.detail || body.error || "上传图纸失败");
+  }
+  return response.json();
+}
+
 async function parseUploadedQuote(uploadId, taskTemplateType) {
   const response = await fetchAgent(`/api/uploads/${encodeURIComponent(uploadId)}/quote-text`, {
     method: "POST",
@@ -870,6 +901,7 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
       extractedData,
       tableMode: effectiveTableMode(task),
       attachmentMode: task.attachmentMode || task.fieldPreview?.attachmentMode || null,
+      drawingUploadId: task.drawingUpload?.id || null,
       dingtalkUser: userPreview,
     }),
   });
@@ -1364,6 +1396,27 @@ function setTaskTableMode(task, mode) {
   setTaskStatus(task, "needs_text", "表格处理方式已更新，请重新识别字段。");
 }
 
+function syncDrawingAttachmentControls(task) {
+  if (!drawingAttachmentPanel) return;
+  const show = Boolean(task?.fieldPreview?.extractedData && task.status !== "completed");
+  drawingAttachmentPanel.hidden = !show;
+  if (!show) {
+    if (drawingFile) drawingFile.value = "";
+    return;
+  }
+  const busy = taskIsBusy(task);
+  if (drawingFile) drawingFile.disabled = busy;
+  if (removeDrawingButton) {
+    removeDrawingButton.hidden = !task.drawingUpload;
+    removeDrawingButton.disabled = busy;
+  }
+  if (drawingFileNameText) {
+    drawingFileNameText.textContent = task.drawingUpload
+      ? `已上传：${task.drawingUpload.originalName || task.drawingUpload.fileName || "DXF 图纸"}，生成合同时会追加为图纸附件。`
+      : "未上传图纸附件。";
+  }
+}
+
 function syncFieldPreviewSummary(stats) {
   if (!fieldPreviewSummary) return;
   fieldPreviewSummary.className = `hint field-preview-summary${stats.missing ? " has-missing" : " all-recognized"}`;
@@ -1705,6 +1758,7 @@ async function renderFieldPreview(task) {
   }
 
   syncFieldPreviewSummary(stats);
+  syncDrawingAttachmentControls(task);
   if (fieldPreviewCard) fieldPreviewCard.hidden = false;
 }
 
@@ -1718,6 +1772,7 @@ function resetFieldPreviewUi() {
     contractPreviewEl.textContent = "";
     contractPreviewEl.append(createEl("p", "empty-state", "等待字段识别。"));
   }
+  syncDrawingAttachmentControls(null);
 }
 
 function clearActiveEditor() {
@@ -1780,6 +1835,7 @@ function createTask(file) {
     attachmentMode: null,
     tableMode: "auto",
     upload: null,
+    drawingUpload: null,
     download: null,
     downloadState: "ready",
     failedStep: null,
@@ -2073,6 +2129,7 @@ async function syncActiveTaskEditor() {
   } else {
     resetFieldPreviewUi();
   }
+  syncDrawingAttachmentControls(task);
   updateActionAvailability();
 }
 
@@ -2160,6 +2217,34 @@ async function runGenerateTask(task) {
     const message = formatError(error);
     setTaskStatus(task, "failed", `处理失败：${message}`, "generate");
     setStatus(message, "error");
+  }
+}
+
+async function handleDrawingFileChange() {
+  const task = activeTask();
+  const file = drawingFile?.files?.[0];
+  if (!task || !file) return;
+  const validationMessage = validateDrawingFile(file);
+  if (validationMessage) {
+    setStatus(validationMessage, "error");
+    if (drawingFile) drawingFile.value = "";
+    return;
+  }
+  try {
+    appendTaskLog(task, `开始上传图纸附件：${file.name}\n`);
+    task.drawingUpload = await uploadDrawing(file);
+    appendTaskLog(task, `图纸附件已上传：${task.drawingUpload.originalName}\n`);
+    setStatus("图纸附件已上传，生成合同时会追加到 Word 合同末尾。", "success");
+  } catch (error) {
+    const message = formatError(error);
+    task.drawingUpload = null;
+    setStatus(message, "error");
+    appendTaskLog(task, `图纸附件上传失败：${message}\n`);
+  } finally {
+    if (drawingFile) drawingFile.value = "";
+    syncDrawingAttachmentControls(task);
+    renderTaskList();
+    updateActionAvailability();
   }
 }
 
@@ -2257,6 +2342,19 @@ generateButton.addEventListener("click", async () => {
   }
   task.quoteText = quoteText;
   await runGenerateTask(task);
+});
+
+drawingFile?.addEventListener("change", () => {
+  void handleDrawingFileChange();
+});
+
+removeDrawingButton?.addEventListener("click", () => {
+  const task = activeTask();
+  if (!task || taskIsBusy(task)) return;
+  task.drawingUpload = null;
+  syncDrawingAttachmentControls(task);
+  appendTaskLog(task, "已移除图纸附件，本次生成不会追加图纸。\n");
+  setStatus("已移除图纸附件。");
 });
 
 closeTaskDrawerButton?.addEventListener("click", closeTaskDrawer);

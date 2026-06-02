@@ -1053,6 +1053,31 @@ button:disabled {
   color: #991b1b;
 }
 
+.drawing-attachment-panel {
+  align-items: center;
+  background: rgba(239, 246, 255, 0.72);
+  border: 1px dashed rgba(15, 108, 189, 0.28);
+  border-radius: var(--radius-md);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-3);
+}
+
+.drawing-attachment-panel strong {
+  color: var(--color-primary);
+  display: block;
+  font-size: 0.95rem;
+}
+
+.drawing-attachment-panel small {
+  color: var(--color-text-muted);
+  font-weight: 700;
+}
+
+.drawing-upload-button {
+  justify-self: start;
+}
+
 .field-preview-jump {
   background: rgba(255, 255, 255, 0.88);
   border-color: rgba(220, 38, 38, 0.22);

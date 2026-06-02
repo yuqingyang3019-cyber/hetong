@@ -66,6 +66,8 @@ Content-Type: application/json
 | `UNSUPPORTED_FILE_TYPE` | 400 | 报价单格式不支持 |
 | `OCR_FAILED` | 502 | 图片 OCR 识别失败 |
 | `LLM_FAILED` | 502 | 字段识别失败 |
+| `UNSUPPORTED_DRAWING_TYPE` | 400 | 图纸格式不支持 |
+| `DRAWING_CONVERT_FAILED` | 500 | DXF 图纸转换失败 |
 | `YONBIP_AUTH_FAILED` | 502 | 用友 YonBIP 访问令牌获取失败 |
 | `YONBIP_SUPPLIER_LOOKUP_FAILED` | 502 | 用友供应商抬头查询失败 |
 | `CONTRACT_GENERATE_FAILED` | 500 | 合同生成失败 |
@@ -339,7 +341,46 @@ Authorization: Bearer <agentAccessToken>
 
 `tableMode` 取值为 `auto`、`template`、`attachment`：`auto` 按 Excel 是否超过 5 行或多 sheet 自动选择；`template` 强制按合同模板识别并填表；`attachment` 强制只识别主字段并将 Excel 原表追加到合同末尾。
 
-### 6.4 生成合同
+### 6.4 上传图纸附件
+
+```http
+POST /api/drawings
+Authorization: Bearer <agentAccessToken>
+```
+
+用途：字段识别完成后，前端可上传可选 DXF 图纸。图纸不参与报价单解析或字段识别，只在合同生成时转换为图片并追加到 Word 合同末尾。
+
+JSON Base64 请求：
+
+```json
+{
+  "originalName": "outline.dxf",
+  "mimeType": "application/dxf",
+  "size": 123456,
+  "data": "data:application/dxf;base64,..."
+}
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "id": "drawing_xxx",
+  "originalName": "outline.dxf",
+  "fileName": "drawing_xxx_outline.dxf",
+  "mimeType": "application/dxf",
+  "size": 123456
+}
+```
+
+约束：
+
+- 仅支持 `.dxf`，不支持 DWG、DRX 或其他 CAD 私有格式。
+- 上传后的图纸只作为当前用户的临时附件；生成合同并成功上传钉盘后清理。
+- 图纸转换失败返回 `DRAWING_CONVERT_FAILED`，前端应允许用户移除图纸后重新生成合同。
+
+### 6.5 生成合同
 
 ```http
 POST /api/contracts/generate
@@ -357,7 +398,8 @@ Authorization: Bearer <agentAccessToken>
   "quoteText": "用户确认后的报价单文本",
   "extraInfo": "补充信息",
   "extractedData": {},
-  "tableMode": "attachment"
+  "tableMode": "attachment",
+  "drawingUploadId": "drawing_xxx"
 }
 ```
 
@@ -391,11 +433,12 @@ Authorization: Bearer <agentAccessToken>
 约束：
 
 - `extractedData` 必须来自用户确认后的字段预览结果。
+- `drawingUploadId` 可选；传入时，FC 后端将对应 DXF 转为图片并追加为 Word 合同附件页。
 - 合同文件名使用 `合同编号_供应商名称_项目名称.docx`；合同编号为空时用生成时间兜底，供应商或项目为空时用 `未知乙方`、`未知项目`。
 - FC 后端上传钉盘后返回必要文件元数据和下载提示信息。
 - 前端通过 `POST /api/dingdrive/download` 带 Bearer Token 下载合同文件，不直接暴露钉盘下载签名 URL 和 headers。
 
-### 6.5 下载钉盘合同
+### 6.6 下载钉盘合同
 
 ```http
 POST /api/dingdrive/download

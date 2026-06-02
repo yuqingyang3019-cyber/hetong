@@ -59,8 +59,8 @@ flowchart LR
 | --- | --- | --- |
 | 前端 H5 | `frontend/src/app.js`、`frontend/src/index.html`、`frontend/src/app.css` | 页面交互、任务列表、用户确认、钉钉客户端 JSAPI SDK 免登和合同下载 |
 | 鉴权与静态资源层 | `agent/main.py`、`agent/static` | 静态资源、`/config.js`、钉钉新版服务端 SDK 免登换取、H5 会话、短期业务凭证签发 |
-| 业务 API | `agent/main.py` | 上传、解析、字段预览、用友抬头回填、同步 HTTP 生成、钉盘上传、代理下载合同 |
-| 合同处理模块 | `agent/contract/*` | 文本抽取、字段识别、模板渲染、字段契约 |
+| 业务 API | `agent/main.py` | 上传、解析、字段预览、图纸上传、用友抬头回填、同步 HTTP 生成、钉盘上传、代理下载合同 |
+| 合同处理模块 | `agent/contract/*` | 文本抽取、DXF 图纸转图片、字段识别、模板渲染、字段契约 |
 | 集成模块 | `agent/dingtalk_oapi.py`、`agent/dingdrive.py`、`agent/yonyou_vendor.py` | 钉钉免登、用户信息、钉盘上传和下载信息获取、用友供应商档案实时查询 |
 
 ## 5. 组件职责
@@ -187,6 +187,14 @@ flowchart TD
 7. FC 后端返回可编辑 `quoteText`。
 8. 前端展示解析文本，用户可编辑和补充额外信息。
 
+字段识别完成后，用户可选上传 DXF 图纸附件：
+
+1. 前端调用 `POST /api/drawings` 上传 `.dxf`。
+2. FC 后端保存 DXF 源文件和图纸上传记录。
+3. 用户确认生成合同时，前端在 `POST /api/contracts/generate` 中传入 `drawingUploadId`。
+4. FC 后端将 DXF 渲染为 PNG，并在 Word 合同末尾追加“附件：图纸”页。
+5. 合同成功上传钉盘后，FC 后端清理报价单、DXF 源文件、转换出的 PNG 和合同临时文件。
+
 ### 6.3 字段识别与合同生成流程
 
 1. 前端调用 `POST /api/uploads/{uploadId}/field-preview`，提交用户确认后的 `quoteText`、`extraInfo` 和 `templateType`。
@@ -282,6 +290,8 @@ sequenceDiagram
 | 数据 | 位置 | 生命周期 |
 | --- | --- | --- |
 | 上传报价单 | `agent/storage/uploads` | 上传后保存，合同生成成功后清理 |
+| 上传图纸 | `agent/storage/drawings` | 上传后保存，合同生成成功后清理 |
+| 图纸转换图片 | `agent/storage/drawings` | 生成合同时临时生成，合同上传钉盘成功后清理 |
 | 生成合同 | `agent/storage/contracts` | 渲染后保存，上传钉盘成功后清理 |
 | 合同模板 | `agent/contract/templates/zhanweifu` | 随代码发布 |
 | 模板字段契约 | `*.placeholders.json` | 随模板维护 |
@@ -311,6 +321,8 @@ sequenceDiagram
 | `YONBIP_GATEWAY_URL` | 用友业务接口域名，默认 `https://c3.yonyoucloud.com/iuap-api-gateway`，仅需跨数据中心时覆盖 | 仅 FC 后端 |
 | `YONBIP_TOKEN_URL` | 用友 token 接口域名，默认与 `YONBIP_GATEWAY_URL` 相同 | 仅 FC 后端 |
 
+DXF 图纸附件转换使用随代码部署的 Python 依赖 `ezdxf` 和 `PyMuPDF`，仅在服务端执行。转换输出为 PNG 图片并插入 Word 合同，不向前端暴露转换依赖或中间文件路径。
+
 前端页面只允许拿到完成免登所需的公开配置，不允许暴露服务端密钥。
 
 ### 11.1 SDK 使用约束
@@ -333,6 +345,7 @@ sequenceDiagram
 | 钉盘上传失败 | 展示钉盘上传失败原因，允许重试生成或重新提交 |
 | 下载失败 | 展示下载失败原因，允许用户重试下载或到钉盘目录手动下载 |
 | 用友抬头查询失败 | 展示用友抬头未自动补齐原因，不影响报价单任务继续处理 |
+| 图纸转换失败 | 展示图纸附件转换失败原因，允许用户移除图纸后重新生成合同 |
 
 ## 13. 可观测性
 

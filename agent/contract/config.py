@@ -13,6 +13,7 @@ TEMPLATE_ROOT = CONTRACT_ROOT / "templates" / "zhanweifu"
 STORAGE_ROOT = APP_ROOT / "storage"
 UPLOADS_DIR = STORAGE_ROOT / "uploads"
 CONTRACTS_DIR = STORAGE_ROOT / "contracts"
+DRAWINGS_DIR = STORAGE_ROOT / "drawings"
 
 
 TEMPLATE_BASENAME: dict[str, str] = {
@@ -44,7 +45,7 @@ class TemplateConfig:
 
 
 def ensure_storage() -> None:
-    for directory in (UPLOADS_DIR, CONTRACTS_DIR):
+    for directory in (UPLOADS_DIR, CONTRACTS_DIR, DRAWINGS_DIR):
         directory.mkdir(parents=True, exist_ok=True)
 
 

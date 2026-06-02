@@ -4,6 +4,8 @@ jinja2
 python-multipart
 openai
 pdfplumber
+ezdxf
+PyMuPDF
 docxtpl>=0.16
 python-docx
 openpyxl

@@ -27,21 +27,25 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 
 try:
     from .contract.config import (
+        DRAWINGS_DIR,
         UPLOADS_DIR,
         ensure_storage,
         get_template_config,
         safe_file_name,
     )
+    from .contract.drawing import DrawingConvertError, render_dxf_to_png
     from .contract.extract import extract_excel_payload, extract_text_from_file, parser_metadata_for_file
     from .contract.llm import extract_template_render_data, is_timeout_error, scalar_only_template_config
     from .contract.render import merge_render_data, render_contract
 except ImportError:
     from contract.config import (
+        DRAWINGS_DIR,
         UPLOADS_DIR,
         ensure_storage,
         get_template_config,
         safe_file_name,
     )
+    from contract.drawing import DrawingConvertError, render_dxf_to_png
     from contract.extract import extract_excel_payload, extract_text_from_file, parser_metadata_for_file
     from contract.llm import extract_template_render_data, is_timeout_error, scalar_only_template_config
     from contract.render import merge_render_data, render_contract
@@ -52,7 +56,7 @@ try:
         get_contract_download_info,
         upload_contract_to_dingdrive,
     )
-    from .storage_cleanup import remove_contract_files, remove_upload
+    from .storage_cleanup import remove_contract_files, remove_drawing, remove_upload
     from .yonyou_vendor import (
         apply_yonbip_supplier_patch,
         supplier_patch_from_yonbip,
@@ -61,7 +65,7 @@ except ImportError:
     import dingtalk_oapi  # type: ignore[no-redef]
     from dingdrive import get_contract_download_info  # type: ignore[no-redef]
     from dingdrive import upload_contract_to_dingdrive  # type: ignore[no-redef]
-    from storage_cleanup import remove_contract_files, remove_upload  # type: ignore[no-redef]
+    from storage_cleanup import remove_contract_files, remove_drawing, remove_upload  # type: ignore[no-redef]
     from yonyou_vendor import apply_yonbip_supplier_patch  # type: ignore[no-redef]
     from yonyou_vendor import supplier_patch_from_yonbip  # type: ignore[no-redef]
 
@@ -123,6 +127,8 @@ def error_code_message(exc: Exception) -> tuple[str, str]:
         return "LLM_FAILED", "字段识别失败，请检查报价单文本或补充说明后重试"
     if "钉盘" in text or "DINGTALK_DRIVE" in text:
         return "DINGDRIVE_UPLOAD_FAILED", "合同上传钉盘失败，请稍后重试"
+    if isinstance(exc, DrawingConvertError) or "DXF" in text or "图纸" in text:
+        return "DRAWING_CONVERT_FAILED", "图纸附件转换失败，请检查 DXF 文件后重试，或先不附图生成合同"
     return "CONTRACT_GENERATE_FAILED", "合同生成失败，请根据原因调整字段后重试"
 
 AGENT_TOKEN_TYPE = "agent"
@@ -382,6 +388,8 @@ SUPPORTED_QUOTE_MIME_TYPES = {
     "image/tiff",
     "image/webp",
 }
+SUPPORTED_DRAWING_EXTENSIONS = {".dxf"}
+SUPPORTED_DRAWING_MIME_TYPES = {"application/dxf", "application/x-dxf", "image/vnd.dxf", "application/octet-stream"}
 QUOTE_FILE_SIGNATURE_ERROR = "文件内容与格式不匹配，请重新上传 PDF、Excel 或常见图片格式报价单"
 QUOTE_IMAGE_KINDS = {"jpeg", "png", "bmp", "gif", "tiff", "webp"}
 QUOTE_FILE_KIND_BY_EXTENSION = {
@@ -501,6 +509,24 @@ def validate_supported_quote_file(original_name: str, mime_type: str) -> None:
     raise api_error(400, "UNSUPPORTED_FILE_TYPE", "当前版本支持 PDF、Excel 或图片报价单")
 
 
+def validate_supported_drawing_file(original_name: str, mime_type: str) -> None:
+    suffix = Path(original_name).suffix.lower()
+    normalized_mime = _normalized_mime_type(mime_type)
+    if suffix not in SUPPORTED_DRAWING_EXTENSIONS:
+        raise api_error(400, "UNSUPPORTED_DRAWING_TYPE", "当前仅支持 DXF 图纸附件")
+    if normalized_mime and normalized_mime not in SUPPORTED_DRAWING_MIME_TYPES:
+        # 浏览器常无法识别 DXF，允许 application/octet-stream，但拒绝明确的非 DXF 类型。
+        raise api_error(400, "UNSUPPORTED_DRAWING_TYPE", "当前仅支持 DXF 图纸附件")
+
+
+def validate_drawing_file_content(content: bytes) -> None:
+    if not content:
+        raise api_error(400, "INVALID_ARGUMENT", "上传图纸为空，请重新选择 DXF 文件")
+    sample = content[:4096].upper()
+    if b"SECTION" not in sample and b"EOF" not in content[-4096:].upper():
+        raise api_error(400, "INVALID_ARGUMENT", "文件内容与 DXF 格式不匹配，请重新上传图纸")
+
+
 def save_upload_bytes(content: bytes, original_name: str, mime_type: str, current_user: dict[str, Any]) -> dict[str, Any]:
     ensure_storage()
     upload_id = new_id("upload")
@@ -528,6 +554,33 @@ def save_upload_bytes(content: bytes, original_name: str, mime_type: str, curren
     return record
 
 
+def save_drawing_bytes(content: bytes, original_name: str, mime_type: str, current_user: dict[str, Any]) -> dict[str, Any]:
+    ensure_storage()
+    drawing_id = new_id("drawing")
+    file_name = f"{drawing_id}_{safe_file_name(original_name)}"
+    path = DRAWINGS_DIR / file_name
+    path.write_bytes(content)
+    record = {
+        "id": drawing_id,
+        "fileName": file_name,
+        "originalName": original_name,
+        "mimeType": mime_type or "application/dxf",
+        "size": len(content),
+        "path": str(path),
+        **_user_resource_owner(current_user),
+    }
+    (DRAWINGS_DIR / f"{drawing_id}.json").write_text(json.dumps(record, ensure_ascii=False), encoding="utf-8")
+    log_info(
+        "drawing persisted",
+        drawingId=drawing_id,
+        fileName=file_name,
+        originalName=original_name,
+        mimeType=record["mimeType"],
+        size=record["size"],
+    )
+    return record
+
+
 def load_upload(upload_id: str, current_user: dict[str, Any] | None = None) -> dict[str, Any]:
     record_path = UPLOADS_DIR / f"{upload_id}.json"
     if not record_path.exists():
@@ -536,6 +589,16 @@ def load_upload(upload_id: str, current_user: dict[str, Any] | None = None) -> d
     if current_user is not None and not _same_upload_owner(upload, current_user):
         raise api_error(403, "FORBIDDEN", "无权访问该上传文件")
     return upload
+
+
+def load_drawing(drawing_id: str, current_user: dict[str, Any] | None = None) -> dict[str, Any]:
+    record_path = DRAWINGS_DIR / f"{drawing_id}.json"
+    if not record_path.exists():
+        raise api_error(404, "NOT_FOUND", "图纸附件不存在")
+    drawing = json.loads(record_path.read_text(encoding="utf-8"))
+    if current_user is not None and not _same_upload_owner(drawing, current_user):
+        raise api_error(403, "FORBIDDEN", "无权访问该图纸附件")
+    return drawing
 
 
 def parse_data_source(value: str, fallback_mime_type: str) -> tuple[bytes, str]:
@@ -855,6 +918,7 @@ def generate_contract(
     extracted_data: dict[str, Any] | None = None,
     current_user: dict[str, Any] | None = None,
     table_mode: str = "auto",
+    drawing_upload_id: str | None = None,
 ) -> dict[str, Any]:
     start = time.perf_counter()
     has_confirmed_text = bool(quote_text and quote_text.strip())
@@ -950,15 +1014,33 @@ def generate_contract(
         contract_id = new_id("contract")
         file_name = contract_file_name(render_data)
         contract_stem = Path(file_name).stem
+        drawing = load_drawing(drawing_upload_id, current_user) if drawing_upload_id else None
+        drawing_image_path: Path | None = None
+        drawing_attachment: dict[str, Any] | None = None
+        if drawing:
+            drawing_image_path = DRAWINGS_DIR / f"{drawing['id']}.png"
+            render_dxf_to_png(Path(drawing["path"]), drawing_image_path)
+            drawing_attachment = {
+                "imagePath": str(drawing_image_path),
+                "originalName": drawing.get("originalName"),
+            }
 
         render_start = time.perf_counter()
-        log_info("contract render start", uploadId=upload_id, contractId=contract_id, fileName=file_name, templateType=config.type)
+        log_info(
+            "contract render start",
+            uploadId=upload_id,
+            contractId=contract_id,
+            fileName=file_name,
+            templateType=config.type,
+            drawingUploadId=drawing_upload_id,
+        )
         contract_path = render_contract(
             render_data,
             config,
             contract_stem,
             blank_missing=has_confirmed_data,
             quote_attachment=quote_attachment,
+            drawing_attachment=drawing_attachment,
         )
         log_info(
             "contract render finished",
@@ -994,8 +1076,10 @@ def generate_contract(
             "dingDrive": ding_drive,
             "attachmentMode": attachment_mode,
             "tableMode": table_mode,
+            "drawing": drawing,
         }
         removed_paths = remove_upload(upload)
+        removed_paths.extend(remove_drawing(drawing, drawing_image_path))
         removed_paths.extend(remove_contract_files(contract_path))
         log_info(
             "contract generation finished",
@@ -1154,6 +1238,45 @@ async def upload_file(
     except Exception as exc:
         log_exception("upload request failed", exc, clientHost=client_host, originalName=original_name, elapsedMs=elapsed_ms(start))
         raise api_error(500, "INTERNAL_ERROR", "上传失败，请稍后重试", str(exc)) from exc
+
+
+@app.post("/api/drawings")
+async def upload_drawing_file(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    file: Optional[UploadFile] = File(None),
+) -> dict:
+    start = time.perf_counter()
+    client_host = request.client.host if request.client else None
+    original_name = ""
+    try:
+        content, original_name, mime_type, declared_size, upload_mode = await read_upload_payload(request, file)
+        validate_supported_drawing_file(original_name, mime_type)
+        validate_drawing_file_content(content)
+        if declared_size is not None and declared_size != len(content):
+            log_warning(
+                "drawing upload size mismatch",
+                clientHost=client_host,
+                originalName=original_name,
+                declaredSize=declared_size,
+                decodedSize=len(content),
+                uploadMode=upload_mode,
+            )
+        record = save_drawing_bytes(content, original_name, "application/dxf", current_user)
+        log_info(
+            "drawing upload request finished",
+            clientHost=client_host,
+            drawingId=record["id"],
+            fileName=record["fileName"],
+            uploadMode=upload_mode,
+            elapsedMs=elapsed_ms(start),
+        )
+        return {"ok": True, **public_upload_record(record)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log_exception("drawing upload request failed", exc, clientHost=client_host, originalName=original_name, elapsedMs=elapsed_ms(start))
+        raise api_error(500, "INTERNAL_ERROR", "图纸上传失败，请稍后重试", str(exc)) from exc
 
 
 @app.post("/api/uploads/{upload_id}/quote-text")
@@ -1430,6 +1553,7 @@ async def generate_contract_api(request: Request, current_user: dict = Depends(g
     extra_info = extra_info_value.strip() if isinstance(extra_info_value, str) and extra_info_value.strip() else None
     extracted_data_value = payload.get("extractedData")
     extracted_data = extracted_data_value if isinstance(extracted_data_value, dict) else None
+    drawing_upload_id = str(payload.get("drawingUploadId") or "").strip() or None
     if not upload_id:
         raise api_error(400, "INVALID_ARGUMENT", "缺少上传文件 ID")
     log_info(
@@ -1441,10 +1565,11 @@ async def generate_contract_api(request: Request, current_user: dict = Depends(g
         confirmedQuoteText=bool(quote_text),
         extraInfoLength=len(extra_info or ""),
         confirmedExtractedData=bool(extracted_data),
+        drawingUploadId=drawing_upload_id,
         dingtalkUserId=current_user.get("userid"),
     )
     try:
-        draft = generate_contract(upload_id, template_type, quote_text, extra_info, extracted_data, current_user, table_mode)
+        draft = generate_contract(upload_id, template_type, quote_text, extra_info, extracted_data, current_user, table_mode, drawing_upload_id)
         download_payload = contract_download_payload(draft)
         log_info(
             "contract generate api request finished",
