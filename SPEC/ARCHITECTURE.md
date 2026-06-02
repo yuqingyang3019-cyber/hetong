@@ -59,9 +59,9 @@ flowchart LR
 | --- | --- | --- |
 | 前端 H5 | `frontend/src/app.js`、`frontend/src/index.html`、`frontend/src/app.css` | 页面交互、任务列表、用户确认、钉钉客户端 JSAPI SDK 免登和合同下载 |
 | 鉴权与静态资源层 | `agent/main.py`、`agent/static` | 静态资源、`/config.js`、钉钉新版服务端 SDK 免登换取、H5 会话、短期业务凭证签发 |
-| 业务 API | `agent/main.py` | 上传、解析、字段预览、供应商同步、同步 HTTP 生成、钉盘上传、代理下载合同 |
+| 业务 API | `agent/main.py` | 上传、解析、字段预览、用友抬头回填、同步 HTTP 生成、钉盘上传、代理下载合同 |
 | 合同处理模块 | `agent/contract/*` | 文本抽取、字段识别、模板渲染、字段契约 |
-| 集成模块 | `agent/dingtalk_oapi.py`、`agent/dingdrive.py`、`agent/yonyou_vendor.py` | 钉钉免登、用户信息、钉盘上传和下载信息获取、用友供应商同步 |
+| 集成模块 | `agent/dingtalk_oapi.py`、`agent/dingdrive.py`、`agent/yonyou_vendor.py` | 钉钉免登、用户信息、钉盘上传和下载信息获取、用友供应商档案实时查询 |
 
 ## 5. 组件职责
 
@@ -121,7 +121,7 @@ BFF 鉴权层不负责：
 - 通过同步 HTTP 接口编排合同生成过程并返回结果。
 - 调用合同渲染模块生成 `.docx` 文件。
 - 使用钉盘官方新版 SDK 上传合同。
-- 从用友 YonBIP 同步供应商档案，生成缓存文件并上传钉盘。
+- 字段识别后按乙方名称实时只读查询用友 YonBIP 供应商档案，覆盖乙方抬头字段。
 - 返回钉盘文件信息和必要下载元数据。
 - 记录关键阶段日志。
 - 在成功生成并上传合同后清理本地临时文件。
@@ -150,7 +150,7 @@ BFF 鉴权层不负责：
 | 业务访问凭证 | 鉴权与静态资源层、业务 API | 后端签发短期凭证，业务 API 校验后处理业务请求 |
 | 钉盘上传 | `agent/dingdrive.py` | 使用钉盘官方新版 SDK 上传合同文件到指定钉盘空间和目录 |
 | 钉盘下载 | `agent/dingdrive.py`、前端 H5 | FC 后端获取钉盘下载信息并代理文件流，前端触发浏览器或钉钉客户端下载 |
-| 用友供应商同步 | `agent/yonyou_vendor.py`、`agent/main.py` | 使用 YonBIP 开放 API 分页读取供应商档案和银行子表，生成 `.xlsx` 缓存文件 |
+| 用友抬头回填 | `agent/yonyou_vendor.py`、`agent/main.py` | 使用 YonBIP 开放 API 按乙方名称查询供应商主档和银行子表 |
 
 ## 6. 核心数据流
 
@@ -206,54 +206,31 @@ flowchart TD
 4. FC 后端代理下载文件流并返回给前端。
 5. 前端触发浏览器或钉钉客户端下载，并提示用户文件会保存到默认下载目录；如系统弹窗提示，可选择目标保存位置。
 
-### 6.5 用友供应商同步流程
-
-```mermaid
-flowchart TD
-  clickSync["用户点击同步供应商"] --> syncApi["POST /api/suppliers/sync"]
-  syncApi --> getToken["YonBIP获取access_token"]
-  getToken --> queryPage["分页调用vendor/queryByPage"]
-  queryPage --> dedupe["按供应商id去重"]
-  dedupe --> chooseBank["选择默认未停用银行账户"]
-  chooseBank --> readCache["读取钉盘现有缓存"]
-  readCache --> appendNew["按供应商id追加新供应商"]
-  appendNew --> buildXlsx["生成合并缓存xlsx"]
-  buildXlsx --> uploadDrive["提交钉盘"]
-  uploadDrive --> cleanup["清理本地临时文件"]
-  cleanup --> result["返回统计和钉盘文件信息"]
-```
-
-1. 前端完成钉钉免登后，携带业务 Bearer Token 调用 `POST /api/suppliers/sync`。
-2. FC 后端使用 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
-3. FC 后端分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含：
-   - 显式供应商主档字段：`id`、`code`、`name`、`creditcode`、`address`、`contactphone`、`vendorphone`、`vendorfax`、`vendoraddress`、`orgId`、`org`、`accessstatus`、`freezestatus`、`pubts`
-   - `queryOrders: [{ field: "code", order: "asc" }]`
-   - `partParam.vendorbanks.data: "*,openaccountbank.name"`
-4. FC 后端过滤冻结或停用记录，并按供应商主档 `id` 去重。
-5. 同一供应商有多条记录时，优先保留可用、配置组织匹配或企业账号级记录。
-6. FC 后端从 `vendorbanks` 中选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；若不存在默认账户，则选择第一条未停用账户。
-7. FC 后端读取钉盘现有 `supplier-cache.xlsx`，按供应商 `id` 只追加缓存中不存在的新供应商，已有供应商不更新、不覆盖。
-8. FC 后端生成固定文件名 `supplier-cache.xlsx`，包含 `供应商` 和 `同步信息` 两个 Sheet，表头使用中文业务名称。
-9. FC 后端复用钉盘上传能力将合并后的缓存文件提交至配置的钉盘目录，上传成功后清理本地临时文件。
-
-### 6.6 供应商抬头回填与写回流程
+### 6.5 用友供应商抬头实时回填流程
 
 ```mermaid
 flowchart TD
   fieldPreview["字段识别完成"] --> supplierName["读取supplierName"]
-  supplierName --> readCache["读取钉盘supplier-cache.xlsx"]
-  readCache --> matchName["按乙方名称精确匹配"]
-  matchName --> fillBlank["只回填空的乙方抬头字段"]
-  fillBlank --> confirm["用户确认字段"]
-  confirm --> generate["生成合同"]
-  generate --> upsertCache["将最终确认抬头写回缓存"]
-  upsertCache --> uploadDrive["提交钉盘缓存"]
+  supplierName --> getToken["YonBIP获取access_token"]
+  getToken --> queryPage["按name精确调用vendor/queryByPage"]
+  queryPage --> uniqueMatch["判断唯一可用供应商"]
+  uniqueMatch --> chooseBank["选择默认未停用银行账户"]
+  chooseBank --> overwriteTitle["覆盖乙方抬头字段"]
+  overwriteTitle --> result["返回supplierPatch和字段预览"]
 ```
 
-1. 字段识别后，FC 后端使用 `supplierName` 从钉盘缓存中按名称匹配供应商。
-2. 命中唯一供应商时，只回填乙方地址、开户行、银行账号、税号、电话、传真等空字段。
-3. 用户额外信息和字段确认中的已有值优先，不被缓存覆盖。
-4. 用户点击生成合同时，FC 后端使用最终确认的结构化乙方字段写回钉盘缓存：同名供应商更新用户确认字段，不存在则追加新行；缺少用友 `id` 的用户补充行允许 `id` 为空。
+1. 字段识别完成后，FC 后端读取 `extractedData.supplierName`。
+2. FC 后端使用 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
+3. FC 后端调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含：
+   - 显式供应商主档字段：`id`、`code`、`name`、`creditcode`、`address`、`contactphone`、`vendorphone`、`vendorfax`、`vendoraddress`、`orgId`、`org`、`accessstatus`、`freezestatus`、`pubts`
+   - `condition.simpleVOs: [{ field: "name", op: "eq", value1: supplierName }]`
+   - `queryOrders: [{ field: "code", order: "asc" }]`
+   - `partParam.vendorbanks.data: "*,openaccountbank.name"`
+4. FC 后端只接受唯一可用供应商；未命中、多条命中或接口失败时返回提示，不阻塞字段确认和合同生成。
+5. FC 后端从 `vendorbanks` 中选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；若不存在默认账户，则选择第一条未停用账户。
+6. FC 后端以用友返回的乙方抬头信息为准，覆盖乙方名称、税号、地址、电话、开户行、银行账号等字段。
+7. 若用友未返回合同需要的抬头字段，`supplierPatch.missingYonbipFields` 返回缺失项，前端提示用户到用友系统补充供应商档案。
+8. FC 后端不生成、不下载、不上传 `supplier-cache.xlsx`，也不在合同生成后写回供应商档案。
 
 ## 7. 鉴权设计
 
@@ -288,7 +265,6 @@ sequenceDiagram
 | `POST /api/uploads/{uploadId}/quote-text` | 业务 API | 解析报价单文本和表格 |
 | `POST /api/uploads/{uploadId}/field-preview` | 业务 API | 识别并返回合同字段预览 |
 | `POST /api/contracts/generate` | 业务 API | 同步生成合同并返回钉盘文件信息 |
-| `POST /api/suppliers/sync` | 业务 API | 同步用友供应商档案并上传钉盘缓存文件 |
 | `POST /api/dingdrive/download` | 业务 API | 获取钉盘下载信息并返回合同文件流 |
 
 详细接口契约见 [API.md](./API.md)。
@@ -306,7 +282,6 @@ sequenceDiagram
 | 上传报价单 | `agent/storage/uploads` | 上传后保存，合同生成成功后清理 |
 | 生成合同 | `agent/storage/contracts` | 渲染后保存，上传钉盘成功后清理 |
 | 草稿或中间文件 | `agent/storage/drafts` | 按具体流程临时使用 |
-| 供应商缓存文件 | `agent/storage/drafts` | 同步过程中临时生成，上传钉盘成功后清理 |
 | 合同模板 | `agent/contract/templates/zhanweifu` | 随代码发布 |
 | 模板字段契约 | `*.placeholders.json` | 随模板维护 |
 
@@ -334,8 +309,6 @@ sequenceDiagram
 | `YONBIP_APP_SECRET` | 用友 YonBIP 自建应用 Secret | 仅 FC 后端 |
 | `YONBIP_GATEWAY_URL` | 用友业务接口域名，默认 `https://c3.yonyoucloud.com/iuap-api-gateway`，仅需跨数据中心时覆盖 | 仅 FC 后端 |
 | `YONBIP_TOKEN_URL` | 用友 token 接口域名，默认与 `YONBIP_GATEWAY_URL` 相同 | 仅 FC 后端 |
-| `YONBIP_VENDOR_PAGE_SIZE` | 供应商同步分页大小，默认 500；系统会自动翻页直到抓完全部记录 | 仅 FC 后端 |
-| `YONBIP_ORG_ID` | 可选组织 ID，用于多组织记录优先级 | 仅 FC 后端 |
 
 前端页面只允许拿到完成免登所需的公开配置，不允许暴露服务端密钥。
 
@@ -358,13 +331,13 @@ sequenceDiagram
 | 合同生成失败 | 保留字段上下文，展示生成失败原因 |
 | 钉盘上传失败 | 展示钉盘上传失败原因，允许重试生成或重新提交 |
 | 下载失败 | 展示下载失败原因，允许用户重试下载或到钉盘目录手动下载 |
-| 供应商同步失败 | 展示供应商同步失败原因，不影响报价单任务继续处理 |
+| 用友抬头查询失败 | 展示用友抬头未自动补齐原因，不影响报价单任务继续处理 |
 
 ## 13. 可观测性
 
 V1 主要依赖 FC 日志和前端任务日志排障。
 
-- FC 日志应覆盖鉴权、上传、解析、字段识别、供应商同步、合同生成、钉盘上传和清理阶段。
+- FC 日志应覆盖鉴权、上传、解析、字段识别、用友抬头查询、合同生成、钉盘上传和清理阶段。
 - 前端在同步请求开始、成功和失败时记录任务日志。
 - 前端任务日志用于保存当前页面内任务的处理过程。
 - 第三方调用失败应记录服务名、阶段、耗时和可定位的错误信息。
@@ -378,7 +351,7 @@ V1 主要依赖 FC 日志和前端任务日志排障。
 | 鉴权边界 | FC 后端负责免登和短期业务凭证，业务 API 校验 Bearer Token | 已迁移为同一 FC 内 `/bff/auth/*` + Bearer 鉴权，钉钉调用使用官方新版 SDK | 后续在真实钉钉环境验证新版 SDK 免登字段稳定性 |
 | 业务请求路径 | 前端同域调用 FC 业务接口 | 已改为相对路径 + Bearer Token | 部署时确保自定义域名指向单个 FC 服务 |
 | 合同交付 | 前端通过 FC 下载钉盘文件 | 已返回 `dingDrive` 和 `download` 结构，并由 FC 代理下载合同文件 | 继续确认钉盘下载信息接口在真实环境的权限配置 |
-| 供应商同步 | 从用友同步供应商档案和默认银行信息，生成 `.xlsx` 缓存文件并上传钉盘 | 规划新增 `agent/yonyou_vendor.py` 和 `POST /api/suppliers/sync` | 需在真实 YonBIP 环境验证分页大小、限流、字段稳定性和钉盘权限 |
+| 用友抬头回填 | 字段识别后按乙方名称实时查询用友供应商主档和默认银行信息 | 已替换原供应商缓存同步链路 | 需在真实 YonBIP 环境验证名称精确查询、银行子表、限流和缺失字段提示 |
 | TXT 输入 | PRD 不将 TXT 作为正式业务格式 | 上传入口已按正式格式白名单拒绝 TXT | 后续若需内部测试文本输入，应使用独立开发工具而非正式业务 API |
 | 服务端任务持久化 | V1 不包含 | 当前任务状态在前端内存中维护 | 后续若做跨端恢复再设计服务端任务表 |
 

@@ -41,8 +41,6 @@ const drawerActionHint = document.querySelector("#drawerActionHint");
 const taskLogCard = document.querySelector("#taskLogCard");
 const taskLogDetails = document.querySelector("#taskLogDetails");
 const taskLogText = document.querySelector("#taskLogText");
-const syncSuppliersButton = document.querySelector("#syncSuppliersButton");
-const supplierSyncResult = document.querySelector("#supplierSyncResult");
 
 const MAX_TASKS = 5;
 const supportedQuoteFileExtensions = new Set([
@@ -96,7 +94,6 @@ let drawerLastFocus = null;
 let uploadDragDepth = 0;
 let createPanelOpen = false;
 let pendingQuoteFile = null;
-let supplierSyncState = { busy: false, result: null, error: "" };
 
 function apiUrl(path) {
   return path;
@@ -481,61 +478,7 @@ function syncTaskLogPanel(task) {
 function setInteractionEnabled(enabled) {
   sessionReady = enabled;
   renderTaskList();
-  updateSupplierSyncUi();
   updateActionAvailability();
-}
-
-function formatCount(value) {
-  const numeric = Number(value || 0);
-  return Number.isFinite(numeric) ? numeric.toLocaleString("zh-CN") : "0";
-}
-
-function updateSupplierSyncUi() {
-  if (syncSuppliersButton) {
-    syncSuppliersButton.disabled = !sessionReady || supplierSyncState.busy;
-    syncSuppliersButton.textContent = supplierSyncState.busy ? "同步中..." : "同步供应商";
-  }
-  if (!supplierSyncResult) return;
-  supplierSyncResult.classList.toggle("is-success", Boolean(supplierSyncState.result) && !supplierSyncState.error);
-  supplierSyncResult.classList.toggle("is-error", Boolean(supplierSyncState.error));
-  if (supplierSyncState.busy) {
-    supplierSyncResult.textContent = "正在从用友读取供应商档案并上传钉盘，请稍候。";
-    return;
-  }
-  if (supplierSyncState.error) {
-    supplierSyncResult.textContent = supplierSyncState.error;
-    return;
-  }
-  if (supplierSyncState.result) {
-    const result = supplierSyncState.result;
-    supplierSyncResult.textContent = `同步完成：用友 ${formatCount(result.sourceRecordCount)} 条，本次新增 ${formatCount(result.addedVendorCount)} 个，缓存共 ${formatCount(result.cacheVendorCount || result.uniqueVendorCount)} 个。`;
-    return;
-  }
-  supplierSyncResult.textContent = sessionReady ? "从用友增量补充供应商缓存。" : "完成钉钉免登后可同步供应商缓存。";
-}
-
-async function syncSuppliers() {
-  supplierSyncState = { busy: true, result: null, error: "" };
-  updateSupplierSyncUi();
-  setStatus("正在同步用友供应商...");
-  try {
-    const response = await fetchAgent("/api/suppliers/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const body = await response.json().catch(() => ({}));
-    if (!response.ok || !body.ok) {
-      throw new Error(body.message || body.detail || "供应商同步失败");
-    }
-    supplierSyncState = { busy: false, result: body, error: "" };
-    setStatus(`供应商同步完成：本次新增 ${formatCount(body.addedVendorCount)} 个，缓存共 ${formatCount(body.cacheVendorCount || body.uniqueVendorCount)} 个供应商。`, "success");
-  } catch (error) {
-    const message = formatError(error);
-    supplierSyncState = { busy: false, result: null, error: message };
-    setStatus(message, "error");
-  }
-  updateSupplierSyncUi();
 }
 
 function getDingTalkPlatform() {
@@ -1435,14 +1378,18 @@ function refreshFieldPreviewSummary(schema, extractedData) {
 }
 
 function supplierPatchNotice(supplierPatch) {
-  if (!supplierPatch || supplierPatch.matched || supplierPatch.appliedFields?.length) return "";
+  if (!supplierPatch) return "";
   const supplierName = supplierPatch.supplierName ? `「${supplierPatch.supplierName}」` : "当前乙方";
+  const missingFields = Array.isArray(supplierPatch.missingYonbipFields) ? supplierPatch.missingYonbipFields : [];
+  if (supplierPatch.matched && missingFields.length) {
+    return `用友供应商档案缺少${supplierName}的部分抬头信息，请到用友系统补充后重试或先手动填写。`;
+  }
+  if (supplierPatch.matched || supplierPatch.appliedFields?.length) return "";
   const reason = supplierPatch.reason || "";
-  if (reason === "not_found") return `未在钉盘供应商缓存找到${supplierName}的抬头信息，请在确认稿中手动补充。`;
-  if (reason === "cache_not_found") return "未找到钉盘供应商缓存，乙方抬头信息未自动补齐，请在确认稿中手动补充。";
-  if (reason === "ambiguous") return `钉盘供应商缓存中存在多个${supplierName}匹配项，乙方抬头信息未自动补齐，请人工确认。`;
-  if (reason === "missing_supplier_name") return "未识别到乙方名称，无法从钉盘供应商缓存匹配抬头信息。";
-  if (reason === "cache_error") return "读取钉盘供应商缓存失败，乙方抬头信息未自动补齐，请在确认稿中手动补充。";
+  if (reason === "not_found") return `未在用友供应商档案找到${supplierName}的抬头信息，请到用友系统补充后重试或先手动填写。`;
+  if (reason === "ambiguous") return `用友供应商档案中存在多个${supplierName}匹配项，乙方抬头信息未自动补齐，请人工确认。`;
+  if (reason === "missing_supplier_name") return "未识别到乙方名称，无法从用友供应商档案匹配抬头信息。";
+  if (reason === "lookup_error") return "读取用友供应商档案失败，乙方抬头信息未自动补齐，请稍后重试或先手动填写。";
   return "";
 }
 
@@ -2139,12 +2086,12 @@ async function runIdentifyTask(task) {
     task.attachmentMode = task.fieldPreview.attachmentMode || task.attachmentMode;
     await renderFieldPreview(task);
     const missing = task.fieldPreview.missingFields?.length || 0;
-    const supplierPatched = task.fieldPreview.supplierPatch?.appliedFields?.length || 0;
-    const supplierHint = supplierPatched ? ` 已从钉盘供应商缓存补齐 ${supplierPatched} 项乙方信息。` : "";
+    const supplierPatched = task.fieldPreview.supplierPatch?.overwrittenFields?.length || task.fieldPreview.supplierPatch?.appliedFields?.length || 0;
+    const supplierHint = supplierPatched ? ` 已从用友供应商档案回填 ${supplierPatched} 项乙方信息。` : "";
     const supplierNotice = supplierPatchNotice(task.fieldPreview.supplierPatch);
     const attachmentHint = attachmentModeText(task.attachmentMode);
     const supplierStatus = supplierPatched
-      ? `AI 已整理字段，并从钉盘供应商缓存补齐 ${supplierPatched} 项乙方信息。`
+      ? `AI 已整理字段，并从用友供应商档案回填 ${supplierPatched} 项乙方信息。`
       : supplierNotice || (missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。");
     setTaskStatus(
       task,
@@ -2218,9 +2165,6 @@ cancelCreateTaskButton?.addEventListener("click", () => {
   closeCreatePanel({ clearFile: true });
 });
 confirmCreateTaskButton?.addEventListener("click", confirmCreateTask);
-syncSuppliersButton?.addEventListener("click", () => {
-  void syncSuppliers();
-});
 
 templateType.addEventListener("change", () => {
   setStatus("模板已切换，将用于下一份报价单。");

@@ -406,7 +406,7 @@ def main() -> None:
     tenant_id = optional_env("YONBIP_TENANT_ID")
     app_key = require_env("YONBIP_APP_KEY")
     app_secret = require_env("YONBIP_APP_SECRET")
-    org_id = (os.getenv("YONBIP_ORG_ID") or "").strip()
+    org_id = ""
 
     gateway_url = optional_env("YONBIP_GATEWAY_URL").rstrip("/") or DEFAULT_YONBIP_GATEWAY_URL
     token_url = optional_env("YONBIP_TOKEN_URL").rstrip("/") or DEFAULT_YONBIP_TOKEN_URL

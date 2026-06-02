@@ -67,8 +67,8 @@ Content-Type: application/json
 | `OCR_FAILED` | 502 | 图片 OCR 识别失败 |
 | `LLM_FAILED` | 502 | 字段识别失败 |
 | `YONBIP_AUTH_FAILED` | 502 | 用友 YonBIP 访问令牌获取失败 |
-| `YONBIP_VENDOR_LIST_FAILED` | 502 | 用友供应商分页查询失败 |
-| `SUPPLIER_SYNC_FAILED` | 500 | 供应商同步或缓存文件生成失败 |
+| `YONBIP_SUPPLIER_LOOKUP_FAILED` | 502 | 用友供应商抬头查询失败 |
+| `YONBIP_SUPPLIER_LOOKUP_FAILED` | 502 | 用友供应商抬头查询失败 |
 | `CONTRACT_GENERATE_FAILED` | 500 | 合同生成失败 |
 | `DINGDRIVE_UPLOAD_FAILED` | 502 | 钉盘上传失败 |
 | `DINGDRIVE_DOWNLOAD_FAILED` | 502 | 钉盘下载失败 |
@@ -405,81 +405,37 @@ Authorization: Bearer <agentAccessToken>
 
 用途：FC 后端调用钉盘 `GetFileDownloadInfo` 获取下载 URL 和 headers，并代理返回合同文件流。前端收到文件流后触发浏览器或钉钉客户端下载，并提示用户保存路径。
 
-### 6.6 同步用友供应商
-
-```http
-POST /api/suppliers/sync
-Authorization: Bearer <agentAccessToken>
-```
-
-用途：前端触发 FC 后端从用友 YonBIP 同步供应商档案，生成 `.xlsx` 缓存文件并上传至钉盘。
-
-请求：
-
-```json
-{}
-```
-
-响应：
-
-```json
-{
-  "ok": true,
-  "fileName": "supplier-cache.xlsx",
-  "sourceApi": "vendor/queryByPage",
-  "sourceRecordCount": 3400,
-  "uniqueVendorCount": 3398,
-  "existingCacheCount": 3300,
-  "addedVendorCount": 98,
-  "skippedVendorCount": 3300,
-  "cacheVendorCount": 3398,
-  "pageSize": 500,
-  "syncedAt": "2026-05-29T19:30:00+08:00",
-  "dingDrive": {
-    "spaceId": "space_xxx",
-    "fileId": "file_xxx",
-    "fileName": "supplier-cache.xlsx",
-    "filePath": "合同/2026/05/supplier-cache.xlsx"
-  },
-  "download": {
-    "type": "agent_proxy",
-    "fileName": "supplier-cache.xlsx",
-    "savePathHint": "文件将保存到浏览器或钉钉客户端的默认下载目录；如系统弹窗提示，请选择目标保存位置。"
-  }
-}
-```
-
-同步规则：
-
-- FC 后端使用服务端配置的 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
-- FC 后端分页调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含显式供应商主档字段、`queryOrders: [{ field: "code", order: "asc" }]` 和 `partParam.vendorbanks.data: "*,openaccountbank.name"`。
-- 供应商记录按 `id` 去重；同一 `id` 出现多条记录时，优先保留可用且默认组织更匹配的记录。
-- 同步前应读取钉盘现有 `supplier-cache.xlsx`；同步按钮只按供应商 `id` 追加缓存中不存在的用友供应商，已存在 `id` 不更新、不覆盖。
-- `vendorbanks` 中优先选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；否则选择第一条未停用账户。
-- 缓存文件第一版使用固定文件名 `supplier-cache.xlsx`，包含 `供应商` 和 `同步信息` 两个 Sheet，重复同步时提交合并后的缓存文件，钉盘目录中不额外生成多个缓存文件。
-- `供应商` Sheet 表头使用中文，包括：供应商ID、供应商编码、供应商名称、统一社会信用代码、地址、电话、开户行、银行账号、户名、传真、组织ID、组织名称、准入状态、冻结状态、更新时间。
-- `同步信息` Sheet 表头使用中文，包括：同步时间、用友原始记录数、实际抓取记录数、可用记录数、去重后供应商数、分页大小、来源接口、令牌有效期秒数。
-- 同步完成后本地临时缓存文件应清理；长期缓存以钉盘文件为准。
-- 前端不得传入或展示用友 `access_token`、`appKey`、`appSecret`。
-
-字段识别预览响应可附带供应商缓存回填结果：
+字段识别预览响应可附带用友供应商抬头回填结果：
 
 ```json
 {
   "supplierPatch": {
+    "source": "yonbip",
     "matched": true,
     "supplierName": "某某供应商有限公司",
-    "patchedFields": ["supplierAddress", "supplierTaxNo"],
-    "appliedFields": ["supplierAddress", "supplierTaxNo"]
+    "overwrittenFields": ["supplierAddress", "supplierTaxNo"],
+    "missingYonbipFields": []
   }
 }
 ```
 
 规则：
 
-- FC 后端根据字段识别结果中的 `supplierName` 读取钉盘缓存并按供应商名称精确匹配。
-- 仅回填当前合同字段中的空值，不覆盖报价单、用户额外信息或字段确认中已有的值。
-- 用户点击生成合同时，FC 后端应把最终确认的乙方抬头信息写回 `supplier-cache.xlsx`；同名供应商更新用户确认字段，不存在则追加新行。
+- FC 后端根据字段识别结果中的 `supplierName` 实时调用用友 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体使用 `condition.simpleVOs = [{ field: "name", op: "eq", value1: supplierName }]`，并通过 `partParam.vendorbanks.data = "*,openaccountbank.name"` 请求银行子表。
+- 仅命中唯一可用供应商时自动覆盖乙方抬头字段；未命中、多条命中或接口失败时返回 `supplierPatch.matched=false` 和稳定 `reason`，不阻塞字段确认。
+- 用友返回的乙方抬头信息作为权威数据，可覆盖 `supplierName`、`supplierTaxNo`、`supplierAddress`、`supplierPhone`、`supplierBank`、`supplierAccount` 等字段。
+- 银行账户优先选择 `defaultbank=true` 且 `stopstatus=false` 的记录，否则选择第一条未停用账户。
+- 若用友缺少税号、地址、电话、开户行或银行账号等合同需要的抬头字段，`missingYonbipFields` 应列出缺失字段，前端提示用户到用友系统补充供应商抬头信息或先手动填写。
+- FC 后端不生成、不下载、不上传 `supplier-cache.xlsx`，不在本地或钉盘长期保存供应商档案。
+
+### 6.6 已废弃：同步用友供应商
+
+```http
+POST /api/suppliers/sync
+Authorization: Bearer <agentAccessToken>
+```
+
+该接口不属于当前正式主路径，前端不再展示同步入口。供应商抬头改为字段识别阶段实时只读查询用友档案。
 
 ## 7. SDK 使用约束
 
@@ -497,6 +453,7 @@ Authorization: Bearer <agentAccessToken>
 | --- | --- |
 | `GET /api/contracts/{contractId}/download` | 合同成功上传钉盘后通过钉盘文件信息下载，不暴露本地合同下载 |
 | BFF 代理 `/api` | 纯 FC 同域部署，前端带短期凭证直接调用同域业务接口 |
+| `POST /api/suppliers/sync` | 供应商抬头改为字段识别阶段实时只读查询用友，不再维护 `supplier-cache.xlsx` |
 
 ## 9. 当前实现差距
 
@@ -506,4 +463,4 @@ Authorization: Bearer <agentAccessToken>
 | 业务请求路径 | 前端同域调用 FC 业务接口 | 已改为相对路径 + `Authorization: Bearer` | 部署时确认自定义域名指向单个 FC 服务 |
 | 合同交付 | FC 后端使用钉盘官方新版 SDK 返回钉盘文件信息，前端通过 FC 下载合同 | 已返回 `dingDrive` 和 `download` 结构，并通过 `/api/dingdrive/download` 下载 | 继续确认钉盘下载信息接口在真实环境的权限配置 |
 | 图片 OCR | FC 后端解析图片报价单 | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |
-| 供应商同步 | FC 后端分页读取用友供应商档案，生成 `.xlsx` 缓存文件并上传钉盘 | 已接入 `POST /api/suppliers/sync` | 需配置 YonBIP 密钥并在真实环境验证分页、限流和钉盘文件权限 |
+| 用友抬头回填 | 字段识别后按乙方名称实时查询用友供应商档案，并以用友返回信息覆盖乙方抬头字段 | 已替换供应商缓存同步链路 | 需在真实 YonBIP 环境验证名称精确查询、银行子表和缺失字段提示 |

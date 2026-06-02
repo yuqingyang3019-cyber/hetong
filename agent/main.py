@@ -51,35 +51,21 @@ except ImportError:
 try:
     from . import dingtalk_oapi
     from .dingdrive import (
-        download_supplier_cache_from_dingdrive,
         get_contract_download_info,
         upload_contract_to_dingdrive,
-        upload_supplier_cache_to_dingdrive,
     )
     from .storage_cleanup import remove_contract_files, remove_upload
     from .yonyou_vendor import (
-        apply_supplier_patch,
-        read_supplier_cache_xlsx,
-        supplier_patch_from_cache,
-        supplier_row_from_render_data,
-        sync_suppliers_to_xlsx,
-        upsert_confirmed_supplier_row,
-        write_supplier_cache_xlsx,
+        apply_yonbip_supplier_patch,
+        supplier_patch_from_yonbip,
     )
 except ImportError:
     import dingtalk_oapi  # type: ignore[no-redef]
-    from dingdrive import download_supplier_cache_from_dingdrive  # type: ignore[no-redef]
     from dingdrive import get_contract_download_info  # type: ignore[no-redef]
     from dingdrive import upload_contract_to_dingdrive  # type: ignore[no-redef]
-    from dingdrive import upload_supplier_cache_to_dingdrive  # type: ignore[no-redef]
     from storage_cleanup import remove_contract_files, remove_upload  # type: ignore[no-redef]
-    from yonyou_vendor import apply_supplier_patch  # type: ignore[no-redef]
-    from yonyou_vendor import read_supplier_cache_xlsx  # type: ignore[no-redef]
-    from yonyou_vendor import supplier_patch_from_cache  # type: ignore[no-redef]
-    from yonyou_vendor import supplier_row_from_render_data  # type: ignore[no-redef]
-    from yonyou_vendor import sync_suppliers_to_xlsx  # type: ignore[no-redef]
-    from yonyou_vendor import upsert_confirmed_supplier_row  # type: ignore[no-redef]
-    from yonyou_vendor import write_supplier_cache_xlsx  # type: ignore[no-redef]
+    from yonyou_vendor import apply_yonbip_supplier_patch  # type: ignore[no-redef]
+    from yonyou_vendor import supplier_patch_from_yonbip  # type: ignore[no-redef]
 
 
 app = FastAPI(title="合同生成 Agent")
@@ -839,70 +825,6 @@ def extract_quote_text(upload_id: str, current_user: dict[str, Any]) -> tuple[di
     return upload, quote_text, parser
 
 
-def load_supplier_cache_rows(current_user: dict[str, Any] | None) -> tuple[list[dict[str, Any]], dict[str, Any] | None, Path | None]:
-    cache_path = DRAFTS_DIR / f"{new_id('supplier_cache')}.xlsx"
-    cache_file = download_supplier_cache_from_dingdrive(cache_path, current_user)
-    if not cache_file:
-        return [], None, None
-    return read_supplier_cache_xlsx(cache_path), cache_file, cache_path
-
-
-def remove_temp_path(path: Path | None) -> None:
-    if path and path.exists():
-        try:
-            path.unlink()
-        except Exception as exc:
-            log_warning("temp file cleanup failed", filePath=str(path), error=str(exc))
-
-
-def patch_supplier_fields_from_cache(extracted: dict[str, Any], current_user: dict[str, Any] | None) -> dict[str, Any]:
-    cache_path: Path | None = None
-    try:
-        rows, cache_file, cache_path = load_supplier_cache_rows(current_user)
-        if not rows:
-            return {"matched": False, "patch": {}, "reason": "cache_not_found"}
-        patch = supplier_patch_from_cache(extracted, rows)
-        changed = apply_supplier_patch(extracted, patch)
-        patch["appliedFields"] = sorted(changed)
-        if cache_file:
-            patch["cacheFileId"] = cache_file.get("fileId")
-        return patch
-    finally:
-        remove_temp_path(cache_path)
-
-
-def write_confirmed_supplier_to_cache(render_data: dict[str, Any], current_user: dict[str, Any] | None) -> dict[str, Any]:
-    supplier_row = supplier_row_from_render_data(render_data)
-    if not supplier_row:
-        return {"updated": False, "added": False, "reason": "missing_supplier_name"}
-
-    cache_path: Path | None = None
-    output_path = DRAFTS_DIR / f"{new_id('supplier_cache_write')}.xlsx"
-    try:
-        rows, _cache_file, cache_path = load_supplier_cache_rows(current_user)
-        merged_rows, result = upsert_confirmed_supplier_row(rows, supplier_row)
-        if not result.get("updated") and not result.get("added"):
-            return result
-        manifest = {
-            "syncedAt": datetime.now().isoformat(timespec="seconds"),
-            "sourceApi": "contract-confirmed-supplier",
-            "existingCacheCount": len(rows),
-            "cacheVendorCount": len(merged_rows),
-        }
-        write_supplier_cache_xlsx(output_path, merged_rows, manifest)
-        ding_drive = upload_supplier_cache_to_dingdrive(output_path, current_user)
-        result["dingDrive"] = {
-            "spaceId": ding_drive.get("spaceId"),
-            "fileId": ding_drive.get("fileId"),
-            "fileName": ding_drive.get("fileName"),
-            "filePath": ding_drive.get("filePath"),
-        }
-        return result
-    finally:
-        remove_temp_path(cache_path)
-        remove_temp_path(output_path)
-
-
 def generate_contract(
     upload_id: str,
     template_type: str,
@@ -1030,27 +952,6 @@ def generate_contract(
             elapsedMs=elapsed_ms(upload_start),
         )
 
-        supplier_cache_writeback: dict[str, Any] | None = None
-        if has_confirmed_data:
-            try:
-                supplier_cache_writeback = write_confirmed_supplier_to_cache(render_data, current_user)
-                log_info(
-                    "confirmed supplier cache writeback finished",
-                    uploadId=upload_id,
-                    templateType=config.type,
-                    supplierName=supplier_cache_writeback.get("supplierName"),
-                    added=supplier_cache_writeback.get("added"),
-                    updated=supplier_cache_writeback.get("updated"),
-                )
-            except Exception as exc:
-                supplier_cache_writeback = {"updated": False, "added": False, "error": str(exc)}
-                log_warning(
-                    "confirmed supplier cache writeback failed",
-                    uploadId=upload_id,
-                    templateType=config.type,
-                    error=str(exc),
-                )
-
         draft = {
             "upload": upload,
             "templateType": config.type,
@@ -1063,7 +964,6 @@ def generate_contract(
             "contractPath": str(contract_path),
             "dingDrive": ding_drive,
             "attachmentMode": attachment_mode,
-            "supplierCacheWriteback": supplier_cache_writeback,
         }
         (DRAFTS_DIR / f"{contract_id}.json").write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
         removed_paths = remove_upload(upload)
@@ -1408,19 +1308,24 @@ async def preview_quote_fields_api(
 
     supplier_patch: dict[str, Any] = {"matched": False, "patch": {}, "reason": "not_attempted"}
     try:
-        supplier_patch = patch_supplier_fields_from_cache(extracted, current_user)
+        supplier_patch = supplier_patch_from_yonbip(extracted)
+        overwritten = apply_yonbip_supplier_patch(extracted, supplier_patch)
+        supplier_patch["appliedFields"] = sorted(overwritten)
+        supplier_patch["overwrittenFields"] = sorted(overwritten)
         log_info(
-            "field preview supplier cache patch finished",
+            "field preview yonbip supplier patch finished",
             uploadId=upload_id,
             templateType=config.type,
+            source=supplier_patch.get("source"),
             matched=supplier_patch.get("matched"),
-            patchedFields=supplier_patch.get("appliedFields") or supplier_patch.get("patchedFields"),
+            overwrittenFields=supplier_patch.get("overwrittenFields"),
+            missingYonbipFields=supplier_patch.get("missingYonbipFields"),
             reason=supplier_patch.get("reason"),
         )
     except Exception as exc:
-        supplier_patch = {"matched": False, "patch": {}, "reason": "cache_error", "error": str(exc)}
+        supplier_patch = {"source": "yonbip", "matched": False, "patch": {}, "reason": "lookup_error", "error": str(exc)}
         log_warning(
-            "field preview supplier cache patch failed",
+            "field preview yonbip supplier patch failed",
             uploadId=upload_id,
             templateType=config.type,
             error=str(exc),
@@ -1525,72 +1430,7 @@ async def generate_contract_api(request: Request, current_user: dict = Depends(g
 
 @app.post("/api/suppliers/sync")
 def sync_suppliers_api(current_user: dict = Depends(get_current_user)) -> dict:
-    start = time.perf_counter()
-    cache_path: Path | None = None
-    existing_cache_path: Path | None = None
-    try:
-        log_info("supplier sync start", dingtalkUserId=current_user.get("userid"))
-        existing_rows, existing_cache_file, existing_cache_path = load_supplier_cache_rows(current_user)
-        sync_result = sync_suppliers_to_xlsx(DRAFTS_DIR, existing_rows)
-        cache_path = sync_result["path"]
-        file_name = str(sync_result["fileName"])
-        ding_drive = upload_supplier_cache_to_dingdrive(cache_path, current_user)
-        log_info(
-            "supplier sync finished",
-            fileName=file_name,
-            sourceRecordCount=sync_result.get("sourceRecordCount"),
-            uniqueVendorCount=sync_result.get("uniqueVendorCount"),
-            existingCacheFound=bool(existing_cache_file),
-            addedVendorCount=sync_result.get("addedVendorCount"),
-            cacheVendorCount=sync_result.get("cacheVendorCount"),
-            elapsedMs=elapsed_ms(start),
-        )
-        return {
-            "ok": True,
-            "fileName": file_name,
-            "sourceApi": sync_result.get("sourceApi"),
-            "sourceRecordCount": sync_result.get("sourceRecordCount"),
-            "fetchedRecordCount": sync_result.get("fetchedRecordCount"),
-            "availableRecordCount": sync_result.get("availableRecordCount"),
-            "uniqueVendorCount": sync_result.get("uniqueVendorCount"),
-            "existingCacheCount": sync_result.get("existingCacheCount"),
-            "addedVendorCount": sync_result.get("addedVendorCount"),
-            "skippedVendorCount": sync_result.get("skippedVendorCount"),
-            "cacheVendorCount": sync_result.get("cacheVendorCount"),
-            "pageSize": sync_result.get("pageSize"),
-            "syncedAt": sync_result.get("syncedAt"),
-            "dingDrive": ding_drive,
-            "download": {
-                "type": "agent_proxy",
-                "fileName": file_name,
-                "savePathHint": "文件将保存到浏览器或钉钉客户端的默认下载目录；如系统弹窗提示，请选择目标保存位置。",
-            },
-        }
-    except HTTPException:
-        raise
-    except requests.RequestException as exc:
-        log_exception("supplier sync request failed", exc, elapsedMs=elapsed_ms(start))
-        if cache_path is not None:
-            raise api_error(502, "DINGDRIVE_UPLOAD_FAILED", "供应商缓存文件上传钉盘失败，请稍后重试", str(exc)) from exc
-        raise api_error(502, "YONBIP_VENDOR_LIST_FAILED", "用友供应商分页查询失败，请稍后重试", str(exc)) from exc
-    except RuntimeError as exc:
-        message = str(exc)
-        log_exception("supplier sync failed", exc, elapsedMs=elapsed_ms(start))
-        if "access_token" in message or "YONBIP_APP" in message or "用友数据中心" in message:
-            raise api_error(502, "YONBIP_AUTH_FAILED", "用友访问凭证获取失败，请检查 YonBIP 配置", message) from exc
-        if "供应商分页查询" in message:
-            raise api_error(502, "YONBIP_VENDOR_LIST_FAILED", "用友供应商分页查询失败，请稍后重试", message) from exc
-        raise api_error(500, "SUPPLIER_SYNC_FAILED", "供应商同步失败，请稍后重试", message) from exc
-    except Exception as exc:
-        log_exception("supplier sync unexpected failed", exc, elapsedMs=elapsed_ms(start))
-        raise api_error(500, "SUPPLIER_SYNC_FAILED", "供应商同步失败，请稍后重试", str(exc)) from exc
-    finally:
-        if cache_path and cache_path.exists():
-            try:
-                cache_path.unlink()
-            except Exception as exc:
-                log_warning("supplier cache cleanup failed", filePath=str(cache_path), error=str(exc))
-        remove_temp_path(existing_cache_path)
+    raise api_error(410, "SUPPLIER_SYNC_DEPRECATED", "供应商同步已停用，字段识别后会实时查询用友供应商档案")
 
 
 @app.post("/api/dingdrive/download")

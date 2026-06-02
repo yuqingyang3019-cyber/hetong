@@ -87,8 +87,6 @@ jobs:
       YONBIP_GATEWAY_URL: ${{ secrets.YONBIP_GATEWAY_URL }}
       YONBIP_TOKEN_URL: ${{ secrets.YONBIP_TOKEN_URL }}
       YONBIP_TENANT_ID: ${{ secrets.YONBIP_TENANT_ID }}
-      YONBIP_ORG_ID: ${{ secrets.YONBIP_ORG_ID }}
-      YONBIP_VENDOR_PAGE_SIZE: ${{ secrets.YONBIP_VENDOR_PAGE_SIZE }}
       APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
       AGENT_ALLOWED_ORIGINS: ${{ secrets.AGENT_ALLOWED_ORIGINS }}
     concurrency:
