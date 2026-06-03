@@ -161,6 +161,10 @@
     {
       "key": "arrivalPaymentRate",
       "label": "到货款比例"
+    },
+    {
+      "key": "paymentTermsOverride",
+      "label": "付款期限覆盖内容"
     }
   ],
   "tables": {

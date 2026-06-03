@@ -11,12 +11,6 @@ const tableModeInputs = Array.from(document.querySelectorAll("input[name='tableM
 const tableAttachmentMode = document.querySelector("#tableAttachmentMode");
 const fieldPreviewSummary = document.querySelector("#fieldPreviewSummary");
 const contractPreviewEl = document.querySelector("#contractPreview");
-const drawingAttachmentPanel = document.querySelector("#drawingAttachmentPanel");
-const drawingDropzone = document.querySelector("#drawingDropzone");
-const drawingFile = document.querySelector("#drawingFile");
-const drawingFileNameText = document.querySelector("#drawingFileNameText");
-const confirmDrawingUploadButton = document.querySelector("#confirmDrawingUploadButton");
-const removeDrawingButton = document.querySelector("#removeDrawingButton");
 const templateType = document.querySelector("#templateType");
 const taskCreatePanel = document.querySelector("#taskCreatePanel");
 const openCreateTaskButton = document.querySelector("#openCreateTaskButton");
@@ -61,7 +55,6 @@ const supportedQuoteFileExtensions = new Set([
   ".tiff",
   ".webp",
 ]);
-const supportedDrawingFileExtensions = new Set([".dxf"]);
 const templateSchemaFiles = Object.freeze({
   caigouhetong: "caigouhetong",
   nonStandardNoInstall: "non-standard-no-install",
@@ -86,6 +79,8 @@ const fieldGroupDefinitions = Object.freeze([
 ]);
 const taxCalculationFieldKeys = Object.freeze(["totalAmount", "amountWithoutTax", "taxAmount", "taxRate"]);
 const deliveryCalculationFieldKeys = Object.freeze(["deliveryDays"]);
+const PAYMENT_TERMS_OVERRIDE_TEMPLATE = "caigouhetong";
+const PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride";
 const busyStatuses = new Set(["uploading", "parsing", "identifying", "generating"]);
 const completedStatuses = new Set(["completed"]);
 const templateSchemaCache = new Map();
@@ -98,7 +93,6 @@ let activeTaskId = null;
 let drawerOpen = false;
 let drawerLastFocus = null;
 let uploadDragDepth = 0;
-let drawingDragDepth = 0;
 let createPanelOpen = false;
 let pendingQuoteFile = null;
 
@@ -226,13 +220,6 @@ function validateQuoteFile(file) {
   if (!file) return "请先选择报价单文件。";
   if (file.size === 0) return "报价单文件为空，请重新选择文件。";
   if (!supportedQuoteFileExtensions.has(quoteFileExtension(file))) return "仅支持 PDF、Excel 和常见图片格式报价单。";
-  return "";
-}
-
-function validateDrawingFile(file) {
-  if (!file) return "请先选择 DXF 图纸。";
-  if (file.size === 0) return "图纸文件为空，请重新选择文件。";
-  if (!supportedDrawingFileExtensions.has(quoteFileExtension(file))) return "仅支持 DXF 图纸附件。";
   return "";
 }
 
@@ -798,25 +785,6 @@ async function uploadQuote(file) {
   return response.json();
 }
 
-async function uploadDrawing(file) {
-  const data = await fileToDataUrl(file);
-  const response = await fetchAgent("/api/drawings", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      originalName: file.name || "drawing.dxf",
-      mimeType: file.type || "application/dxf",
-      size: file.size,
-      data,
-    }),
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.message || body.detail || body.error || "上传图纸失败");
-  }
-  return response.json();
-}
-
 async function parseUploadedQuote(uploadId, taskTemplateType) {
   const response = await fetchAgent(`/api/uploads/${encodeURIComponent(uploadId)}/quote-text`, {
     method: "POST",
@@ -909,7 +877,6 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
       extractedData,
       tableMode: effectiveTableMode(task),
       attachmentMode: task.attachmentMode || task.fieldPreview?.attachmentMode || null,
-      drawingUploadId: task.drawingUpload?.id || null,
       dingtalkUser: userPreview,
     }),
   });
@@ -1032,11 +999,34 @@ function entryPreviewStats(entry, extractedData) {
   return stats;
 }
 
+function supportsPaymentTermsOverride(templateType) {
+  return templateType === PAYMENT_TERMS_OVERRIDE_TEMPLATE;
+}
+
+function previewScalars(scalars) {
+  return (Array.isArray(scalars) ? scalars : []).filter((field) => field?.key !== PAYMENT_TERMS_OVERRIDE_KEY);
+}
+
+function cloneExtractedData(data) {
+  return JSON.parse(JSON.stringify(data && typeof data === "object" ? data : {}));
+}
+
+function buildExtractedDataForGenerate(task) {
+  const extractedData = cloneExtractedData(task.fieldPreview?.extractedData);
+  const overrideText = String(task.paymentTermsOverrideText || "").trim();
+  if (supportsPaymentTermsOverride(task.templateType) && overrideText) {
+    extractedData[PAYMENT_TERMS_OVERRIDE_KEY] = overrideText;
+  } else {
+    delete extractedData[PAYMENT_TERMS_OVERRIDE_KEY];
+  }
+  return extractedData;
+}
+
 function createScalarFieldGroups(scalars, extractedData) {
-  const schemaKeys = new Set(scalars.map((field) => field.key));
+  const schemaKeys = new Set(previewScalars(scalars).map((field) => field.key));
   const renderedDateGroups = new Set();
   const groups = new Map(fieldGroupDefinitions.map((group) => [group.id, { ...group, entries: [], stats: { recognized: 0, missing: 0 } }]));
-  scalars.forEach((field) => {
+  previewScalars(scalars).forEach((field) => {
     const dateGroup = dateFieldGroupForKey(field.key);
     if (dateGroup && dateFieldGroupCanRender(dateGroup, schemaKeys)) {
       if (renderedDateGroups.has(dateGroup.id)) return;
@@ -1323,8 +1313,7 @@ function setRecognizedClass(element, value) {
 
 function calculatePreviewStats(schema, extractedData) {
   const stats = { recognized: 0, missing: 0 };
-  const scalars = Array.isArray(schema?.scalars) ? schema.scalars : [];
-  scalars.forEach((field) => markPreviewStat(stats, getByDotPath(extractedData, field.key)));
+  previewScalars(schema?.scalars).forEach((field) => markPreviewStat(stats, getByDotPath(extractedData, field.key)));
 
   Object.entries(schema?.tables || {}).forEach(([tableName, tableDef]) => {
     const columns = Array.isArray(tableDef?.columns) ? tableDef.columns : [];
@@ -1405,107 +1394,6 @@ function setTaskTableMode(task, mode) {
   task.attachmentMode = task.attachmentMode || null;
   task.fieldPreview = null;
   setTaskStatus(task, "needs_text", "表格处理方式已更新，请重新识别字段。");
-}
-
-function syncDrawingAttachmentControls(task) {
-  if (!drawingAttachmentPanel) return;
-  const show = Boolean(task?.fieldPreview?.extractedData && task.status !== "completed");
-  drawingAttachmentPanel.hidden = !show;
-  if (!show) {
-    if (drawingFile) drawingFile.value = "";
-    drawingAttachmentPanel.classList.remove("has-file", "has-upload", "is-dragging");
-    return;
-  }
-  const busy = taskIsBusy(task);
-  if (drawingFile) drawingFile.disabled = busy;
-  if (drawingDropzone) {
-    drawingDropzone.classList.toggle("is-disabled", busy);
-    drawingDropzone.setAttribute("aria-disabled", busy ? "true" : "false");
-  }
-  drawingAttachmentPanel.classList.toggle("has-file", Boolean(task.pendingDrawingFile));
-  drawingAttachmentPanel.classList.toggle("has-upload", Boolean(task.drawingUpload));
-  if (confirmDrawingUploadButton) {
-    confirmDrawingUploadButton.hidden = Boolean(task.drawingUpload);
-    confirmDrawingUploadButton.disabled = busy || !task.pendingDrawingFile;
-  }
-  if (removeDrawingButton) {
-    removeDrawingButton.hidden = !task.drawingUpload;
-    removeDrawingButton.disabled = busy;
-  }
-  if (drawingFileNameText) {
-    if (task.drawingUpload) {
-      drawingFileNameText.textContent = `已上传：${task.drawingUpload.originalName || task.drawingUpload.fileName || "DXF 图纸"}，生成合同时会追加为图纸附件。`;
-    } else if (task.pendingDrawingFile) {
-      drawingFileNameText.textContent = `待上传：${task.pendingDrawingFile.name || "DXF 图纸"}（${formatFileSize(task.pendingDrawingFile.size)}），请确认上传。`;
-    } else {
-      drawingFileNameText.textContent = "未上传图纸附件。可选择或拖拽 .dxf 文件。";
-    }
-  }
-}
-
-function setDrawingDragging(isDragging) {
-  drawingAttachmentPanel?.classList.toggle("is-dragging", isDragging);
-}
-
-function setPendingDrawingFile(task, file) {
-  if (!task || taskIsBusy(task)) return false;
-  const validationMessage = validateDrawingFile(file);
-  if (validationMessage) {
-    setStatus(validationMessage, "error");
-    task.pendingDrawingFile = null;
-    if (drawingFile) drawingFile.value = "";
-    syncDrawingAttachmentControls(task);
-    return false;
-  }
-  task.pendingDrawingFile = file;
-  task.drawingUpload = null;
-  appendTaskLog(task, `已选择图纸附件：${file.name}（${formatFileSize(file.size)}），等待确认上传。`);
-  setStatus("图纸已选择，请点击“确认上传图纸”。", "info");
-  syncDrawingAttachmentControls(task);
-  renderTaskList();
-  updateActionAvailability();
-  return true;
-}
-
-function handleDrawingDragOver(event) {
-  event.preventDefault();
-  if (!event.dataTransfer) return;
-  const task = activeTask();
-  event.dataTransfer.dropEffect = task && !taskIsBusy(task) ? "copy" : "none";
-}
-
-function handleDrawingDragEnter(event) {
-  handleDrawingDragOver(event);
-  const task = activeTask();
-  if (!task || taskIsBusy(task)) return;
-  drawingDragDepth += 1;
-  setDrawingDragging(true);
-}
-
-function handleDrawingDragLeave(event) {
-  event.preventDefault();
-  drawingDragDepth = Math.max(0, drawingDragDepth - 1);
-  if (drawingDragDepth === 0) setDrawingDragging(false);
-}
-
-function handleDrawingDrop(event) {
-  event.preventDefault();
-  drawingDragDepth = 0;
-  setDrawingDragging(false);
-
-  const task = activeTask();
-  if (!task || taskIsBusy(task)) {
-    setStatus("当前任务处理中，暂不能上传图纸附件。", "error");
-    return;
-  }
-
-  const files = Array.from(event.dataTransfer?.files || []);
-  if (files.length !== 1) {
-    setStatus("每次只能拖入一份 DXF 图纸。", "error");
-    return;
-  }
-
-  setPendingDrawingFile(task, files[0]);
 }
 
 function syncFieldPreviewSummary(stats) {
@@ -1680,9 +1568,30 @@ function createContractDateField(group, stats, prefix = "", options = {}) {
   return field;
 }
 
-function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview) {
-  const scalars = Array.isArray(schema?.scalars) ? schema.scalars : [];
-  if (!scalars.length) return;
+function appendPaymentTermsOverrideField(groupBody, task, canEditPreview) {
+  const field = createEl("div", "contract-preview-field payment-terms-override-field is-recognized");
+  field.append(createEl("span", "contract-field-label", "付款期限覆盖（可选）"));
+  field.append(createEl(
+    "p",
+    "payment-terms-override-hint",
+    "填写后将替换合同「付款期限」下 5 条默认条款；留空则使用下方付款比例字段生成。",
+  ));
+  const editor = createEl("textarea", "contract-field-editor payment-terms-override-editor");
+  editor.rows = 6;
+  editor.value = task.paymentTermsOverrideText || "";
+  editor.placeholder = "可粘贴自定义付款期限条款，支持多行";
+  editor.disabled = !canEditPreview;
+  editor.setAttribute("aria-label", "付款期限覆盖内容");
+  editor.addEventListener("input", () => {
+    task.paymentTermsOverrideText = editor.value;
+  });
+  field.append(editor);
+  groupBody.append(field);
+}
+
+function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview, task) {
+  const scalars = previewScalars(schema?.scalars);
+  if (!scalars.length && !supportsPaymentTermsOverride(task?.templateType)) return;
 
   const section = createEl("section", "contract-preview-section");
   section.append(createEl("h4", "", "合同条款字段"));
@@ -1709,6 +1618,10 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
     );
     groupHeader.append(title, stat);
     const groupBody = createEl("div", "contract-preview-flow");
+
+    if (supportsPaymentTermsOverride(task?.templateType) && group.id === "payment") {
+      appendPaymentTermsOverrideField(groupBody, task, canEditPreview);
+    }
 
     group.entries.forEach((entry) => {
       if (entry.type === "date") {
@@ -1842,14 +1755,13 @@ async function renderFieldPreview(task) {
         : "以下内容按模板字段顺序生成，可直接修改后生成合同。"),
     );
     paper.append(title);
-    renderScalarPreview(paper, previewSchema, extractedData, stats, autoFilledKeys, canEditPreview);
+    renderScalarPreview(paper, previewSchema, extractedData, stats, autoFilledKeys, canEditPreview, task);
     renderSupplierPatchNotice(paper, task.fieldPreview?.supplierPatch);
     renderTablePreview(paper, previewSchema, extractedData, stats, canEditPreview);
     contractPreviewEl.append(paper);
   }
 
   syncFieldPreviewSummary(stats);
-  syncDrawingAttachmentControls(task);
   if (fieldPreviewCard) fieldPreviewCard.hidden = false;
 }
 
@@ -1863,7 +1775,6 @@ function resetFieldPreviewUi() {
     contractPreviewEl.textContent = "";
     contractPreviewEl.append(createEl("p", "empty-state", "等待字段识别。"));
   }
-  syncDrawingAttachmentControls(null);
 }
 
 function clearActiveEditor() {
@@ -1923,11 +1834,10 @@ function createTask(file) {
     quoteText: "",
     extraInfo: "",
     fieldPreview: null,
+    paymentTermsOverrideText: "",
     attachmentMode: null,
     tableMode: "auto",
     upload: null,
-    drawingUpload: null,
-    pendingDrawingFile: null,
     download: null,
     downloadState: "ready",
     failedStep: null,
@@ -2221,7 +2131,6 @@ async function syncActiveTaskEditor() {
   } else {
     resetFieldPreviewUi();
   }
-  syncDrawingAttachmentControls(task);
   updateActionAvailability();
 }
 
@@ -2303,44 +2212,12 @@ async function runGenerateTask(task) {
     task.download = null;
     task.downloadState = "ready";
     setTaskStatus(task, "generating", "正在生成合同并上传钉盘...");
-    await generateContract(task, task.quoteText, task.extraInfo, task.fieldPreview.extractedData);
+    await generateContract(task, task.quoteText, task.extraInfo, buildExtractedDataForGenerate(task));
     setTaskStatus(task, "completed", "合同已生成并存入钉盘。");
   } catch (error) {
     const message = formatError(error);
     setTaskStatus(task, "failed", `处理失败：${message}`, "generate");
     setStatus(message, "error");
-  }
-}
-
-function handleDrawingFileChange() {
-  const task = activeTask();
-  const file = drawingFile?.files?.[0];
-  if (!task || !file) return;
-  setPendingDrawingFile(task, file);
-  if (drawingFile) drawingFile.value = "";
-}
-
-async function confirmDrawingUpload(task) {
-  const file = task?.pendingDrawingFile;
-  if (!task || !file || taskIsBusy(task)) return;
-  try {
-    appendTaskLog(task, `开始上传图纸附件：${file.name}`);
-    setStatus("正在上传图纸附件，请稍候。", "info");
-    task.drawingUpload = await uploadDrawing(file);
-    task.pendingDrawingFile = null;
-    appendTaskLog(task, `图纸附件已上传：${task.drawingUpload.originalName}`);
-    setStatus("图纸附件已上传，生成合同时会追加到 Word 合同末尾。", "success");
-  } catch (error) {
-    const message = formatError(error);
-    task.drawingUpload = null;
-    task.pendingDrawingFile = file;
-    setStatus(message, "error");
-    appendTaskLog(task, `图纸附件上传失败：${message}`);
-  } finally {
-    if (drawingFile) drawingFile.value = "";
-    syncDrawingAttachmentControls(task);
-    renderTaskList();
-    updateActionAvailability();
   }
 }
 
@@ -2438,31 +2315,6 @@ generateButton.addEventListener("click", async () => {
   }
   task.quoteText = quoteText;
   await runGenerateTask(task);
-});
-
-drawingDropzone?.addEventListener("dragenter", handleDrawingDragEnter);
-drawingDropzone?.addEventListener("dragover", handleDrawingDragOver);
-drawingDropzone?.addEventListener("dragleave", handleDrawingDragLeave);
-drawingDropzone?.addEventListener("drop", handleDrawingDrop);
-drawingFile?.addEventListener("change", handleDrawingFileChange);
-
-confirmDrawingUploadButton?.addEventListener("click", () => {
-  const task = activeTask();
-  if (!task?.pendingDrawingFile) {
-    setStatus("请先选择或拖拽 DXF 图纸。", "error");
-    return;
-  }
-  void confirmDrawingUpload(task);
-});
-
-removeDrawingButton?.addEventListener("click", () => {
-  const task = activeTask();
-  if (!task || taskIsBusy(task)) return;
-  task.drawingUpload = null;
-  task.pendingDrawingFile = null;
-  syncDrawingAttachmentControls(task);
-  appendTaskLog(task, "已移除图纸附件，本次生成不会追加图纸。");
-  setStatus("已移除图纸附件。");
 });
 
 closeTaskDrawerButton?.addEventListener("click", closeTaskDrawer);

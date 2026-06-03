@@ -14,15 +14,20 @@ except ModuleNotFoundError:
         return timezone.utc
 
 from docx import Document
-from docx.shared import Inches
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.shared import Pt
 from docxtpl import DocxTemplate, RichText
 
 from .config import CONTRACTS_DIR, TemplateConfig, ensure_storage, template_docx_path
 
 RICH_TEXT_FONT = "eastAsia:仿宋"
 RICH_TEXT_SIZE = 21
+TABLE_TEXT_FONT = "仿宋"
+TABLE_TEXT_SIZE_PT = 10.5
 UNDERLINE_BLANK = "        "
 LogFunc = Callable[..., None]
+PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
 NO_UNDERLINE_SCALAR_KEYS = {
     "signYear",
     "signMonth",
@@ -44,6 +49,7 @@ NO_UNDERLINE_SCALAR_KEYS = {
     "supplierRepresentativeEmail",
     "buyerAuthorizedRepresentative",
     "supplierAuthorizedRepresentative",
+    PAYMENT_TERMS_OVERRIDE_KEY,
 }
 
 
@@ -71,6 +77,17 @@ def _rich_text(value: Any, label: str, blank_missing: bool = False, underline: b
         text = UNDERLINE_BLANK
     rich_text = RichText()
     rich_text.add(text, font=RICH_TEXT_FONT, size=RICH_TEXT_SIZE, underline=underline)
+    return rich_text
+
+
+def _rich_text_multiline(value: Any, label: str, blank_missing: bool = False) -> RichText:
+    text = _value_for_context(value, label, blank_missing)
+    rich_text = RichText()
+    lines = text.splitlines() or [""]
+    for index, line in enumerate(lines):
+        if index:
+            rich_text.add("\n", font=RICH_TEXT_FONT, size=RICH_TEXT_SIZE, underline=False)
+        rich_text.add(line, font=RICH_TEXT_FONT, size=RICH_TEXT_SIZE, underline=False)
     return rich_text
 
 
@@ -110,13 +127,22 @@ def merge_render_data(patch: dict[str, Any], config: TemplateConfig) -> dict[str
 def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, blank_missing: bool = False) -> dict[str, Any]:
     scalar_labels = {field["key"]: field["label"] for field in config.schema.get("scalars", [])}
     context: dict[str, Any] = {}
+    override_text = _stringify(render_data.get(PAYMENT_TERMS_OVERRIDE_KEY)).strip()
+    context["hasPaymentTermsOverride"] = bool(override_text)
     for key in config.scalar_keys:
+        if key == PAYMENT_TERMS_OVERRIDE_KEY:
+            continue
         context[key] = _rich_text(
             render_data.get(key),
             scalar_labels.get(key, key),
             blank_missing,
             underline=key not in NO_UNDERLINE_SCALAR_KEYS,
         )
+    context[PAYMENT_TERMS_OVERRIDE_KEY] = (
+        _rich_text_multiline(override_text, scalar_labels.get(PAYMENT_TERMS_OVERRIDE_KEY, "付款期限覆盖内容"), blank_missing)
+        if override_text
+        else RichText()
+    )
     for table_name, columns in config.table_bindings.items():
         table_def = config.schema.get("tables", {}).get(table_name, {})
         labels = {column["key"]: column["label"] for column in table_def.get("columns", [])}
@@ -155,6 +181,32 @@ def _log(logger: LogFunc | None, message: str, **meta: Any) -> None:
         logger(message, **meta)
 
 
+def _set_run_font(run: Any, font_name: str = TABLE_TEXT_FONT, size_pt: float = TABLE_TEXT_SIZE_PT) -> None:
+    run.font.name = font_name
+    run.font.size = Pt(size_pt)
+    run._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), font_name)
+
+
+def _format_template_tables(path: Path) -> None:
+    doc = Document(str(path))
+    for table in doc.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    for run in paragraph.runs:
+                        _set_run_font(run)
+    doc.save(str(path))
+
+
+def _add_attachment_heading(doc: Any, text: str, level: int) -> None:
+    paragraph = doc.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if level == 1 else WD_ALIGN_PARAGRAPH.LEFT
+    run = paragraph.add_run(text)
+    run.bold = True
+    _set_run_font(run, size_pt=14 if level == 1 else TABLE_TEXT_SIZE_PT)
+
+
 def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None, logger: LogFunc | None = None) -> None:
     sheets = quote_attachment.get("sheets") if isinstance(quote_attachment, dict) else None
     if not isinstance(sheets, list):
@@ -162,7 +214,7 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None,
     start = time.perf_counter()
     doc = Document(str(path))
     doc.add_page_break()
-    doc.add_heading("附件：报价单明细", level=1)
+    _add_attachment_heading(doc, "附件：报价单明细", level=1)
     appended_sheet_count = 0
     for sheet in sheets:
         rows = _non_empty_rows(sheet.get("rows") if isinstance(sheet, dict) else None)
@@ -170,7 +222,7 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None,
             continue
         appended_sheet_count += 1
         sheet_name = str(sheet.get("name") or "Sheet") if isinstance(sheet, dict) else "Sheet"
-        doc.add_heading(sheet_name, level=2)
+        _add_attachment_heading(doc, sheet_name, level=2)
         max_cols = max(len(row) for row in rows)
         table = doc.add_table(rows=len(rows), cols=max_cols)
         table.style = "Table Grid"
@@ -181,37 +233,12 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None,
     _log(logger, "quote attachment appended", outputFile=path.name, sheetCount=appended_sheet_count, elapsedMs=_elapsed_ms(start))
 
 
-def append_drawing_attachment(path: Path, drawing_attachment: dict[str, Any] | None, logger: LogFunc | None = None) -> None:
-    if not isinstance(drawing_attachment, dict):
-        return
-    image_path = Path(str(drawing_attachment.get("imagePath") or ""))
-    if not image_path.exists():
-        return
-    start = time.perf_counter()
-    original_name = str(drawing_attachment.get("originalName") or "图纸")
-    doc = Document(str(path))
-    doc.add_page_break()
-    doc.add_heading("附件：图纸", level=1)
-    doc.add_paragraph(original_name)
-    doc.add_picture(str(image_path), width=Inches(6.5))
-    doc.save(str(path))
-    _log(
-        logger,
-        "drawing attachment appended",
-        outputFile=path.name,
-        imagePath=str(image_path),
-        originalName=original_name,
-        elapsedMs=_elapsed_ms(start),
-    )
-
-
 def render_contract(
     render_data: dict[str, Any],
     config: TemplateConfig,
     contract_id: str,
     blank_missing: bool = False,
     quote_attachment: dict[str, Any] | None = None,
-    drawing_attachment: dict[str, Any] | None = None,
     logger: LogFunc | None = None,
 ) -> Path:
     ensure_storage()
@@ -221,7 +248,7 @@ def render_contract(
     doc = DocxTemplate(str(template_path))
     doc.render(build_docxtpl_context(render_data, config, blank_missing=blank_missing))
     doc.save(str(output_path))
+    _format_template_tables(output_path)
     _log(logger, "contract template rendered", outputFile=output_path.name, templateType=config.type, elapsedMs=_elapsed_ms(template_start))
     append_quote_attachment(output_path, quote_attachment, logger)
-    append_drawing_attachment(output_path, drawing_attachment, logger)
     return output_path
