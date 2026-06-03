@@ -682,7 +682,7 @@ def test_contract_generate_uses_confirmed_quote_text() -> None:
         )
 
     assert response.status_code == 200
-    generate_contract.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", None, None, ANY, "auto", None)
+    generate_contract.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", None, None, ANY, "auto")
     assert response.json()["dingDrive"]["fileId"] == "file1"
 
 
