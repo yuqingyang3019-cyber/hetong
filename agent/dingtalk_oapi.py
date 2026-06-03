@@ -8,6 +8,8 @@ import threading
 import time
 from typing import Any
 
+import requests
+
 _lock = threading.Lock()
 _cached_access_tokens: dict[str, tuple[str, float]] = {}
 
@@ -76,27 +78,6 @@ def _contact_models() -> Any:
     except ImportError as exc:
         raise RuntimeError("未安装 alibabacloud_dingtalk Contact SDK，无法构造钉钉用户详情请求") from exc
     return contact_models
-
-
-def _openapi_client() -> Any:
-    try:
-        from alibabacloud_tea_openapi.client import Client as OpenApiClient
-        from alibabacloud_tea_openapi import models as open_api_models
-    except ImportError as exc:
-        raise RuntimeError("未安装 alibabacloud_tea_openapi，无法调用钉钉免登接口") from exc
-
-    config = open_api_models.Config()
-    config.protocol = "https"
-    config.endpoint = "oapi.dingtalk.com"
-    return OpenApiClient(config)
-
-
-def _openapi_models() -> Any:
-    try:
-        from alibabacloud_tea_openapi import models as open_api_models
-    except ImportError as exc:
-        raise RuntimeError("未安装 alibabacloud_tea_openapi，无法构造钉钉免登请求") from exc
-    return open_api_models
 
 
 def _runtime_options() -> Any:
@@ -172,32 +153,28 @@ def _normalize_api_error(body: Any) -> None:
 
 
 def get_log_free_user_info(code: str, app_access_token: str) -> dict[str, Any]:
-    """Resolve a DingTalk log-free auth code to userid using the official OpenAPI SDK."""
-    openapi_models = _openapi_models()
-    request = openapi_models.OpenApiRequest(
-        query={"access_token": app_access_token},
-        body={"code": code},
-    )
-    params = openapi_models.Params(
-        action="OapiV2UserGetuserinfo",
-        version="topapi_2.0",
-        protocol="HTTP",
-        pathname="/topapi/v2/user/getuserinfo",
-        method="POST",
-        auth_type="Anonymous",
-        style="ROA",
-        req_body_type="json",
-        body_type="json",
-    )
-    response = _openapi_client().execute(params, request, _runtime_options())
-    body = _response_body(response)
-    body_map = body.to_map() if hasattr(body, "to_map") else body
+    """Resolve a DingTalk log-free auth code to userid."""
+    try:
+        response = requests.post(
+            "https://oapi.dingtalk.com/topapi/v2/user/getuserinfo",
+            params={"access_token": app_access_token},
+            json={"code": code},
+            timeout=30,
+        )
+        response.raise_for_status()
+        body_map = response.json()
+    except requests.RequestException as exc:
+        raise RuntimeError("调用钉钉免登接口失败") from exc
+    except ValueError as exc:
+        raise RuntimeError("钉钉免登接口返回非 JSON 响应") from exc
+    if not isinstance(body_map, dict):
+        raise RuntimeError("钉钉免登接口返回格式异常")
     _normalize_api_error(body_map)
     result = _get_value(body_map, "result") or body_map
     userid = str(_get_value(result, "userid", "userId", "user_id") or "").strip()
     if not userid:
         raise RuntimeError("钉钉免登接口未返回 userid")
-    return result if isinstance(result, dict) else result.to_map()
+    return result if isinstance(result, dict) else {}
 
 
 def get_contact_detail(userid: str, app_access_token: str) -> dict[str, Any]:
