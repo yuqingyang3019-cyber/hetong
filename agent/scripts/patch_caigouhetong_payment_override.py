@@ -1,4 +1,4 @@
-"""One-off patch: add docxtpl conditional for payment terms override in caigouhetong.docx."""
+"""Patch caigouhetong payment override block and paragraph indentation."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -20,8 +20,17 @@ def insert_paragraph_after(paragraph: Paragraph, text: str = "") -> Paragraph:
     return new_para
 
 
-def main() -> None:
-    doc = Document(str(DOCX_PATH))
+def find_paragraph(doc: Document, exact_text: str) -> Paragraph | None:
+    for paragraph in doc.paragraphs:
+        if paragraph.text.strip() == exact_text:
+            return paragraph
+    return None
+
+
+def ensure_override_block(doc: Document) -> None:
+    if find_paragraph(doc, "{% if hasPaymentTermsOverride %}") and find_paragraph(doc, "{{r paymentTermsOverride }}"):
+        return
+
     heading_idx = start_idx = end_idx = None
     for index, paragraph in enumerate(doc.paragraphs):
         text = paragraph.text.strip()
@@ -47,6 +56,26 @@ def main() -> None:
             break
     insert_paragraph_after(end_p, "{% endif %}")
 
+
+def sync_override_indent(doc: Document) -> None:
+    override_p = find_paragraph(doc, "{{r paymentTermsOverride }}")
+    first_payment_item = None
+    for paragraph in doc.paragraphs:
+        if paragraph.text.strip().startswith("（1）预付款"):
+            first_payment_item = paragraph
+            break
+    if override_p is None or first_payment_item is None:
+        raise RuntimeError("未找到付款期限覆盖段或默认付款条款段")
+    override_format = override_p.paragraph_format
+    source_format = first_payment_item.paragraph_format
+    override_format.left_indent = source_format.left_indent
+    override_format.first_line_indent = source_format.first_line_indent
+
+
+def main() -> None:
+    doc = Document(str(DOCX_PATH))
+    ensure_override_block(doc)
+    sync_override_indent(doc)
     doc.save(str(DOCX_PATH))
     print(f"Patched {DOCX_PATH}")
 

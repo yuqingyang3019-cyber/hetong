@@ -1200,6 +1200,41 @@ def test_render_contract_centers_template_table_text() -> None:
         output_path.unlink(missing_ok=True)
 
 
+def test_render_contract_payment_terms_override_keeps_indent() -> None:
+    config = get_template_config("caigouhetong")
+    base_data = {
+        "contractNo": "HT-001",
+        "supplierName": "供应商A",
+        "projectName": "项目A",
+        "items": [{"index": "1", "name": "阀门", "spec": "DN50", "unit": "台", "quantity": "2", "unitPrice": "10", "totalPrice": "20", "tagNo": "T1"}],
+    }
+    override_data = merge_render_data({
+        **base_data,
+        "paymentTermsOverride": "（1）首付款：合同总价的30%。\n（2）到货款：合同总价的70%。",
+    }, config)
+    output_with_override = render_contract(override_data, config, "test_payment_override_indent")
+    try:
+        with ZipFile(output_with_override) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+        assert "首付款：合同总价的30%。" in xml
+        assert "到货款：合同总价的70%。" in xml
+        assert "预付款：合同总价的" not in xml
+        override_paragraph = re.search(r"(<w:p[\s\S]*?首付款：合同总价的30%。[\s\S]*?</w:p>)", xml)
+        assert override_paragraph
+        assert re.search(r'<w:ind [^>]*w:left="559"', override_paragraph.group(1))
+    finally:
+        output_with_override.unlink(missing_ok=True)
+
+    default_data = merge_render_data(base_data, config)
+    output_without_override = render_contract(default_data, config, "test_payment_default_terms")
+    try:
+        with ZipFile(output_without_override) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+        assert "预付款：合同总价的" in xml
+    finally:
+        output_without_override.unlink(missing_ok=True)
+
+
 @pytest.mark.parametrize("template_type", ["caigouhetong", "nonStandardNoInstall", "nonStandardWithInstall"])
 def test_equipment_item_rows_render_vertically(template_type: str) -> None:
     config = get_template_config(template_type)
