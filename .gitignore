@@ -20,8 +20,6 @@ agent/storage/uploads/*
 !agent/storage/uploads/.gitkeep
 agent/storage/contracts/*
 !agent/storage/contracts/.gitkeep
-agent/storage/drawings/*
-!agent/storage/drawings/.gitkeep
 frontend/dist/
 agent/static/
 

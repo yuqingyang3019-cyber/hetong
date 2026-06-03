@@ -139,22 +139,6 @@
                 <p class="hint" id="fieldPreviewSummary">请按合同字段顺序确认识别结果，可直接修改字段；空字段生成到 Word 合同时会留空。</p>
               </div>
               <div id="contractPreview" class="contract-preview-shell"></div>
-              <section id="drawingAttachmentPanel" class="drawing-attachment-panel" hidden>
-                <div class="drawing-attachment-header">
-                  <strong>图纸附件 <small>可选</small></strong>
-                  <p class="hint">上传 DXF 图纸后，生成合同时会转换为图片并追加到 Word 合同末尾。</p>
-                </div>
-                <label id="drawingDropzone" class="drawing-dropzone" for="drawingFile">
-                  <span class="drawing-dropzone-title">选择或拖拽 DXF 图纸</span>
-                  <span class="drawing-dropzone-meta">仅支持 .dxf；选中文件后请点击确认上传。</span>
-                </label>
-                <input id="drawingFile" class="visually-hidden" type="file" accept=".dxf" />
-                <p id="drawingFileNameText" class="hint">未上传图纸附件。</p>
-                <div class="drawing-attachment-actions">
-                  <button id="confirmDrawingUploadButton" class="btn-primary task-secondary-button" type="button" disabled>确认上传图纸</button>
-                  <button id="removeDrawingButton" class="btn-secondary task-secondary-button" type="button" hidden>移除图纸</button>
-                </div>
-              </section>
             </section>
 
             <section id="taskLogCard" class="drawer-panel task-log-card" hidden>

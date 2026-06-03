@@ -15,12 +15,13 @@ from zipfile import ZipFile
 
 import pytest
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from fastapi.testclient import TestClient
 
 from agent.contract import llm as contract_llm
-from agent.contract.config import DRAWINGS_DIR, TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
+from agent.contract.config import TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
-from agent.contract.render import append_drawing_attachment, append_quote_attachment, build_docxtpl_context, merge_render_data, render_contract
+from agent.contract.render import append_quote_attachment, build_docxtpl_context, merge_render_data, render_contract
 from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, contract_file_name, generate_contract, sign_session_payload
 from agent.yonyou_vendor import (
     EXPLICIT_VENDOR_DATA_FIELDS,
@@ -40,10 +41,6 @@ BMP_BYTES = b"BMquote-image"
 GIF_BYTES = b"GIF89aquote-image"
 TIFF_BYTES = b"II*\x00quote-image"
 WEBP_BYTES = b"RIFF\x0c\x00\x00\x00WEBPquote-image"
-DXF_BYTES = b"0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nEOF\n"
-VALID_PNG_BYTES = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-)
 
 
 def xlsx_bytes(rows: list[list[object]], sheet_name: str = "报价") -> bytes:
@@ -92,26 +89,6 @@ def upload_quote(
 
 def upload_record(upload_id: str) -> dict:
     return json.loads((UPLOADS_DIR / f"{upload_id}.json").read_text(encoding="utf-8"))
-
-
-def upload_drawing(
-    original_name: str = "drawing.dxf",
-    mime_type: str = "application/dxf",
-    content: bytes = DXF_BYTES,
-    headers: dict[str, str] | None = None,
-) -> dict:
-    response = client.post(
-        "/api/drawings",
-        headers=headers or agent_auth_header(),
-        json={
-            "originalName": original_name,
-            "mimeType": mime_type,
-            "size": len(content),
-            "data": base64.b64encode(content).decode("ascii"),
-        },
-    )
-    assert response.status_code == 200
-    return response.json()
 
 
 def test_health() -> None:
@@ -208,31 +185,6 @@ def test_upload_rejects_unknown_image_signature() -> None:
     body = response.json()
     assert body["code"] == "INVALID_ARGUMENT"
     assert "文件内容与格式不匹配" in body["message"]
-
-
-def test_upload_drawing_accepts_dxf() -> None:
-    body = upload_drawing()
-
-    assert body["ok"] is True
-    assert body["mimeType"] == "application/dxf"
-    record = json.loads((DRAWINGS_DIR / f"{body['id']}.json").read_text(encoding="utf-8"))
-    assert record["originalName"] == "drawing.dxf"
-
-
-def test_upload_drawing_rejects_non_dxf_extension() -> None:
-    response = client.post(
-        "/api/drawings",
-        headers=agent_auth_header(),
-        json={
-            "originalName": "drawing.dwg",
-            "mimeType": "application/octet-stream",
-            "size": len(DXF_BYTES),
-            "data": base64.b64encode(DXF_BYTES).decode("ascii"),
-        },
-    )
-
-    assert response.status_code == 400
-    assert response.json()["code"] == "UNSUPPORTED_DRAWING_TYPE"
 
 
 def test_upload_rejects_mismatched_file_signature() -> None:
@@ -905,7 +857,7 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
         draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"})
 
     llm.assert_not_called()
-    render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True, quote_attachment=None, drawing_attachment=None, logger=ANY)
+    render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True, quote_attachment=None, logger=ANY)
     assert draft["extractedData"] == extracted
     assert draft["extraInfoLength"] == len("补充信息")
     assert "supplierCacheWriteback" not in draft
@@ -1062,44 +1014,6 @@ def test_generate_contract_uploads_dingdrive_and_removes_process_files() -> None
     assert not list(UPLOADS_DIR.parent.glob(f"**/{draft['contractId']}.json"))
 
 
-def test_generate_contract_appends_drawing_and_removes_drawing_files() -> None:
-    upload_id = upload_quote()["id"]
-    drawing = upload_drawing()
-    drawing_record_path = DRAWINGS_DIR / f"{drawing['id']}.json"
-    drawing_record = json.loads(drawing_record_path.read_text(encoding="utf-8"))
-    rendered_path = Path("agent/storage/contracts/with-drawing.docx")
-    extracted = {"supplierName": "供应商A", "items": []}
-
-    def fake_convert(source: Path, output: Path, **kwargs: Any) -> Path:
-        assert source == Path(drawing_record["path"])
-        assert kwargs["logger"] is not None
-        assert kwargs["log_meta"]["drawingId"] == drawing["id"]
-        output.write_bytes(VALID_PNG_BYTES)
-        return output
-
-    def fake_render(*args, **kwargs) -> Path:
-        rendered_path.parent.mkdir(parents=True, exist_ok=True)
-        rendered_path.write_bytes(b"docx")
-        return rendered_path
-
-    with patch("agent.main.render_dxf_to_png", side_effect=fake_convert) as convert, patch(
-        "agent.main.render_contract",
-        side_effect=fake_render,
-    ) as render_contract_mock, patch(
-        "agent.main.upload_contract_to_dingdrive",
-        return_value={"spaceId": "space1", "fileId": "file1", "fileName": "with-drawing.docx", "filePath": "/with-drawing.docx"},
-    ):
-        draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"}, drawing_upload_id=drawing["id"])
-
-    convert.assert_called_once()
-    drawing_attachment = render_contract_mock.call_args.kwargs["drawing_attachment"]
-    assert drawing_attachment["originalName"] == "drawing.dxf"
-    assert draft["drawing"]["id"] == drawing["id"]
-    assert not Path(drawing_record["path"]).exists()
-    assert not Path(drawing_attachment["imagePath"]).exists()
-    assert not drawing_record_path.exists()
-
-
 def test_contract_download_payload_returns_dingdrive_download_info() -> None:
     draft = {
         "contractId": "contract_test",
@@ -1208,21 +1122,51 @@ def test_append_quote_attachment_adds_excel_tables(tmp_path: Path) -> None:
     assert "阀门" in table_text
 
 
-def test_append_drawing_attachment_adds_picture(tmp_path: Path) -> None:
+def test_append_quote_attachment_does_not_require_heading_styles(tmp_path: Path) -> None:
     docx_path = tmp_path / "contract.docx"
-    image_path = tmp_path / "drawing.png"
-    image_path.write_bytes(VALID_PNG_BYTES)
     Document().save(docx_path)
 
-    append_drawing_attachment(docx_path, {"imagePath": str(image_path), "originalName": "drawing.dxf"})
+    append_quote_attachment(docx_path, {
+        "sheets": [{
+            "name": "报价",
+            "rows": [["品名", "数量"], ["阀门", "2"]],
+        }],
+    })
 
     document = Document(docx_path)
-    paragraph_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
-    assert "附件：图纸" in paragraph_text
-    assert "drawing.dxf" in paragraph_text
-    with ZipFile(docx_path) as docx:
-        media_files = [name for name in docx.namelist() if name.startswith("word/media/")]
-    assert media_files
+    assert any(paragraph.text == "附件：报价单明细" for paragraph in document.paragraphs)
+    assert any(paragraph.text == "报价" for paragraph in document.paragraphs)
+
+
+def test_render_contract_centers_template_table_text() -> None:
+    config = get_template_config("caigouhetong")
+    render_data = merge_render_data({
+        "contractNo": "HT-001",
+        "supplierName": "供应商A",
+        "projectName": "项目A",
+        "items": [{"index": "1", "name": "阀门", "spec": "DN50", "unit": "台", "quantity": "2", "unitPrice": "10", "totalPrice": "20", "tagNo": "T1"}],
+    }, config)
+
+    output_path = render_contract(render_data, config, "test_table_format")
+    try:
+        document = Document(output_path)
+        paragraphs = [
+            paragraph
+            for table in document.tables
+            for row in table.rows
+            for cell in row.cells
+            for paragraph in cell.paragraphs
+            if "阀门" in paragraph.text
+        ]
+        assert paragraphs
+        paragraph = paragraphs[0]
+        assert paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
+        formatted_runs = [run for run in paragraph.runs if run.text.strip()]
+        assert formatted_runs
+        assert formatted_runs[0].font.name == "仿宋"
+        assert formatted_runs[0].font.size.pt == 10.5
+    finally:
+        output_path.unlink(missing_ok=True)
 
 
 @pytest.mark.parametrize("template_type", ["caigouhetong", "nonStandardNoInstall", "nonStandardWithInstall"])
@@ -1312,7 +1256,7 @@ def test_contract_generate_passes_confirmed_extracted_data() -> None:
         )
 
     assert response.status_code == 200
-    generate_contract_mock.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", "补充信息", extracted, ANY, "auto", None)
+    generate_contract_mock.assert_called_once_with(upload_id, "caigouhetong", "用户确认文本", "补充信息", extracted, ANY, "auto")
     assert response.json()["download"]["type"] == "agent_proxy"
 
 
