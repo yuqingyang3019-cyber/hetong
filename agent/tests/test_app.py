@@ -1152,6 +1152,7 @@ def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Pa
     with ZipFile(docx_path) as docx:
         xml = docx.read("word/document.xml").decode("utf-8")
     assert "<w:tblBorders>" in xml
+    assert '<w:tblLayout w:type="autofit"' in xml
     assert '<w:insideH w:val="single"' in xml
     assert '<w:insideV w:val="single"' in xml
 
@@ -1168,6 +1169,18 @@ def test_render_contract_centers_template_table_text() -> None:
     output_path = render_contract(render_data, config, "test_table_format")
     try:
         document = Document(output_path)
+        header_tables = document.tables[:2]
+        assert len(header_tables) == 2
+        for table in header_tables:
+            header_paragraphs = [
+                paragraph
+                for row in table.rows
+                for cell in row.cells
+                for paragraph in cell.paragraphs
+                if paragraph.text.strip()
+            ]
+            assert header_paragraphs
+            assert all(paragraph.alignment == WD_ALIGN_PARAGRAPH.LEFT for paragraph in header_paragraphs)
         paragraphs = [
             paragraph
             for table in document.tables

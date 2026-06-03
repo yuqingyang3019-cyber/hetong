@@ -26,6 +26,7 @@ RICH_TEXT_FONT = "eastAsia:仿宋"
 RICH_TEXT_SIZE = 21
 TABLE_TEXT_FONT = "仿宋"
 TABLE_TEXT_SIZE_PT = 10.5
+LEFT_ALIGNED_HEADER_TABLE_COUNT = 2
 UNDERLINE_BLANK = "        "
 LogFunc = Callable[..., None]
 PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
@@ -190,11 +191,16 @@ def _set_run_font(run: Any, font_name: str = TABLE_TEXT_FONT, size_pt: float = T
 
 def _format_template_tables(path: Path) -> None:
     doc = Document(str(path))
-    for table in doc.tables:
+    for table_index, table in enumerate(doc.tables):
+        alignment = (
+            WD_ALIGN_PARAGRAPH.LEFT
+            if table_index < LEFT_ALIGNED_HEADER_TABLE_COUNT
+            else WD_ALIGN_PARAGRAPH.CENTER
+        )
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
-                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    paragraph.alignment = alignment
                     for run in paragraph.runs:
                         _set_run_font(run)
     doc.save(str(path))
@@ -226,6 +232,15 @@ def _set_table_grid_borders(table: Any) -> None:
         element.set(qn("w:color"), "000000")
 
 
+def _set_table_autofit_layout(table: Any) -> None:
+    tbl_pr = table._tbl.tblPr
+    layout = tbl_pr.first_child_found_in("w:tblLayout")
+    if layout is None:
+        layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(layout)
+    layout.set(qn("w:type"), "autofit")
+
+
 def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None, logger: LogFunc | None = None) -> None:
     sheets = quote_attachment.get("sheets") if isinstance(quote_attachment, dict) else None
     if not isinstance(sheets, list):
@@ -244,6 +259,7 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None,
         _add_attachment_heading(doc, sheet_name, level=2)
         max_cols = max(len(row) for row in rows)
         table = doc.add_table(rows=len(rows), cols=max_cols)
+        _set_table_autofit_layout(table)
         _set_table_grid_borders(table)
         for row_index, row in enumerate(rows):
             for col_index in range(max_cols):
