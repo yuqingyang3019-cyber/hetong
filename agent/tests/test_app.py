@@ -1145,20 +1145,16 @@ def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Pa
     append_quote_attachment(docx_path, {
         "sheets": [{
             "name": "报价",
-            "rows": [["品名", "技术说明", "数量"], ["阀门", "铸铁过流部件，配套法兰胶垫螺栓", "2"]],
+            "rows": [["品名", "数量"], ["阀门", "2"]],
         }],
     })
 
     with ZipFile(docx_path) as docx:
         xml = docx.read("word/document.xml").decode("utf-8")
     assert "<w:tblBorders>" in xml
-    assert '<w:tblLayout w:type="fixed"' in xml
-    assert re.search(r'<w:pgSz [^>]*w:orient="landscape"', xml)
+    assert '<w:tblLayout w:type="autofit"' in xml
     assert '<w:insideH w:val="single"' in xml
     assert '<w:insideV w:val="single"' in xml
-    cell_widths = [int(value) for value in re.findall(r'<w:tcW w:type="dxa" w:w="(\d+)"', xml)]
-    assert cell_widths[1] > cell_widths[0]
-    assert cell_widths[1] > cell_widths[2]
 
 
 def test_render_contract_centers_template_table_text() -> None:

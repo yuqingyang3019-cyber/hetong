@@ -9,6 +9,7 @@ const extraInfoText = document.querySelector("#extraInfoText");
 const tableModeField = document.querySelector("#tableModeField");
 const tableModeInputs = Array.from(document.querySelectorAll("input[name='tableMode']"));
 const tableAttachmentMode = document.querySelector("#tableAttachmentMode");
+const tableModeStatus = document.querySelector("#tableModeStatus");
 const fieldPreviewSummary = document.querySelector("#fieldPreviewSummary");
 const contractPreviewEl = document.querySelector("#contractPreview");
 const templateType = document.querySelector("#templateType");
@@ -1372,13 +1373,30 @@ function taskAttachmentModeText(task) {
     || "当前已选择附件模式：AI 只识别合同主字段，完整报价明细会追加到 Word 合同末尾。";
 }
 
+function syncTableModeStatus(task, disabled = false) {
+  if (!tableModeStatus) return;
+  const selectedAttachment = tableModeUsesAttachment(task);
+  tableModeStatus.classList.toggle("is-attachment", selectedAttachment);
+  tableModeStatus.classList.toggle("is-default", !selectedAttachment);
+  if (selectedAttachment) {
+    tableModeStatus.textContent = disabled
+      ? "当前使用附件模式：已进入下一阶段，如需切换请返回“确认文本”并重新识别字段。"
+      : "当前使用附件模式：AI 只识别主字段，Excel 明细将作为附件追加到合同末尾。";
+    return;
+  }
+  tableModeStatus.textContent = disabled
+    ? "当前使用默认模式：已进入下一阶段，如需切换请返回“确认文本”并重新识别字段。"
+    : "当前使用默认模式：表格内容将按模板识别并填入合同。";
+}
+
 function syncTableModeControls(task) {
   if (!tableModeField || !tableAttachmentMode) return;
   const show = Boolean(task && quoteIsExcelTask(task) && task.status !== "completed");
   tableModeField.hidden = !show;
   if (!show) {
     tableAttachmentMode.checked = false;
-    tableAttachmentMode.closest(".table-mode-option")?.classList.remove("is-selected");
+    tableAttachmentMode.closest(".table-mode-option")?.classList.remove("is-selected", "is-disabled");
+    if (tableModeStatus) tableModeStatus.textContent = "";
     return;
   }
   const selectedMode = effectiveTableMode(task);
@@ -1386,6 +1404,8 @@ function syncTableModeControls(task) {
   tableAttachmentMode.checked = selectedMode === "attachment";
   tableAttachmentMode.disabled = disabled;
   tableAttachmentMode.closest(".table-mode-option")?.classList.toggle("is-selected", tableAttachmentMode.checked);
+  tableAttachmentMode.closest(".table-mode-option")?.classList.toggle("is-disabled", disabled);
+  syncTableModeStatus(task, disabled);
 }
 
 function setTaskTableMode(task, mode) {
@@ -1408,6 +1428,13 @@ function syncFieldPreviewSummary(stats) {
   const attachmentText = taskAttachmentModeText(task);
   if (attachmentText) {
     fieldPreviewSummary.append(document.createElement("br"), document.createTextNode(attachmentText));
+  }
+  if (task && supportsPaymentTermsOverride(task.templateType)) {
+    const overrideText = String(task.paymentTermsOverrideText || "").trim();
+    const overrideHint = overrideText
+      ? "已填写付款期限覆盖：生成时将替换默认 5 条付款条款。"
+      : "未填写付款期限覆盖：生成时将使用付款比例字段生成默认条款。";
+    fieldPreviewSummary.append(document.createElement("br"), document.createTextNode(overrideHint));
   }
   if (stats.missing) {
     const jumpButton = createEl("button", "field-preview-jump", "定位第一个待填写字段");
@@ -1576,16 +1603,28 @@ function appendPaymentTermsOverrideField(groupBody, task, canEditPreview) {
     "payment-terms-override-hint",
     "填写后将替换合同「付款期限」下 5 条默认条款；留空则使用下方付款比例字段生成。",
   ));
+  const status = createEl("p", "payment-terms-override-status");
+  status.setAttribute("aria-live", "polite");
   const editor = createEl("textarea", "contract-field-editor payment-terms-override-editor");
   editor.rows = 6;
   editor.value = task.paymentTermsOverrideText || "";
   editor.placeholder = "可粘贴自定义付款期限条款，支持多行";
   editor.disabled = !canEditPreview;
   editor.setAttribute("aria-label", "付款期限覆盖内容");
+  const syncStatus = () => {
+    const hasValue = Boolean(String(editor.value || "").trim());
+    field.classList.toggle("has-value", hasValue);
+    status.textContent = hasValue
+      ? "已填写自定义付款期限：生成时会覆盖默认 5 条付款条款。"
+      : "未填写自定义付款期限：将按付款比例字段自动生成默认条款。";
+  };
   editor.addEventListener("input", () => {
     task.paymentTermsOverrideText = editor.value;
+    syncStatus();
+    refreshFieldPreviewSummary(task.fieldPreview?.schema || {}, task.fieldPreview?.extractedData || {});
   });
-  field.append(editor);
+  syncStatus();
+  field.append(status, editor);
   groupBody.append(field);
 }
 

@@ -989,45 +989,107 @@ button:disabled {
 }
 
 .table-mode-field {
-  background: rgba(248, 250, 252, 0.8);
-  border: 1px solid rgba(148, 163, 184, 0.28);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.9)),
+    var(--color-card);
+  border: 1px solid rgba(15, 108, 189, 0.24);
   border-radius: var(--radius-md);
   display: grid;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
-  padding: 10px 12px;
+  padding: 12px;
 }
 
 .table-mode-field[hidden] {
   display: none;
 }
 
+.table-mode-intro {
+  color: var(--color-secondary);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.table-mode-compare {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.table-mode-compare-item {
+  background: rgba(241, 245, 249, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 4px;
+  min-height: 76px;
+  padding: 8px 10px;
+}
+
+.table-mode-compare-item strong {
+  color: var(--color-primary);
+  font-size: 0.8125rem;
+}
+
+.table-mode-compare-item small {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
 .table-mode-option {
   align-items: flex-start;
   background: var(--color-card);
-  border: 1px solid rgba(148, 163, 184, 0.24);
+  border: 1px solid rgba(148, 163, 184, 0.32);
   border-radius: var(--radius-sm);
   cursor: pointer;
   display: flex;
-  gap: 8px;
-  padding: 8px;
+  gap: 10px;
+  min-height: var(--touch-min);
+  padding: 10px;
   transition:
+    background-color var(--duration) var(--ease-out),
     border-color var(--duration) var(--ease-out),
-    box-shadow var(--duration) var(--ease-out);
+    box-shadow var(--duration) var(--ease-out),
+    transform var(--duration) var(--ease-out);
+}
+
+.table-mode-option:hover {
+  border-color: rgba(15, 108, 189, 0.34);
+  box-shadow: var(--shadow-sm);
+}
+
+.table-mode-option:focus-within {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px rgba(15, 108, 189, 0.2);
 }
 
 .table-mode-option.is-selected {
+  background: rgba(15, 108, 189, 0.06);
   border-color: rgba(15, 108, 189, 0.34);
   box-shadow: 0 0 0 3px rgba(15, 108, 189, 0.09);
 }
 
 .table-mode-option input {
-  margin-top: 3px;
+  accent-color: var(--color-accent);
+  margin-top: 4px;
 }
 
 .table-mode-option span {
   display: grid;
-  gap: 2px;
+  gap: 3px;
+}
+
+.table-mode-option.is-disabled {
+  background: rgba(241, 245, 249, 0.72);
+  border-color: rgba(148, 163, 184, 0.24);
+  box-shadow: none;
+  cursor: not-allowed;
+  opacity: 0.85;
+  transform: none;
 }
 
 .table-mode-option strong {
@@ -1039,6 +1101,28 @@ button:disabled {
   color: var(--color-text-muted);
   font-weight: 700;
   line-height: 1.45;
+}
+
+.table-mode-status {
+  background: rgba(15, 108, 189, 0.06);
+  border: 1px dashed rgba(15, 108, 189, 0.34);
+  border-radius: var(--radius-sm);
+  color: var(--color-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.45;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.table-mode-status.is-attachment {
+  background: rgba(5, 150, 105, 0.08);
+  border-color: rgba(5, 150, 105, 0.3);
+  color: #047857;
+}
+
+.table-mode-status.is-default {
+  color: #0f548c;
 }
 
 .field-preview-summary {
@@ -1340,19 +1424,51 @@ button:disabled {
 }
 
 .payment-terms-override-field {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.92)),
+    var(--color-card);
+  border: 1px solid rgba(15, 108, 189, 0.22);
+  border-left-width: 4px;
   border-left-color: rgba(15, 108, 189, 0.72);
+  box-shadow: var(--shadow-sm);
+  gap: 10px;
+  padding: 10px;
 }
 
 .payment-terms-override-hint {
   color: var(--color-text-muted);
-  font-size: 0.75rem;
+  font-size: 0.78rem;
   font-weight: 700;
   line-height: 1.45;
   margin: 0;
 }
 
+.payment-terms-override-status {
+  background: rgba(241, 245, 249, 0.82);
+  border: 1px dashed rgba(148, 163, 184, 0.4);
+  border-radius: 10px;
+  color: var(--color-secondary);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.45;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.payment-terms-override-field.has-value .payment-terms-override-status {
+  background: rgba(5, 150, 105, 0.1);
+  border-color: rgba(5, 150, 105, 0.35);
+  color: #047857;
+}
+
 .payment-terms-override-editor {
-  min-height: 120px;
+  background: rgba(255, 255, 255, 0.95);
+  min-height: 132px;
+}
+
+.payment-terms-override-editor:focus-visible {
+  border-color: rgba(5, 150, 105, 0.72);
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.2);
 }
 
 .contract-field-badge {
@@ -1397,6 +1513,12 @@ button:disabled {
   padding: 6px 8px;
   text-align: left;
   vertical-align: top;
+}
+
+@media (max-width: 640px) {
+  .table-mode-compare {
+    grid-template-columns: 1fr;
+  }
 }
 
 .contract-preview-table th {

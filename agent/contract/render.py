@@ -14,11 +14,10 @@ except ModuleNotFoundError:
         return timezone.utc
 
 from docx import Document
-from docx.enum.section import WD_ORIENT, WD_SECTION
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Emu, Pt
+from docx.shared import Pt
 from docxtpl import DocxTemplate, RichText
 
 from .config import CONTRACTS_DIR, TemplateConfig, ensure_storage, template_docx_path
@@ -28,8 +27,6 @@ RICH_TEXT_SIZE = 21
 TABLE_TEXT_FONT = "仿宋"
 TABLE_TEXT_SIZE_PT = 10.5
 LEFT_ALIGNED_HEADER_TABLE_COUNT = 2
-ATTACHMENT_COLUMN_MIN_WEIGHT = 4
-ATTACHMENT_COLUMN_MAX_WEIGHT = 28
 UNDERLINE_BLANK = "        "
 LogFunc = Callable[..., None]
 PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
@@ -235,45 +232,13 @@ def _set_table_grid_borders(table: Any) -> None:
         element.set(qn("w:color"), "000000")
 
 
-def _display_width(text: str) -> int:
-    return sum(2 if ord(char) > 127 else 1 for char in text)
-
-
-def _set_table_layout(table: Any, layout_type: str) -> None:
+def _set_table_autofit_layout(table: Any) -> None:
     tbl_pr = table._tbl.tblPr
     layout = tbl_pr.first_child_found_in("w:tblLayout")
     if layout is None:
         layout = OxmlElement("w:tblLayout")
         tbl_pr.append(layout)
-    layout.set(qn("w:type"), layout_type)
-
-
-def _make_attachment_section_landscape(doc: Any) -> Any:
-    section = doc.add_section(WD_SECTION.NEW_PAGE)
-    section.orientation = WD_ORIENT.LANDSCAPE
-    section.page_width, section.page_height = section.page_height, section.page_width
-    return section
-
-
-def _attachment_column_widths(rows: list[list[str]], max_cols: int, total_width: Any) -> list[Emu]:
-    weights: list[int] = []
-    for col_index in range(max_cols):
-        column_cells = [row[col_index] if col_index < len(row) else "" for row in rows]
-        max_width = max((_display_width(cell.strip()) for cell in column_cells), default=0)
-        weight = max(ATTACHMENT_COLUMN_MIN_WEIGHT, min(max_width, ATTACHMENT_COLUMN_MAX_WEIGHT))
-        weights.append(weight)
-    total_weight = sum(weights) or max_cols
-    return [Emu(int(total_width * weight / total_weight)) for weight in weights]
-
-
-def _apply_table_column_widths(table: Any, widths: list[Emu]) -> None:
-    for col_index, width in enumerate(widths):
-        for cell in table.columns[col_index].cells:
-            cell.width = width
-            for paragraph in cell.paragraphs:
-                paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
-                for run in paragraph.runs:
-                    _set_run_font(run)
+    layout.set(qn("w:type"), "autofit")
 
 
 def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None, logger: LogFunc | None = None) -> None:
@@ -282,8 +247,7 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None,
         return
     start = time.perf_counter()
     doc = Document(str(path))
-    section = _make_attachment_section_landscape(doc)
-    available_width = section.page_width - section.left_margin - section.right_margin
+    doc.add_page_break()
     _add_attachment_heading(doc, "附件：报价单明细", level=1)
     appended_sheet_count = 0
     for sheet in sheets:
@@ -295,12 +259,11 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None,
         _add_attachment_heading(doc, sheet_name, level=2)
         max_cols = max(len(row) for row in rows)
         table = doc.add_table(rows=len(rows), cols=max_cols)
-        _set_table_layout(table, "fixed")
+        _set_table_autofit_layout(table)
         _set_table_grid_borders(table)
         for row_index, row in enumerate(rows):
             for col_index in range(max_cols):
                 table.cell(row_index, col_index).text = row[col_index] if col_index < len(row) else ""
-        _apply_table_column_widths(table, _attachment_column_widths(rows, max_cols, available_width))
     doc.save(str(path))
     _log(logger, "quote attachment appended", outputFile=path.name, sheetCount=appended_sheet_count, elapsedMs=_elapsed_ms(start))
 
