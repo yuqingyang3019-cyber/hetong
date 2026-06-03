@@ -1138,6 +1138,24 @@ def test_append_quote_attachment_does_not_require_heading_styles(tmp_path: Path)
     assert any(paragraph.text == "报价" for paragraph in document.paragraphs)
 
 
+def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Path) -> None:
+    docx_path = tmp_path / "contract.docx"
+    Document().save(docx_path)
+
+    append_quote_attachment(docx_path, {
+        "sheets": [{
+            "name": "报价",
+            "rows": [["品名", "数量"], ["阀门", "2"]],
+        }],
+    })
+
+    with ZipFile(docx_path) as docx:
+        xml = docx.read("word/document.xml").decode("utf-8")
+    assert "<w:tblBorders>" in xml
+    assert '<w:insideH w:val="single"' in xml
+    assert '<w:insideV w:val="single"' in xml
+
+
 def test_render_contract_centers_template_table_text() -> None:
     config = get_template_config("caigouhetong")
     render_data = merge_render_data({

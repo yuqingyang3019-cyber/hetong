@@ -15,6 +15,7 @@ except ModuleNotFoundError:
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
 from docxtpl import DocxTemplate, RichText
@@ -207,6 +208,24 @@ def _add_attachment_heading(doc: Any, text: str, level: int) -> None:
     _set_run_font(run, size_pt=14 if level == 1 else TABLE_TEXT_SIZE_PT)
 
 
+def _set_table_grid_borders(table: Any) -> None:
+    tbl_pr = table._tbl.tblPr
+    borders = tbl_pr.first_child_found_in("w:tblBorders")
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        tbl_pr.append(borders)
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        tag = f"w:{edge}"
+        element = borders.find(qn(tag))
+        if element is None:
+            element = OxmlElement(tag)
+            borders.append(element)
+        element.set(qn("w:val"), "single")
+        element.set(qn("w:sz"), "4")
+        element.set(qn("w:space"), "0")
+        element.set(qn("w:color"), "000000")
+
+
 def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None, logger: LogFunc | None = None) -> None:
     sheets = quote_attachment.get("sheets") if isinstance(quote_attachment, dict) else None
     if not isinstance(sheets, list):
@@ -225,7 +244,7 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None,
         _add_attachment_heading(doc, sheet_name, level=2)
         max_cols = max(len(row) for row in rows)
         table = doc.add_table(rows=len(rows), cols=max_cols)
-        table.style = "Table Grid"
+        _set_table_grid_borders(table)
         for row_index, row in enumerate(rows):
             for col_index in range(max_cols):
                 table.cell(row_index, col_index).text = row[col_index] if col_index < len(row) else ""
