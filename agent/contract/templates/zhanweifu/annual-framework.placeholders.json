@@ -23,6 +23,38 @@
       "label": "签订日"
     },
     {
+      "key": "purchaseSubject",
+      "label": "采购内容"
+    },
+    {
+      "key": "contractTermYears",
+      "label": "合同有效期（年）"
+    },
+    {
+      "key": "contractStartDate",
+      "label": "合同开始日期"
+    },
+    {
+      "key": "contractEndDate",
+      "label": "合同结束日期"
+    },
+    {
+      "key": "deliveryDays",
+      "label": "常规货期（工作日）"
+    },
+    {
+      "key": "transportMethod",
+      "label": "运输方式"
+    },
+    {
+      "key": "shipmentNoticeHours",
+      "label": "发货前通知小时数"
+    },
+    {
+      "key": "settlementCycle",
+      "label": "结算周期"
+    },
+    {
       "key": "supplierName",
       "label": "乙方名称"
     },
@@ -77,98 +109,7 @@
     {
       "key": "signatureDay",
       "label": "签署日"
-    },
-    {
-      "key": "deliveryPlace",
-      "label": "交货地址"
-    },
-    {
-      "key": "consignee",
-      "label": "收货人"
-    },
-    {
-      "key": "deliveryYear",
-      "label": "最迟到货年"
-    },
-    {
-      "key": "deliveryMonth",
-      "label": "最迟到货月"
-    },
-    {
-      "key": "deliveryDay",
-      "label": "最迟到货日"
     }
   ],
-  "tables": {
-    "items": {
-      "label": "采购订单明细",
-      "columns": [
-        {
-          "key": "index",
-          "label": "序号"
-        },
-        {
-          "key": "tagNo",
-          "label": "位号"
-        },
-        {
-          "key": "name",
-          "label": "品名"
-        },
-        {
-          "key": "spec",
-          "label": "规格型号"
-        },
-        {
-          "key": "unit",
-          "label": "单位"
-        },
-        {
-          "key": "quantity",
-          "label": "数量"
-        },
-        {
-          "key": "deliveryDays",
-          "label": "货期"
-        },
-        {
-          "key": "unitPrice",
-          "label": "单价（元）"
-        },
-        {
-          "key": "totalPrice",
-          "label": "含税金额（万元）"
-        },
-        {
-          "key": "remark",
-          "label": "备注"
-        }
-      ]
-    },
-    "priceItems": {
-      "label": "年度协议价",
-      "columns": [
-        {
-          "key": "name",
-          "label": "名称"
-        },
-        {
-          "key": "model",
-          "label": "型号"
-        },
-        {
-          "key": "unitPrice",
-          "label": "单价(元)"
-        },
-        {
-          "key": "params",
-          "label": "参数"
-        },
-        {
-          "key": "remark",
-          "label": "备注"
-        }
-      ]
-    }
-  }
+  "tables": {}
 }

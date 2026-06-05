@@ -1231,6 +1231,14 @@ def test_render_annual_framework_extended_scalars() -> None:
     config = get_template_config("annualFramework")
     render_data = merge_render_data({
         "contractNo": "AF-001",
+        "purchaseSubject": "阀门及配件",
+        "contractTermYears": "1",
+        "contractStartDate": "2026年01月01日",
+        "contractEndDate": "2026年12月31日",
+        "deliveryDays": "3",
+        "transportMethod": "快递",
+        "shipmentNoticeHours": "8",
+        "settlementCycle": "月结30天",
         "supplierName": "年度供应商",
         "supplierAddress": "杭州余杭",
         "supplierAccount": "622200000000",
@@ -1245,13 +1253,6 @@ def test_render_annual_framework_extended_scalars() -> None:
         "signatureYear": "2026",
         "signatureMonth": "06",
         "signatureDay": "05",
-        "deliveryPlace": "沃乐仓库",
-        "consignee": "赵六",
-        "deliveryYear": "2026",
-        "deliveryMonth": "07",
-        "deliveryDay": "01",
-        "items": [],
-        "priceItems": [],
     }, config)
 
     output_path = render_contract(render_data, config, "test_annual_framework_extended_scalars", blank_missing=True)
@@ -1264,12 +1265,23 @@ def test_render_annual_framework_extended_scalars() -> None:
     assert "0571-12345678" in xml
     assert "0571-87654321" in xml
     assert "lisi@example.com" in xml
-    assert "沃乐仓库" in xml
-    assert "赵六" in xml
-    assert "最迟于" in xml
-    assert "2026" in xml
-    assert "07" in xml
-    assert "01" in xml
+    assert "阀门及配件" in xml
+    assert "2026年01月01日" in xml
+    assert "2026年12月31日" in xml
+    assert "常规货期为 【" in xml
+    assert "】个工作日" in xml
+    assert "3" in xml
+    assert "运输方式为" in xml
+    assert "快递" in xml
+    assert "发货【" in xml
+    assert "】小时之前" in xml
+    assert "8" in xml
+    assert "结算周期：" in xml
+    assert "月结30天" in xml
+    assert "附件一：采购订单" not in xml
+    assert "附件二：年度协议价" not in xml
+    assert "priceItem." not in xml
+    assert "item." not in xml
 
 
 def test_render_contract_template_mode_strips_fixed_attachment_section_when_items_empty() -> None:
