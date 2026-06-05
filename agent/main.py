@@ -963,6 +963,7 @@ def generate_contract(
             config,
             contract_stem,
             blank_missing=has_confirmed_data,
+            table_mode=table_mode,
             quote_attachment=quote_attachment,
             logger=lambda message, **meta: log_info(message, uploadId=upload_id, contractId=contract_id, **meta),
         )

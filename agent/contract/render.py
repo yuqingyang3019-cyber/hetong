@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -241,21 +242,60 @@ def _set_table_autofit_layout(table: Any) -> None:
     layout.set(qn("w:type"), "autofit")
 
 
+def _strip_caigouhetong_attachment_section(path: Path, config: TemplateConfig, table_mode: str) -> None:
+    if config.type != "caigouhetong" or table_mode == "attachment":
+        return
+    doc = Document(str(path))
+    attachment_paragraph = next((paragraph for paragraph in doc.paragraphs if paragraph.text.strip() == "附件一：设备采购清单"), None)
+    if attachment_paragraph is None:
+        return
+
+    body = doc.element.body
+    attachment_element = attachment_paragraph._element
+    previous_element = attachment_element.getprevious()
+    previous_section = None
+    if previous_element is not None and previous_element.tag == qn("w:p"):
+        previous_props = previous_element.find(qn("w:pPr"))
+        if previous_props is not None:
+            previous_section = previous_props.find(qn("w:sectPr"))
+    if previous_section is not None and body.sectPr is not None:
+        body.replace(body.sectPr, deepcopy(previous_section))
+        previous_section.getparent().remove(previous_section)
+
+    removable_elements = [attachment_element]
+    cursor = attachment_element.getnext()
+    while cursor is not None and cursor.tag == qn("w:p"):
+        texts = [node.text or "" for node in cursor.iter(qn("w:t"))]
+        if any(text.strip() for text in texts):
+            break
+        removable_elements.append(cursor)
+        cursor = cursor.getnext()
+    for element in removable_elements:
+        parent = element.getparent()
+        if parent is not None:
+            parent.remove(element)
+    doc.save(str(path))
+
+
 def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None, logger: LogFunc | None = None) -> None:
     sheets = quote_attachment.get("sheets") if isinstance(quote_attachment, dict) else None
     if not isinstance(sheets, list):
         return
-    start = time.perf_counter()
-    doc = Document(str(path))
-    doc.add_page_break()
-    _add_attachment_heading(doc, "附件：报价单明细", level=1)
-    appended_sheet_count = 0
+    valid_sheets: list[tuple[str, list[list[str]]]] = []
     for sheet in sheets:
         rows = _non_empty_rows(sheet.get("rows") if isinstance(sheet, dict) else None)
         if not rows:
             continue
-        appended_sheet_count += 1
         sheet_name = str(sheet.get("name") or "Sheet") if isinstance(sheet, dict) else "Sheet"
+        valid_sheets.append((sheet_name, rows))
+    if not valid_sheets:
+        return
+
+    start = time.perf_counter()
+    doc = Document(str(path))
+    doc.add_page_break()
+    _add_attachment_heading(doc, "附件：报价单明细", level=1)
+    for sheet_name, rows in valid_sheets:
         _add_attachment_heading(doc, sheet_name, level=2)
         max_cols = max(len(row) for row in rows)
         table = doc.add_table(rows=len(rows), cols=max_cols)
@@ -265,7 +305,7 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None,
             for col_index in range(max_cols):
                 table.cell(row_index, col_index).text = row[col_index] if col_index < len(row) else ""
     doc.save(str(path))
-    _log(logger, "quote attachment appended", outputFile=path.name, sheetCount=appended_sheet_count, elapsedMs=_elapsed_ms(start))
+    _log(logger, "quote attachment appended", outputFile=path.name, sheetCount=len(valid_sheets), elapsedMs=_elapsed_ms(start))
 
 
 def render_contract(
@@ -273,6 +313,7 @@ def render_contract(
     config: TemplateConfig,
     contract_id: str,
     blank_missing: bool = False,
+    table_mode: str = "auto",
     quote_attachment: dict[str, Any] | None = None,
     logger: LogFunc | None = None,
 ) -> Path:
@@ -283,6 +324,7 @@ def render_contract(
     doc = DocxTemplate(str(template_path))
     doc.render(build_docxtpl_context(render_data, config, blank_missing=blank_missing))
     doc.save(str(output_path))
+    _strip_caigouhetong_attachment_section(output_path, config, table_mode)
     _format_template_tables(output_path)
     _log(logger, "contract template rendered", outputFile=output_path.name, templateType=config.type, elapsedMs=_elapsed_ms(template_start))
     append_quote_attachment(output_path, quote_attachment, logger)

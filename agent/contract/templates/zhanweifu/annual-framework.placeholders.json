@@ -37,6 +37,66 @@
     {
       "key": "supplierTaxNo",
       "label": "乙方税号"
+    },
+    {
+      "key": "supplierPhone",
+      "label": "乙方电话"
+    },
+    {
+      "key": "supplierFax",
+      "label": "乙方传真"
+    },
+    {
+      "key": "supplierRepresentativeName",
+      "label": "乙方联系人"
+    },
+    {
+      "key": "supplierRepresentativePhone",
+      "label": "乙方联系人电话"
+    },
+    {
+      "key": "supplierRepresentativeAddress",
+      "label": "乙方联系人地址"
+    },
+    {
+      "key": "supplierRepresentativeEmail",
+      "label": "乙方联系人邮箱"
+    },
+    {
+      "key": "supplierAuthorizedRepresentative",
+      "label": "乙方授权代表"
+    },
+    {
+      "key": "signatureYear",
+      "label": "签署年"
+    },
+    {
+      "key": "signatureMonth",
+      "label": "签署月"
+    },
+    {
+      "key": "signatureDay",
+      "label": "签署日"
+    },
+    {
+      "key": "deliveryPlace",
+      "label": "交货地址"
+    },
+    {
+      "key": "consignee",
+      "label": "收货人"
+    },
+    {
+      "key": "deliveryYear",
+      "label": "最迟到货年"
+    },
+    {
+      "key": "deliveryMonth",
+      "label": "最迟到货月"
+    },
+    {
+      "key": "deliveryDay",
+      "label": "最迟到货日"
     }
   ],
   "tables": {

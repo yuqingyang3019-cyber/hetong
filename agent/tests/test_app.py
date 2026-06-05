@@ -857,7 +857,15 @@ def test_generate_contract_reuses_confirmed_extracted_data() -> None:
         draft = generate_contract(upload_id, "caigouhetong", "确认文本", "补充信息", extracted, {"userid": "uid1", "unionid": "union-x"})
 
     llm.assert_not_called()
-    render_contract_mock.assert_called_once_with(ANY, ANY, ANY, blank_missing=True, quote_attachment=None, logger=ANY)
+    render_contract_mock.assert_called_once_with(
+        ANY,
+        ANY,
+        ANY,
+        blank_missing=True,
+        table_mode="auto",
+        quote_attachment=None,
+        logger=ANY,
+    )
     assert draft["extractedData"] == extracted
     assert draft["extraInfoLength"] == len("补充信息")
     assert "supplierCacheWriteback" not in draft
@@ -1122,6 +1130,25 @@ def test_append_quote_attachment_adds_excel_tables(tmp_path: Path) -> None:
     assert "阀门" in table_text
 
 
+def test_append_quote_attachment_skips_empty_rows_without_adding_page(tmp_path: Path) -> None:
+    docx_path = tmp_path / "contract.docx"
+    Document().save(docx_path)
+    original = Document(docx_path)
+    original_paragraph_count = len(original.paragraphs)
+
+    append_quote_attachment(docx_path, {
+        "sheets": [{
+            "name": "报价",
+            "rows": [["", ""], ["", ""]],
+        }],
+    })
+
+    document = Document(docx_path)
+    assert len(document.paragraphs) == original_paragraph_count
+    assert len(document.tables) == 0
+    assert all(paragraph.text != "附件：报价单明细" for paragraph in document.paragraphs)
+
+
 def test_append_quote_attachment_does_not_require_heading_styles(tmp_path: Path) -> None:
     docx_path = tmp_path / "contract.docx"
     Document().save(docx_path)
@@ -1198,6 +1225,96 @@ def test_render_contract_centers_template_table_text() -> None:
         assert formatted_runs[0].font.size.pt == 10.5
     finally:
         output_path.unlink(missing_ok=True)
+
+
+def test_render_annual_framework_extended_scalars() -> None:
+    config = get_template_config("annualFramework")
+    render_data = merge_render_data({
+        "contractNo": "AF-001",
+        "supplierName": "年度供应商",
+        "supplierAddress": "杭州余杭",
+        "supplierAccount": "622200000000",
+        "supplierTaxNo": "91330000TEST",
+        "supplierPhone": "0571-12345678",
+        "supplierFax": "0571-87654321",
+        "supplierRepresentativeName": "李四",
+        "supplierRepresentativePhone": "13800001111",
+        "supplierRepresentativeAddress": "杭州市余杭区仓前街道",
+        "supplierRepresentativeEmail": "lisi@example.com",
+        "supplierAuthorizedRepresentative": "王五",
+        "signatureYear": "2026",
+        "signatureMonth": "06",
+        "signatureDay": "05",
+        "deliveryPlace": "沃乐仓库",
+        "consignee": "赵六",
+        "deliveryYear": "2026",
+        "deliveryMonth": "07",
+        "deliveryDay": "01",
+        "items": [],
+        "priceItems": [],
+    }, config)
+
+    output_path = render_contract(render_data, config, "test_annual_framework_extended_scalars", blank_missing=True)
+    try:
+        with ZipFile(output_path) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+    finally:
+        output_path.unlink(missing_ok=True)
+
+    assert "0571-12345678" in xml
+    assert "0571-87654321" in xml
+    assert "lisi@example.com" in xml
+    assert "沃乐仓库" in xml
+    assert "赵六" in xml
+    assert "最迟于" in xml
+    assert "2026" in xml
+    assert "07" in xml
+    assert "01" in xml
+
+
+def test_render_contract_template_mode_strips_fixed_attachment_section_when_items_empty() -> None:
+    config = get_template_config("caigouhetong")
+    render_data = merge_render_data({
+        "supplierName": "供应商A",
+        "items": [],
+    }, config)
+
+    output_path = render_contract(render_data, config, "test_strip_attachment_empty_items", blank_missing=True, table_mode="template")
+    try:
+        with ZipFile(output_path) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+    finally:
+        output_path.unlink(missing_ok=True)
+
+    assert "附件一：设备采购清单" not in xml
+    assert xml.count("<w:sectPr") == 1
+
+
+def test_render_contract_template_mode_keeps_items_rows_without_fixed_attachment_section() -> None:
+    config = get_template_config("caigouhetong")
+    render_data = merge_render_data({
+        "supplierName": "供应商A",
+        "items": [{
+            "index": "1",
+            "name": "设备A",
+            "spec": "A-100",
+            "unit": "台",
+            "quantity": "2",
+            "unitPrice": "100",
+            "totalPrice": "200",
+            "tagNo": "T-1",
+        }],
+    }, config)
+
+    output_path = render_contract(render_data, config, "test_strip_attachment_with_items", blank_missing=True, table_mode="template")
+    try:
+        with ZipFile(output_path) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+    finally:
+        output_path.unlink(missing_ok=True)
+
+    assert "设备A" in xml
+    assert "附件一：设备采购清单" not in xml
 
 
 def test_render_contract_payment_terms_override_keeps_indent() -> None:
