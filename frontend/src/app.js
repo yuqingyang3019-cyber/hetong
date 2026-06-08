@@ -1364,13 +1364,13 @@ function attachmentModeText(mode) {
   if (sheetCount > 1) parts.push(`${sheetCount} 个工作表`);
   if (rowCount > 0) parts.push(`${rowCount} 行明细`);
   const detail = parts.length ? `（${parts.join("，")}）` : "";
-  return `当前报价单已启用附件模式${detail}：AI 只识别合同主字段，完整报价明细会追加到 Word 合同末尾。`;
+  return `Excel 明细将作为附件追加到合同末尾${detail}。`;
 }
 
 function taskAttachmentModeText(task) {
   if (!tableModeUsesAttachment(task)) return "";
   return attachmentModeText(task?.fieldPreview?.attachmentMode || task?.attachmentMode)
-    || "当前已选择附件模式：AI 只识别合同主字段，完整报价明细会追加到 Word 合同末尾。";
+    || "Excel 明细将作为附件追加到合同末尾。";
 }
 
 function syncTableModeStatus(task, disabled = false) {
@@ -1378,15 +1378,18 @@ function syncTableModeStatus(task, disabled = false) {
   const selectedAttachment = tableModeUsesAttachment(task);
   tableModeStatus.classList.toggle("is-attachment", selectedAttachment);
   tableModeStatus.classList.toggle("is-default", !selectedAttachment);
-  if (selectedAttachment) {
-    tableModeStatus.textContent = disabled
-      ? "当前使用附件模式：已进入下一阶段，如需切换请返回“确认文本”并重新识别字段。"
-      : "当前使用附件模式：AI 只识别主字段，Excel 明细将作为附件追加到合同末尾。";
+  if (disabled) {
+    tableModeStatus.hidden = false;
+    tableModeStatus.textContent = "已进入下一阶段，如需切换请先回到文本确认。";
     return;
   }
-  tableModeStatus.textContent = disabled
-    ? "当前使用默认模式：已进入下一阶段，如需切换请返回“确认文本”并重新识别字段。"
-    : "当前使用默认模式：表格内容将按模板识别并填入合同。";
+  if (!selectedAttachment) {
+    tableModeStatus.hidden = true;
+    tableModeStatus.textContent = "";
+    return;
+  }
+  tableModeStatus.hidden = false;
+  tableModeStatus.textContent = "只识别主字段，Excel 明细会附到合同末尾。";
 }
 
 function syncTableModeControls(task) {
@@ -1413,7 +1416,15 @@ function setTaskTableMode(task, mode) {
   task.tableMode = normalizeTableMode(mode);
   task.attachmentMode = task.attachmentMode || null;
   task.fieldPreview = null;
-  setTaskStatus(task, "needs_text", "表格处理方式已更新，请重新识别字段。");
+  const attachmentSelected = tableModeUsesAttachment(task);
+  setTaskStatus(task, "needs_text", "请重新识别字段。");
+  setStatus(
+    attachmentSelected ? "已启用附件模式，请重新识别字段。" : "已恢复默认方式，请重新识别字段。",
+    "info",
+  );
+  syncTableModeControls(task);
+  resetFieldPreviewUi();
+  updateActionAvailability();
 }
 
 function syncFieldPreviewSummary(stats) {
@@ -1790,7 +1801,7 @@ async function renderFieldPreview(task) {
       createEl("p", "contract-preview-kicker", "合同字段确认稿"),
       createEl("h3", "", task.templateName || schema?.template?.id || "合同模板"),
       createEl("p", "contract-preview-muted", tableModeUsesAttachment(task)
-        ? "以下只展示合同主字段；报价单明细将作为附件追加到 Word 合同末尾。"
+        ? "以下只展示合同主字段；Excel 明细将附到 Word 合同末尾。"
         : "以下内容按模板字段顺序生成，可直接修改后生成合同。"),
     );
     paper.append(title);

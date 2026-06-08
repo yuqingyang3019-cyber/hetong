@@ -122,26 +122,15 @@
                 <span class="field-help">识别字段时会同时读取“解析内容”和“额外信息”，补充信息优先用于填补缺失字段。</span>
               </label>
               <fieldset id="tableModeField" class="table-mode-field" hidden>
-                <legend class="field-label">表格处理方式</legend>
-                <p class="table-mode-intro">当报价单明细很多或格式复杂时，可切换为附件模式，降低字段识别噪声。</p>
-                <div class="table-mode-compare" aria-hidden="true">
-                  <div class="table-mode-compare-item">
-                    <strong>默认模式</strong>
-                    <small>明细填入合同模板表格，适合结构规整报价单。</small>
-                  </div>
-                  <div class="table-mode-compare-item">
-                    <strong>附件模式</strong>
-                    <small>AI 只识别主字段，完整 Excel 明细追加到合同末尾。</small>
-                  </div>
-                </div>
+                <legend class="visually-hidden">Excel 明细处理方式</legend>
                 <label class="table-mode-option">
                   <input id="tableAttachmentMode" type="checkbox" name="tableMode" value="attachment" />
                   <span>
-                    <strong>将表格作为附件</strong>
-                    <small>默认不勾选。勾选后会重新识别字段，并使用附件模式生成合同。</small>
+                    <strong>将 Excel 明细作为附件</strong>
+                    <small>勾选后只识别合同主字段，Excel 原表附到 Word 合同末尾。</small>
                   </span>
                 </label>
-                <p id="tableModeStatus" class="table-mode-status" aria-live="polite">当前使用默认模式：表格内容将按模板识别并填入合同。</p>
+                <p id="tableModeStatus" class="table-mode-status" aria-live="polite" hidden></p>
               </fieldset>
             </section>
 
