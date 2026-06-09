@@ -56,6 +56,7 @@ const supportedQuoteFileExtensions = new Set([
   ".tiff",
   ".webp",
 ]);
+const DEFAULT_TEMPLATE_TYPE = "simpleContract";
 const templateSchemaFiles = Object.freeze({
   caigouhetong: "caigouhetong",
   nonStandardNoInstall: "non-standard-no-install",
@@ -908,7 +909,7 @@ function createEl(tagName, className, text) {
 }
 
 async function loadTemplateSchema(templateValue) {
-  const schemaName = templateSchemaFiles[templateValue] || templateSchemaFiles.caigouhetong;
+  const schemaName = templateSchemaFiles[templateValue] || templateSchemaFiles[DEFAULT_TEMPLATE_TYPE];
   if (templateSchemaCache.has(schemaName)) return templateSchemaCache.get(schemaName);
 
   const response = await fetch(`/template-schemas/${schemaName}.placeholders.json`, { cache: "no-cache" });
@@ -1512,7 +1513,7 @@ function toggleMissingOnlyPreview() {
   if (!contractPreviewEl) return;
   contractPreviewEl.classList.toggle("show-missing-only");
   const stats = activeTask()?.fieldPreview?.extractedData
-    ? calculatePreviewStats(templateSchemaCache.get(templateSchemaFiles[activeTask().templateType] || templateSchemaFiles.caigouhetong), activeTask().fieldPreview.extractedData)
+    ? calculatePreviewStats(templateSchemaCache.get(templateSchemaFiles[activeTask().templateType] || templateSchemaFiles[DEFAULT_TEMPLATE_TYPE]), activeTask().fieldPreview.extractedData)
     : null;
   const filterButton = fieldPreviewSummary?.querySelector(".field-preview-filter");
   if (filterButton) {

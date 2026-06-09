@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 
 try:
     from .contract.config import (
+        DEFAULT_TEMPLATE_TYPE,
         UPLOADS_DIR,
         ensure_storage,
         get_template_config,
@@ -37,6 +38,7 @@ try:
     from .contract.render import merge_render_data, render_contract
 except ImportError:
     from contract.config import (
+        DEFAULT_TEMPLATE_TYPE,
         UPLOADS_DIR,
         ensure_storage,
         get_template_config,
@@ -1180,7 +1182,7 @@ async def parse_quote_text_api(
 ) -> dict:
     start = time.perf_counter()
     client_host = request.client.host if request.client else None
-    template_type = "caigouhetong"
+    template_type = DEFAULT_TEMPLATE_TYPE
     if "application/json" in request.headers.get("content-type", ""):
         payload = await request.json()
         if isinstance(payload, dict) and payload.get("templateType"):
@@ -1238,7 +1240,7 @@ async def preview_quote_fields_api(
     if not isinstance(payload, dict):
         raise api_error(400, "INVALID_ARGUMENT", "字段识别请求体格式不正确")
 
-    template_type = str(payload.get("templateType") or "caigouhetong")
+    template_type = str(payload.get("templateType") or DEFAULT_TEMPLATE_TYPE)
     table_mode = normalize_table_mode(payload.get("tableMode"))
     quote_text_value = payload.get("quoteText")
     extra_info_value = payload.get("extraInfo")
@@ -1438,7 +1440,7 @@ async def generate_contract_api(request: Request, current_user: dict = Depends(g
     if not isinstance(payload, dict):
         raise api_error(400, "INVALID_ARGUMENT", "生成合同请求体格式不正确")
     upload_id = str(payload.get("uploadId") or "").strip()
-    template_type = str(payload.get("templateType") or "caigouhetong").strip()
+    template_type = str(payload.get("templateType") or DEFAULT_TEMPLATE_TYPE).strip()
     table_mode = normalize_table_mode(payload.get("tableMode"))
     quote_text_value = payload.get("quoteText")
     quote_text = quote_text_value.strip() if isinstance(quote_text_value, str) and quote_text_value.strip() else None

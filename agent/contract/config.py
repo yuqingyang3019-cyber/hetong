@@ -15,6 +15,8 @@ UPLOADS_DIR = STORAGE_ROOT / "uploads"
 CONTRACTS_DIR = STORAGE_ROOT / "contracts"
 
 
+DEFAULT_TEMPLATE_TYPE = "simpleContract"
+
 TEMPLATE_BASENAME: dict[str, str] = {
     "caigouhetong": "caigouhetong",
     "nonStandardNoInstall": "non-standard-no-install",
