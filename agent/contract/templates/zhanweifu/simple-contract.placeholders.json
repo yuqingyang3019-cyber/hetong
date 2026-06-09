@@ -1,0 +1,149 @@
+{
+  "template": {
+    "id": "simpleContract",
+    "engine": "docxtpl",
+    "syntax": "jinja2",
+    "docx": "zhanweifu/simple-contract.docx"
+  },
+  "scalars": [
+    {
+      "key": "contractNo",
+      "label": "合同编号"
+    },
+    {
+      "key": "signYear",
+      "label": "签订年"
+    },
+    {
+      "key": "signMonth",
+      "label": "签订月"
+    },
+    {
+      "key": "signDay",
+      "label": "签订日"
+    },
+    {
+      "key": "buyerPhone",
+      "label": "甲方电话"
+    },
+    {
+      "key": "buyerFax",
+      "label": "甲方传真"
+    },
+    {
+      "key": "buyerContact",
+      "label": "甲方联系人"
+    },
+    {
+      "key": "supplierName",
+      "label": "乙方名称"
+    },
+    {
+      "key": "supplierAddress",
+      "label": "乙方联系地址"
+    },
+    {
+      "key": "supplierBank",
+      "label": "乙方开户银行"
+    },
+    {
+      "key": "supplierAccount",
+      "label": "乙方银行账号"
+    },
+    {
+      "key": "supplierBankCode",
+      "label": "乙方行号"
+    },
+    {
+      "key": "supplierTaxNo",
+      "label": "乙方税号"
+    },
+    {
+      "key": "supplierPhone",
+      "label": "乙方电话"
+    },
+    {
+      "key": "supplierFax",
+      "label": "乙方传真"
+    },
+    {
+      "key": "supplierContact",
+      "label": "乙方联系人"
+    },
+    {
+      "key": "totalAmountChinese",
+      "label": "合同总金额大写"
+    },
+    {
+      "key": "totalAmount",
+      "label": "合同总金额小写"
+    },
+    {
+      "key": "amountWithoutTax",
+      "label": "不含税金额"
+    },
+    {
+      "key": "taxRate",
+      "label": "税率（%）"
+    },
+    {
+      "key": "deliveryDays",
+      "label": "交货天数"
+    },
+    {
+      "key": "deliveryPlace",
+      "label": "交货地点"
+    },
+    {
+      "key": "deliveryMethod",
+      "label": "交货方式"
+    },
+    {
+      "key": "goodsRecipient",
+      "label": "货物接收人"
+    },
+    {
+      "key": "settlementTerms",
+      "label": "结算方式及期限"
+    }
+  ],
+  "tables": {
+    "items": {
+      "label": "产品明细",
+      "columns": [
+        {
+          "key": "index",
+          "label": "序号"
+        },
+        {
+          "key": "name",
+          "label": "产品名称"
+        },
+        {
+          "key": "spec",
+          "label": "规格"
+        },
+        {
+          "key": "quantity",
+          "label": "数量"
+        },
+        {
+          "key": "unit",
+          "label": "单位"
+        },
+        {
+          "key": "unitPrice",
+          "label": "单价"
+        },
+        {
+          "key": "totalPrice",
+          "label": "小计"
+        },
+        {
+          "key": "remark",
+          "label": "备注"
+        }
+      ]
+    }
+  }
+}

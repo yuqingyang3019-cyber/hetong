@@ -63,6 +63,7 @@ const templateSchemaFiles = Object.freeze({
   annualFramework: "annual-framework",
   professionalSubcontract: "professional-subcontract",
   laborSubcontract: "labor-subcontract",
+  simpleContract: "simple-contract",
 });
 const autoDateFieldKeys = Object.freeze(["signYear", "signMonth", "signDay", "signatureYear", "signatureMonth", "signatureDay"]);
 const dateFieldGroups = Object.freeze([

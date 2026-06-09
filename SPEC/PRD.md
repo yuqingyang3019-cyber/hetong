@@ -109,6 +109,7 @@ V1 支持以下合同模板：
 | `annualFramework` | 年度采购框架合同 |
 | `professionalSubcontract` | 专业工程分包合同 |
 | `laborSubcontract` | 劳务分包合同（清包工） |
+| `simpleContract` | 简易合同（产品购销） |
 
 每个模板应维护独立的字段契约，用于约束字段识别结果和合同渲染。
 
