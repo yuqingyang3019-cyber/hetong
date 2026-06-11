@@ -82,7 +82,6 @@ const fieldGroupDefinitions = Object.freeze([
 ]);
 const taxCalculationFieldKeys = Object.freeze(["totalAmount", "amountWithoutTax", "taxAmount", "taxRate"]);
 const deliveryCalculationFieldKeys = Object.freeze(["deliveryDays"]);
-const lineItemCalculationKeys = Object.freeze(["quantity", "unitPrice"]);
 const PAYMENT_TERMS_OVERRIDE_TEMPLATE = "caigouhetong";
 const PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride";
 const busyStatuses = new Set(["uploading", "parsing", "identifying", "generating"]);
@@ -1105,7 +1104,31 @@ function applyLineItemCalculationsForTables(extractedData, schema) {
   });
 }
 
-function buildExtractedDataForGenerate(task) {
+function syncLineItemCalculations(extractedData, schema, task) {
+  if (!extractedData || typeof extractedData !== "object" || tableModeUsesAttachment(task)) return;
+  applyLineItemCalculationsForTables(extractedData, schema);
+}
+
+function handleTableCellEdit({
+  row,
+  column,
+  editor,
+  cell,
+  rowEditors,
+  supportsLineItemCalculation,
+  schema,
+  extractedData,
+}) {
+  if (row && typeof row === "object") setByDotPath(row, column.key, editor.value);
+  if (supportsLineItemCalculation) {
+    const changedKeys = applyLineItemCalculations(row);
+    syncCalculatedTableEditors(rowEditors, row, changedKeys);
+  }
+  setRecognizedClass(cell, editor.value);
+  refreshFieldPreviewSummary(schema, extractedData);
+}
+
+function buildExtractedDataForGenerate(task, schema) {
   const extractedData = cloneExtractedData(task.fieldPreview?.extractedData);
   const overrideText = String(task.paymentTermsOverrideText || "").trim();
   if (supportsPaymentTermsOverride(task.templateType) && overrideText) {
@@ -1113,6 +1136,7 @@ function buildExtractedDataForGenerate(task) {
   } else {
     delete extractedData[PAYMENT_TERMS_OVERRIDE_KEY];
   }
+  if (schema) syncLineItemCalculations(extractedData, schema, task);
   return extractedData;
 }
 
@@ -1886,15 +1910,18 @@ function renderTablePreview(paper, schema, extractedData, stats, canEditPreview,
         editor.disabled = !canEditPreview;
         editor.setAttribute("aria-label", `${tableDef?.label || tableName} 第 ${rowIndex + 1} 行 ${column.label || column.key}`);
         rowEditors.set(column.key, { editor, cell });
-        editor.addEventListener("input", () => {
-          if (row && typeof row === "object") setByDotPath(row, column.key, editor.value);
-          if (supportsLineItemCalculation && lineItemCalculationKeys.includes(column.key)) {
-            const changedKeys = applyLineItemCalculations(row);
-            syncCalculatedTableEditors(rowEditors, row, changedKeys);
-          }
-          setRecognizedClass(cell, editor.value);
-          refreshFieldPreviewSummary(schema, extractedData);
+        const onCellEdit = () => handleTableCellEdit({
+          row,
+          column,
+          editor,
+          cell,
+          rowEditors,
+          supportsLineItemCalculation,
+          schema,
+          extractedData,
         });
+        editor.addEventListener("input", onCellEdit);
+        editor.addEventListener("change", onCellEdit);
         cell.append(editor);
         bodyRow.append(cell);
       });
@@ -1936,9 +1963,7 @@ async function renderFieldPreview(task) {
   if (schemaHasScalar(schema, "deliveryDays")) {
     applyDeliveryDateCalculation(extractedData).forEach((key) => autoFilledKeys.add(key));
   }
-  if (!tableModeUsesAttachment(task)) {
-    applyLineItemCalculationsForTables(extractedData, previewSchema);
-  }
+  syncLineItemCalculations(extractedData, previewSchema, task);
   const canEditPreview = !taskIsBusy(task) && task.status !== "completed";
   const stats = { recognized: 0, missing: 0 };
 
@@ -2088,7 +2113,6 @@ async function startManualTask() {
   selectTask(task.id);
   closeCreatePanel({ clearFile: true, keepStatus: true });
   setStatus("已创建手工填写任务，请在字段确认稿中补充合同字段。", "success");
-  await renderFieldPreview(task);
   return true;
 }
 
@@ -2472,7 +2496,9 @@ async function runGenerateTask(task) {
     task.download = null;
     task.downloadState = "ready";
     setTaskStatus(task, "generating", "正在生成合同并上传钉盘...");
-    await generateContract(task, task.quoteText, task.extraInfo, buildExtractedDataForGenerate(task));
+    const schema = await loadTemplateSchema(task.templateType);
+    const previewSchema = tableModeUsesAttachment(task) ? { ...schema, tables: {} } : schema;
+    await generateContract(task, task.quoteText, task.extraInfo, buildExtractedDataForGenerate(task, previewSchema));
     setTaskStatus(task, "completed", "合同已生成并存入钉盘。");
   } catch (error) {
     const message = formatError(error);
@@ -2564,16 +2590,16 @@ generateButton.addEventListener("click", async () => {
     setStatus("请先选择任务。", "error");
     return;
   }
-  const quoteText = quoteTextPreview.value.trim();
-  if (!quoteText) {
-    setStatus("解析文本为空，请补充后再生成合同。", "error");
-    return;
-  }
   if (!task.fieldPreview?.extractedData) {
     setStatus("请先识别并确认合同字段。", "error");
     return;
   }
-  task.quoteText = quoteText;
+  const quoteText = quoteTextPreview.value.trim();
+  if (!task.manualEntry && !quoteText) {
+    setStatus("解析文本为空，请补充后再生成合同。", "error");
+    return;
+  }
+  if (quoteText) task.quoteText = quoteText;
   await runGenerateTask(task);
 });
 
