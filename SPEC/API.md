@@ -361,6 +361,8 @@ Authorization: Bearer <agentAccessToken>
 }
 ```
 
+无报价单时 `uploadId` 可省略，此时 `extractedData` 必填，且 `tableMode` 固定为 `template`。
+
 响应：
 
 ```json
@@ -390,7 +392,9 @@ Authorization: Bearer <agentAccessToken>
 
 约束：
 
-- `extractedData` 必须来自用户确认后的字段预览结果。
+- `uploadId` 可选；省略时表示无报价单手工填写流程。
+- 无 `uploadId` 时，`extractedData` 必填，且不得依赖服务端重新解析或 LLM 识别。
+- 有 `uploadId` 时，`extractedData` 必须来自用户确认后的字段预览结果。
 - 合同文件名使用 `合同编号_供应商名称_项目名称.docx`；合同编号为空时用生成时间兜底，供应商或项目为空时用 `未知乙方`、`未知项目`。
 - FC 后端上传钉盘后返回必要文件元数据和下载提示信息。
 - 前端通过 `POST /api/dingdrive/download` 带 Bearer Token 下载合同文件，不直接暴露钉盘下载签名 URL 和 headers。

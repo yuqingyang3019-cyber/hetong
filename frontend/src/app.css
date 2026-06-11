@@ -1506,6 +1506,26 @@ button:disabled {
   padding: var(--space-3);
 }
 
+.contract-preview-table td.is-auto-filled {
+  color: #0369a1;
+}
+
+.contract-preview-table-action-col {
+  width: 4.5rem;
+  white-space: nowrap;
+}
+
+.contract-preview-table-actions,
+.contract-table-add-row {
+  margin-top: var(--space-2);
+}
+
+.contract-table-delete-row,
+.contract-table-add-row {
+  font-size: 0.8125rem;
+  padding: 0.35rem 0.65rem;
+}
+
 .empty-state {
   color: var(--color-text-muted);
   font-size: 0.875rem;

@@ -650,6 +650,28 @@ def apply_tax_calculations(extracted: dict[str, Any], config: Any) -> set[str]:
     return changed
 
 
+def apply_line_item_calculations(extracted: dict[str, Any], config: Any) -> set[str]:
+    changed: set[str] = set()
+    for table_name, columns in config.table_bindings.items():
+        if not {"quantity", "unitPrice", "totalPrice"}.issubset(set(columns)):
+            continue
+        rows_value = extracted.get(table_name)
+        if not isinstance(rows_value, list):
+            continue
+        for row in rows_value:
+            if not isinstance(row, dict):
+                continue
+            quantity = _decimal_from_field(row.get("quantity"))
+            unit_price = _decimal_from_field(row.get("unitPrice"))
+            if quantity is None or unit_price is None:
+                continue
+            formatted = _format_money(quantity * unit_price)
+            if row.get("totalPrice") != formatted:
+                row["totalPrice"] = formatted
+                changed.add(f"{table_name}.totalPrice")
+    return changed
+
+
 def _positive_int_from_field(value: Any) -> int | None:
     normalized = str(value).replace("天", "").replace("日", "") if value is not None else value
     number = _decimal_from_field(normalized)
@@ -850,7 +872,7 @@ def extract_quote_text(upload_id: str, current_user: dict[str, Any]) -> tuple[di
 
 
 def generate_contract(
-    upload_id: str,
+    upload_id: str | None,
     template_type: str,
     quote_text: str | None = None,
     extra_info: str | None = None,
@@ -859,34 +881,51 @@ def generate_contract(
     table_mode: str = "auto",
 ) -> dict[str, Any]:
     start = time.perf_counter()
+    manual_entry = not upload_id
     has_confirmed_text = bool(quote_text and quote_text.strip())
     has_confirmed_data = isinstance(extracted_data, dict)
     log_info(
         "contract generation start",
         uploadId=upload_id,
         templateType=template_type,
+        manualEntry=manual_entry,
         confirmedQuoteText=has_confirmed_text,
         confirmedExtractedData=has_confirmed_data,
     )
     try:
-        upload = load_upload(upload_id, current_user)
-        table_mode = normalize_table_mode(table_mode)
-        quote_attachment = quote_attachment_for_upload(upload, table_mode)
-        if quote_attachment:
-            attachment_mode = quote_attachment.get("attachmentMode") if quote_attachment else {"enabled": False}
+        if manual_entry and not has_confirmed_data:
+            raise api_error(400, "INVALID_ARGUMENT", "无报价单时须提供用户确认的 extractedData")
+
+        upload: dict[str, Any] | None = None
+        quote_attachment: dict[str, Any] | None = None
+        if manual_entry:
+            table_mode = "template"
+            attachment_mode = {"enabled": False, "tableMode": "template"}
+            quote_text = quote_text.strip() if has_confirmed_text else ""
+            log_info(
+                "contract manual entry mode",
+                templateType=template_type,
+                tableMode=table_mode,
+            )
         else:
-            excel_payload = excel_payload_for_upload(upload)
-            attachment_mode = selected_attachment_mode(excel_payload, table_mode)
-        log_info(
-            "contract upload loaded",
-            uploadId=upload_id,
-            fileName=upload.get("fileName"),
-            originalName=upload.get("originalName"),
-            mimeType=upload.get("mimeType"),
-            size=upload.get("size"),
-            attachmentMode=attachment_mode,
-            tableMode=table_mode,
-        )
+            upload = load_upload(upload_id, current_user)
+            table_mode = normalize_table_mode(table_mode)
+            quote_attachment = quote_attachment_for_upload(upload, table_mode)
+            if quote_attachment:
+                attachment_mode = quote_attachment.get("attachmentMode") if quote_attachment else {"enabled": False}
+            else:
+                excel_payload = excel_payload_for_upload(upload)
+                attachment_mode = selected_attachment_mode(excel_payload, table_mode)
+            log_info(
+                "contract upload loaded",
+                uploadId=upload_id,
+                fileName=upload.get("fileName"),
+                originalName=upload.get("originalName"),
+                mimeType=upload.get("mimeType"),
+                size=upload.get("size"),
+                attachmentMode=attachment_mode,
+                tableMode=table_mode,
+            )
 
         try:
             config = get_template_config(template_type)
@@ -894,7 +933,14 @@ def generate_contract(
             raise api_error(400, "INVALID_ARGUMENT", str(exc)) from exc
         log_info("contract template loaded", uploadId=upload_id, templateType=config.type)
 
-        if has_confirmed_text:
+        if manual_entry:
+            extracted = extracted_data or {}
+            log_info(
+                "manual entry extracted data accepted",
+                templateType=config.type,
+                tableRowCounts=table_row_counts(extracted),
+            )
+        elif has_confirmed_text:
             quote_text = quote_text.strip()
             log_info(
                 "quote text confirmed by user",
@@ -902,35 +948,60 @@ def generate_contract(
                 fileName=upload.get("fileName"),
                 quoteTextLength=len(quote_text),
             )
+            if has_confirmed_data:
+                extracted = extracted_data or {}
+                log_info(
+                    "confirmed extracted data accepted",
+                    uploadId=upload_id,
+                    templateType=config.type,
+                    tableRowCounts=table_row_counts(extracted),
+                )
+            else:
+                llm_start = time.perf_counter()
+                log_info(
+                    "llm extraction start",
+                    uploadId=upload_id,
+                    templateType=config.type,
+                    quoteTextLength=len(quote_text),
+                    extraInfoLength=len((extra_info or "").strip()),
+                )
+                llm_config = scalar_only_template_config(config) if attachment_mode.get("enabled") else config
+                extracted = extract_template_render_data(quote_text, llm_config, extra_info)
+                log_info(
+                    "llm extraction finished",
+                    uploadId=upload_id,
+                    templateType=config.type,
+                    tableRowCounts=table_row_counts(extracted),
+                    elapsedMs=elapsed_ms(llm_start),
+                )
         else:
             upload, quote_text, _parser = extract_quote_text(upload_id, current_user)
-
-        if has_confirmed_data:
-            extracted = extracted_data or {}
-            log_info(
-                "confirmed extracted data accepted",
-                uploadId=upload_id,
-                templateType=config.type,
-                tableRowCounts=table_row_counts(extracted),
-            )
-        else:
-            llm_start = time.perf_counter()
-            log_info(
-                "llm extraction start",
-                uploadId=upload_id,
-                templateType=config.type,
-                quoteTextLength=len(quote_text),
-                extraInfoLength=len((extra_info or "").strip()),
-            )
-            llm_config = scalar_only_template_config(config) if attachment_mode.get("enabled") else config
-            extracted = extract_template_render_data(quote_text, llm_config, extra_info)
-            log_info(
-                "llm extraction finished",
-                uploadId=upload_id,
-                templateType=config.type,
-                tableRowCounts=table_row_counts(extracted),
-                elapsedMs=elapsed_ms(llm_start),
-            )
+            if has_confirmed_data:
+                extracted = extracted_data or {}
+                log_info(
+                    "confirmed extracted data accepted",
+                    uploadId=upload_id,
+                    templateType=config.type,
+                    tableRowCounts=table_row_counts(extracted),
+                )
+            else:
+                llm_start = time.perf_counter()
+                log_info(
+                    "llm extraction start",
+                    uploadId=upload_id,
+                    templateType=config.type,
+                    quoteTextLength=len(quote_text),
+                    extraInfoLength=len((extra_info or "").strip()),
+                )
+                llm_config = scalar_only_template_config(config) if attachment_mode.get("enabled") else config
+                extracted = extract_template_render_data(quote_text, llm_config, extra_info)
+                log_info(
+                    "llm extraction finished",
+                    uploadId=upload_id,
+                    templateType=config.type,
+                    tableRowCounts=table_row_counts(extracted),
+                    elapsedMs=elapsed_ms(llm_start),
+                )
 
         computed_tax_fields = apply_tax_calculations(extracted, config)
         if computed_tax_fields:
@@ -947,6 +1018,14 @@ def generate_contract(
                 uploadId=upload_id,
                 templateType=config.type,
                 fields=sorted(computed_delivery_fields),
+            )
+        computed_line_item_fields = apply_line_item_calculations(extracted, config)
+        if computed_line_item_fields:
+            log_info(
+                "line item totals calculated",
+                uploadId=upload_id,
+                templateType=config.type,
+                fields=sorted(computed_line_item_fields),
             )
         render_data = merge_render_data(extracted, config)
         contract_id = new_id("contract")
@@ -1005,7 +1084,9 @@ def generate_contract(
             "tableMode": table_mode,
         }
         cleanup_start = time.perf_counter()
-        removed_paths = remove_upload(upload)
+        removed_paths: list[Path] = []
+        if upload:
+            removed_paths.extend(remove_upload(upload))
         removed_paths.extend(remove_contract_files(contract_path))
         log_info(
             "contract cleanup finished",
@@ -1336,6 +1417,7 @@ async def preview_quote_fields_api(
         extracted = extract_template_render_data(quote_text, llm_config, extra_info)
         computed_tax_fields = apply_tax_calculations(extracted, config)
         computed_delivery_fields = apply_delivery_date_calculation(extracted, config)
+        computed_line_item_fields = apply_line_item_calculations(extracted, config)
         log_info(
             "field preview stage",
             stage="llm_finished",
@@ -1344,6 +1426,7 @@ async def preview_quote_fields_api(
             tableRowCounts=table_row_counts(extracted),
             computedTaxFields=sorted(computed_tax_fields),
             computedDeliveryFields=sorted(computed_delivery_fields),
+            computedLineItemFields=sorted(computed_line_item_fields),
             elapsedMs=elapsed_ms(llm_start),
         )
     except Exception as exc:
@@ -1439,7 +1522,7 @@ async def generate_contract_api(request: Request, current_user: dict = Depends(g
         raise api_error(400, "INVALID_ARGUMENT", "生成合同请求体格式不正确") from exc
     if not isinstance(payload, dict):
         raise api_error(400, "INVALID_ARGUMENT", "生成合同请求体格式不正确")
-    upload_id = str(payload.get("uploadId") or "").strip()
+    upload_id = str(payload.get("uploadId") or "").strip() or None
     template_type = str(payload.get("templateType") or DEFAULT_TEMPLATE_TYPE).strip()
     table_mode = normalize_table_mode(payload.get("tableMode"))
     quote_text_value = payload.get("quoteText")
@@ -1448,8 +1531,8 @@ async def generate_contract_api(request: Request, current_user: dict = Depends(g
     extra_info = extra_info_value.strip() if isinstance(extra_info_value, str) and extra_info_value.strip() else None
     extracted_data_value = payload.get("extractedData")
     extracted_data = extracted_data_value if isinstance(extracted_data_value, dict) else None
-    if not upload_id:
-        raise api_error(400, "INVALID_ARGUMENT", "缺少上传文件 ID")
+    if not upload_id and not isinstance(extracted_data, dict):
+        raise api_error(400, "INVALID_ARGUMENT", "无报价单时须提供用户确认的 extractedData")
     log_info(
         "contract generate api request start",
         clientHost=client_host,

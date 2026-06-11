@@ -17,12 +17,12 @@
             <p class="eyebrow">钉钉 H5 合同工作台</p>
             <span class="beta-badge" title="当前处于内测版本">内测版</span>
           </div>
-          <h1>你好，<span id="userName" class="user-name">你</span>，先上传报价单</h1>
-          <p class="hero-description">系统会解析报价单、整理合同字段，确认后生成 Word 合同并存入钉盘。</p>
+          <h1>你好，<span id="userName" class="user-name">你</span>，开始生成合同</h1>
+          <p class="hero-description">可上传报价单自动识别字段，也可跳过报价单直接在字段确认稿中手工补充后生成 Word 合同。</p>
 
           <div class="hero-steps" aria-label="合同生成流程">
             <span>1 选模板</span>
-            <span>2 传报价单</span>
+            <span>2 传报价单（可选）</span>
             <span>3 补字段</span>
             <span>4 生成下载</span>
           </div>
@@ -46,7 +46,7 @@
             <div class="create-panel-heading">
               <div>
                 <p class="eyebrow">新建任务</p>
-                <h2>选择模板和报价单</h2>
+                <h2>选择模板和报价单（可选）</h2>
               </div>
               <button id="cancelCreateTaskButton" class="btn-secondary task-secondary-button" type="button">取消</button>
             </div>
@@ -65,7 +65,7 @@
               </label>
 
               <label class="field file-field" for="quoteFile">
-                <span class="field-label">报价单文件</span>
+                <span class="field-label">报价单文件 <small>可选</small></span>
                 <span class="upload-dropzone" id="uploadDropzone">
                   <span class="upload-mark" aria-hidden="true">
                     <svg viewBox="0 0 24 24" role="img" focusable="false">
@@ -74,14 +74,14 @@
                   </span>
                   <span class="upload-copy">
                     <span id="fileNameText" class="upload-title">拖拽或点击选择报价单文件</span>
-                    <span id="fileMetaText" class="upload-meta">支持 PDF、Excel 和常见图片格式；选择后点击确认创建任务</span>
+                    <span id="fileMetaText" class="upload-meta">支持 PDF、Excel 和常见图片格式；可不传报价单，创建后在字段确认稿中手工补充</span>
                   </span>
                 </span>
                 <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png,.bmp,.gif,.tif,.tiff,.webp" />
               </label>
             </div>
             <div class="create-panel-actions">
-              <p id="createTaskHint" class="hint">选择合同模板并上传报价单后，再确认创建任务。</p>
+              <p id="createTaskHint" class="hint">选择合同模板后即可创建任务；上传报价单将自动解析，不上传则进入手工填写。</p>
               <button id="confirmCreateTaskButton" class="btn-primary" type="button" disabled>确认创建任务</button>
             </div>
           </div>

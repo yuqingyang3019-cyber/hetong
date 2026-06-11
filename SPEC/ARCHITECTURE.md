@@ -187,7 +187,14 @@ flowchart TD
 7. FC 后端返回可编辑 `quoteText`。
 8. 前端展示解析文本，用户可编辑和补充额外信息。
 
-### 6.3 字段识别与合同生成流程
+### 6.3 无报价单手工填写流程
+
+1. 用户选择合同模板后，可不传报价单直接创建任务。
+2. 前端按模板字段契约初始化空白字段确认稿，并预置一行空明细（如模板含明细表）。
+3. 用户在字段确认稿中手工补充全部字段后，直接调用 `POST /api/contracts/generate`，请求体省略 `uploadId`，仅提交 `templateType` 与用户确认后的 `extractedData`。
+4. FC 后端使用确认字段渲染合同并上传钉盘，不执行报价单解析、LLM 识别或 Excel 附件追加。
+
+### 6.4 字段识别与合同生成流程
 
 1. 前端调用 `POST /api/uploads/{uploadId}/field-preview`，提交用户确认后的 `quoteText`、`extraInfo` 和 `templateType`。
 2. FC 后端加载模板字段契约。
@@ -198,7 +205,7 @@ flowchart TD
 7. FC 后端上传合同到钉盘。
 8. FC 后端一次性返回钉盘文件信息和下载提示。
 
-### 6.4 钉盘下载流程
+### 6.5 钉盘下载流程
 
 1. 前端从 `POST /api/contracts/generate` 响应获得钉盘 `spaceId`、`fileId` 和 `fileName`。
 2. 用户点击下载后，前端携带业务 Bearer Token 调用 `POST /api/dingdrive/download`。
@@ -206,7 +213,7 @@ flowchart TD
 4. FC 后端代理下载文件流并返回给前端。
 5. 前端触发浏览器或钉钉客户端下载，并提示用户文件会保存到默认下载目录；如系统弹窗提示，可选择目标保存位置。
 
-### 6.5 用友供应商抬头实时回填流程
+### 6.6 用友供应商抬头实时回填流程
 
 ```mermaid
 flowchart TD

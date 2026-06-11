@@ -22,7 +22,7 @@ from agent.contract import llm as contract_llm
 from agent.contract.config import TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
 from agent.contract.render import append_quote_attachment, build_docxtpl_context, merge_render_data, render_contract
-from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_tax_calculations, contract_download_payload, contract_file_name, generate_contract, sign_session_payload
+from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_line_item_calculations, apply_tax_calculations, contract_download_payload, contract_file_name, generate_contract, sign_session_payload
 from agent.yonyou_vendor import (
     EXPLICIT_VENDOR_DATA_FIELDS,
     apply_yonbip_supplier_patch,
@@ -924,6 +924,59 @@ def test_tax_fields_are_calculated_from_total_amount() -> None:
     assert changed == {"amountWithoutTax", "taxAmount"}
     assert extracted["amountWithoutTax"] == "100"
     assert extracted["taxAmount"] == "13"
+
+
+def test_line_item_total_is_calculated_from_quantity_and_unit_price() -> None:
+    config = get_template_config("simpleContract")
+    extracted = {
+        "items": [
+            {"index": "1", "name": "产品A", "quantity": "2", "unitPrice": "10", "totalPrice": ""},
+        ],
+    }
+
+    changed = apply_line_item_calculations(extracted, config)
+
+    assert changed == {"items.totalPrice"}
+    assert extracted["items"][0]["totalPrice"] == "20"
+
+
+def test_line_item_total_skips_when_quantity_or_unit_price_missing() -> None:
+    config = get_template_config("simpleContract")
+    extracted = {
+        "items": [
+            {"index": "1", "name": "产品A", "quantity": "2", "unitPrice": "", "totalPrice": ""},
+        ],
+    }
+
+    changed = apply_line_item_calculations(extracted, config)
+
+    assert changed == set()
+    assert extracted["items"][0]["totalPrice"] == ""
+
+
+def test_generate_contract_without_upload_id_uses_confirmed_data() -> None:
+    extracted = {
+        "supplierName": "供应商A",
+        "items": [{"index": "1", "name": "阀门", "quantity": "2", "unitPrice": "10", "totalPrice": "20"}],
+    }
+
+    with patch("agent.main.extract_template_render_data") as llm, patch(
+        "agent.main.render_contract",
+        return_value=Path("agent/storage/contracts/manual.docx"),
+    ) as render_contract_mock, patch(
+        "agent.main.upload_contract_to_dingdrive",
+        return_value={"spaceId": "space1", "fileId": "file1", "fileName": "manual.docx", "filePath": "/manual.docx"},
+    ), patch(
+        "agent.main.remove_upload",
+    ) as remove_upload_mock:
+        draft = generate_contract(None, "caigouhetong", None, None, extracted, {"userid": "uid1", "unionid": "union-x"})
+
+    llm.assert_not_called()
+    remove_upload_mock.assert_not_called()
+    assert render_contract_mock.call_args.kwargs["table_mode"] == "template"
+    assert render_contract_mock.call_args.kwargs["quote_attachment"] is None
+    assert draft["extractedData"]["items"][0]["totalPrice"] == "20"
+    assert draft["upload"] is None
 
 
 def test_delivery_date_is_calculated_from_delivery_days() -> None:
