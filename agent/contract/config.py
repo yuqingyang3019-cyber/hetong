@@ -25,6 +25,7 @@ TEMPLATE_BASENAME: dict[str, str] = {
     "professionalSubcontract": "professional-subcontract",
     "laborSubcontract": "labor-subcontract",
     "simpleContract": "simple-contract",
+    "supplementaryAgreement": "supplementary-agreement",
 }
 
 TEMPLATE_DISPLAY_NAME: dict[str, str] = {
@@ -35,6 +36,7 @@ TEMPLATE_DISPLAY_NAME: dict[str, str] = {
     "professionalSubcontract": "专业工程分包合同",
     "laborSubcontract": "劳务分包合同（清包工）",
     "simpleContract": "简易合同（产品购销）",
+    "supplementaryAgreement": "合同补充协议书",
 }
 
 

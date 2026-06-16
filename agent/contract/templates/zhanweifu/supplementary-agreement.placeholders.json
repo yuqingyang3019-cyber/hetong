@@ -1,0 +1,109 @@
+{
+  "template": {
+    "id": "supplementaryAgreement",
+    "engine": "docxtpl",
+    "syntax": "jinja2",
+    "docx": "zhanweifu/supplementary-agreement.docx"
+  },
+  "scalars": [
+    {
+      "key": "contractNo",
+      "label": "补充协议编号"
+    },
+    {
+      "key": "supplierName",
+      "label": "乙方名称"
+    },
+    {
+      "key": "originalSignYear",
+      "label": "原合同签订年"
+    },
+    {
+      "key": "originalSignMonth",
+      "label": "原合同签订月"
+    },
+    {
+      "key": "originalSignDay",
+      "label": "原合同签订日"
+    },
+    {
+      "key": "originalContractNo",
+      "label": "原合同编号"
+    },
+    {
+      "key": "originalContractTitle",
+      "label": "原合同名称"
+    },
+    {
+      "key": "amendmentReason",
+      "label": "补充事由"
+    },
+    {
+      "key": "totalAmount",
+      "label": "合计金额（小写）"
+    },
+    {
+      "key": "totalAmountChinese",
+      "label": "合计人民币（大写）"
+    },
+    {
+      "key": "discountAmountChinese",
+      "label": "最终优惠金额合计（大写）"
+    },
+    {
+      "key": "amountWithoutTax",
+      "label": "不计税金额"
+    },
+    {
+      "key": "deliveryYear",
+      "label": "供货年"
+    },
+    {
+      "key": "deliveryMonth",
+      "label": "供货月"
+    },
+    {
+      "key": "deliveryDay",
+      "label": "供货日"
+    }
+  ],
+  "tables": {
+    "items": {
+      "label": "设备明细",
+      "columns": [
+        {
+          "key": "index",
+          "label": "序号"
+        },
+        {
+          "key": "name",
+          "label": "设备名称"
+        },
+        {
+          "key": "spec",
+          "label": "设备型号"
+        },
+        {
+          "key": "quantity",
+          "label": "数量"
+        },
+        {
+          "key": "unit",
+          "label": "单位"
+        },
+        {
+          "key": "unitPrice",
+          "label": "单价（元）"
+        },
+        {
+          "key": "totalPrice",
+          "label": "小计（元）"
+        },
+        {
+          "key": "remark",
+          "label": "备注"
+        }
+      ]
+    }
+  }
+}

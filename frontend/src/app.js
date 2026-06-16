@@ -65,10 +65,12 @@ const templateSchemaFiles = Object.freeze({
   professionalSubcontract: "professional-subcontract",
   laborSubcontract: "labor-subcontract",
   simpleContract: "simple-contract",
+  supplementaryAgreement: "supplementary-agreement",
 });
 const autoDateFieldKeys = Object.freeze(["signYear", "signMonth", "signDay", "signatureYear", "signatureMonth", "signatureDay"]);
 const dateFieldGroups = Object.freeze([
   { id: "signDate", label: "签订日期", keys: ["signYear", "signMonth", "signDay"], suffixes: ["年", "月", "日"] },
+  { id: "originalSignDate", label: "原合同签订日期", keys: ["originalSignYear", "originalSignMonth", "originalSignDay"], suffixes: ["年", "月", "日"] },
   { id: "deliveryDate", label: "最迟交货日期", keys: ["deliveryYear", "deliveryMonth", "deliveryDay"], suffixes: ["年", "月", "日"] },
   { id: "signatureDate", label: "签署日期", keys: ["signatureYear", "signatureMonth", "signatureDay"], suffixes: ["年", "月", "日"] },
 ]);
@@ -996,11 +998,13 @@ function scalarFieldGroupId(field, dateGroup = null) {
   const key = String(dateGroup?.id || field?.key || "");
   const label = String(dateGroup?.label || field?.label || "");
   const text = `${key} ${label}`.toLowerCase();
-  if (["signdate", "signaturedate"].includes(key)) return "basic";
+  if (["signdate", "signaturedate", "originalsigndate"].includes(key)) return "basic";
   if (key === "deliveryDate" || /delivery|交货|交付|货期|质保/.test(text)) return "delivery";
   if (/amount|price|taxrate|金额|税率|总价|单价|税金/.test(text)) return "money";
   if (/payment|bank|account|invoice|付款|预付款|发货款|验收款|到货款|质保金|开户|账号|税号|发票/.test(text)) return "payment";
   if (/buyer|supplier|party|representative|甲方|乙方|代表|联系人|联系地址|电话|邮箱/.test(text)) return "parties";
+  if (/amendment|补充事由/.test(text)) return "other";
+  if (/originalcontract|原合同/.test(text)) return "basic";
   if (/contract|project|subject|签订|签署|合同|项目|采购内容/.test(text)) return "basic";
   return "other";
 }
@@ -1497,7 +1501,7 @@ function syncTableModeStatus(task, disabled = false) {
   tableModeStatus.classList.toggle("is-default", !selectedAttachment);
   if (disabled) {
     tableModeStatus.hidden = false;
-    tableModeStatus.textContent = "已进入下一阶段，如需切换请先回到文本确认。";
+    tableModeStatus.textContent = "已进入下一阶段，如需补充信息请重新开始。";
     return;
   }
   if (!selectedAttachment) {
