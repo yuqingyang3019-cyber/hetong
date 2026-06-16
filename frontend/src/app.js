@@ -29,6 +29,9 @@ const fileMetaText = document.querySelector("#fileMetaText");
 const accessModal = document.querySelector("#accessModal");
 const accessModalMessage = document.querySelector("#accessModalMessage");
 const closeAccessModalButton = document.querySelector("#closeAccessModalButton");
+const supplierPatchModal = document.querySelector("#supplierPatchModal");
+const supplierPatchModalBody = document.querySelector("#supplierPatchModalBody");
+const closeSupplierPatchModalButton = document.querySelector("#closeSupplierPatchModalButton");
 const taskDrawer = document.querySelector("#taskDrawer");
 const taskDrawerBackdrop = document.querySelector("#taskDrawerBackdrop");
 const closeTaskDrawerButton = document.querySelector("#closeTaskDrawerButton");
@@ -1685,47 +1688,128 @@ function supplierFieldLabel(key, schema) {
   return scalar?.label || SUPPLIER_FIELD_LABELS[key] || key;
 }
 
-function formatMissingSupplierFieldLabels(keys, schema) {
-  return keys.map((key) => supplierFieldLabel(key, schema)).join("、");
-}
+let activeSupplierLookupButton = null;
 
-function supplierPatchNotice(supplierPatch, schema) {
-  if (!supplierPatch) return "";
+function buildSupplierPatchResult(supplierPatch, schema) {
+  if (!supplierPatch) return null;
+  const patch = supplierPatch.patch && typeof supplierPatch.patch === "object" ? supplierPatch.patch : {};
+  const foundLabels = Object.entries(patch)
+    .filter(([, value]) => !isBlankField(value))
+    .map(([key]) => supplierFieldLabel(key, schema));
   const missingFields = Array.isArray(supplierPatch.missingYonbipFields) ? supplierPatch.missingYonbipFields : [];
-  if (supplierPatch.matched && missingFields.length) {
-    const labels = formatMissingSupplierFieldLabels(missingFields, schema);
-    return `用友未返回以下抬头字段：${labels}，无法自动读取，请手动填写或到用友系统补充。`;
+  const missingLabels = missingFields.map((key) => supplierFieldLabel(key, schema));
+  let errorMessage = "";
+  if (!supplierPatch.matched) {
+    const reason = supplierPatch.reason || "";
+    if (reason === "not_found") errorMessage = "用友未找到该乙方，请手动填写抬头。";
+    else if (reason === "ambiguous") errorMessage = "用友存在多个匹配乙方，请人工确认抬头。";
+    else if (reason === "missing_supplier_name") errorMessage = "未识别到乙方名称，请手动填写抬头。";
+    else if (reason === "lookup_error") errorMessage = "用友查询失败，请手动填写抬头。";
   }
-  if (supplierPatch.matched || supplierPatch.appliedFields?.length) return "";
-  const reason = supplierPatch.reason || "";
-  if (reason === "not_found") return "用友未找到该乙方，请手动填写抬头。";
-  if (reason === "ambiguous") return "用友存在多个匹配乙方，请人工确认抬头。";
-  if (reason === "missing_supplier_name") return "未识别到乙方名称，请手动填写抬头。";
-  if (reason === "lookup_error") return "用友查询失败，请手动填写抬头。";
-  return "";
+  return {
+    matched: Boolean(supplierPatch.matched),
+    foundLabels,
+    missingLabels,
+    errorMessage,
+  };
 }
 
-function renderSupplierPatchNotice(paper, supplierPatch, schema) {
-  const notice = supplierPatchNotice(supplierPatch, schema);
-  if (!notice) return;
-  const section = createEl("section", "contract-preview-section supplier-title-notice");
-  section.append(
-    createEl("h4", "", "乙方抬头提示"),
-    createEl("p", "", notice),
-  );
-  paper.append(section);
+function shouldShowSupplierPatchModal(supplierPatch) {
+  if (!supplierPatch) return false;
+  if (supplierPatch.reason === "not_attempted") return false;
+  const missingCount = Array.isArray(supplierPatch.missingYonbipFields) ? supplierPatch.missingYonbipFields.length : 0;
+  if (supplierPatch.matched && missingCount > 0) return true;
+  if (!supplierPatch.matched && supplierPatch.reason) return true;
+  return false;
 }
 
-function ensureSupplierAutoFilledKeys(task) {
-  if (!task.fieldPreview) return new Set();
-  if (!task.fieldPreview.supplierAutoFilledKeys) {
-    const initial = [
-      ...(task.fieldPreview.supplierPatch?.appliedFields || []),
-      ...(task.fieldPreview.supplierPatch?.overwrittenFields || []),
-    ];
-    task.fieldPreview.supplierAutoFilledKeys = new Set(initial);
+function setSupplierLookupButtonLoading(button, loading) {
+  if (!button) return;
+  if (loading) {
+    activeSupplierLookupButton = button;
+    button.disabled = true;
+    button.classList.add("is-loading");
+    button.textContent = "查询中…";
+    return;
   }
-  return task.fieldPreview.supplierAutoFilledKeys;
+  button.disabled = false;
+  button.classList.remove("is-loading");
+  button.textContent = "查询用友抬头";
+  if (activeSupplierLookupButton === button) activeSupplierLookupButton = null;
+}
+
+function resetSupplierLookupButton() {
+  if (activeSupplierLookupButton) {
+    setSupplierLookupButtonLoading(activeSupplierLookupButton, false);
+  }
+}
+
+function renderSupplierPatchModalLoading() {
+  if (!supplierPatchModalBody) return;
+  supplierPatchModalBody.textContent = "";
+  supplierPatchModalBody.className = "supplier-patch-modal-body";
+  const wrap = createEl("div", "supplier-patch-loading");
+  const progress = createEl("div", "supplier-patch-progress");
+  progress.setAttribute("role", "progressbar");
+  progress.setAttribute("aria-label", "正在查询用友供应商档案");
+  wrap.append(progress, createEl("p", "", "正在查询用友供应商档案…"));
+  supplierPatchModalBody.append(wrap);
+}
+
+function appendSupplierPatchSection(container, title, labels, variant) {
+  const section = createEl("section", `supplier-patch-section is-${variant}`);
+  section.append(createEl("h3", "", title));
+  section.append(createEl("p", "supplier-patch-list", labels.join("、")));
+  container.append(section);
+}
+
+function renderSupplierPatchModalResult(supplierPatch, schema) {
+  if (!supplierPatchModalBody) return;
+  supplierPatchModalBody.textContent = "";
+  supplierPatchModalBody.className = "supplier-patch-modal-body";
+  const result = buildSupplierPatchResult(supplierPatch, schema);
+  if (!result) return;
+
+  if (result.errorMessage) {
+    const section = createEl("section", "supplier-patch-section is-error");
+    section.append(createEl("p", "supplier-patch-list", result.errorMessage));
+    supplierPatchModalBody.append(section);
+    return;
+  }
+
+  if (result.foundLabels.length) {
+    appendSupplierPatchSection(supplierPatchModalBody, "已从用友读取", result.foundLabels, "found");
+  }
+  if (result.missingLabels.length) {
+    appendSupplierPatchSection(supplierPatchModalBody, "未能读取", result.missingLabels, "missing");
+    supplierPatchModalBody.append(createEl(
+      "p",
+      "supplier-patch-footnote",
+      "请手动填写未能读取的字段，或到用友系统补充供应商档案。",
+    ));
+    return;
+  }
+  if (result.matched) {
+    const section = createEl("section", "supplier-patch-section is-found");
+    section.append(createEl("p", "supplier-patch-list", "全部抬头字段已从用友读取。"));
+    supplierPatchModalBody.append(section);
+  }
+}
+
+function openSupplierPatchModal(mode, supplierPatch, schema) {
+  if (!supplierPatchModal) return;
+  if (mode === "loading") {
+    renderSupplierPatchModalLoading();
+  } else {
+    renderSupplierPatchModalResult(supplierPatch, schema);
+  }
+  supplierPatchModal.hidden = false;
+  window.setTimeout(() => closeSupplierPatchModalButton?.focus(), 0);
+}
+
+function closeSupplierPatchModal() {
+  if (supplierPatchModal) supplierPatchModal.hidden = true;
+  resetSupplierLookupButton();
 }
 
 function applySupplierPatchToExtracted(extractedData, supplierPatch) {
@@ -1745,7 +1829,7 @@ function applySupplierPatchToExtracted(extractedData, supplierPatch) {
   return changed;
 }
 
-async function lookupSupplierTitle(task, schema) {
+async function lookupSupplierTitle(task, schema, lookupButton) {
   const extractedData = task.fieldPreview?.extractedData;
   if (!extractedData || typeof extractedData !== "object") return;
   const supplierName = String(extractedData.supplierName ?? "").trim();
@@ -1753,25 +1837,23 @@ async function lookupSupplierTitle(task, schema) {
     setStatus("请先填写乙方名称。", "error");
     return;
   }
+  setSupplierLookupButtonLoading(lookupButton, true);
+  openSupplierPatchModal("loading");
   try {
-    setStatus("正在查询用友供应商档案...", "info");
     const body = await lookupSupplierByName(supplierName);
     const supplierPatch = body.supplierPatch || {};
-    const changed = applySupplierPatchToExtracted(extractedData, supplierPatch);
+    applySupplierPatchToExtracted(extractedData, supplierPatch);
     task.fieldPreview.supplierPatch = supplierPatch;
-    changed.forEach((key) => ensureSupplierAutoFilledKeys(task).add(key));
     await renderFieldPreview(task);
-    const notice = supplierPatchNotice(supplierPatch, schema);
-    const patchedCount = supplierPatch.appliedFields?.length || changed.size;
-    if (supplierPatch.matched) {
-      if (notice) setStatus(notice, "info");
-      else if (patchedCount) setStatus(`已从用友供应商档案回填 ${patchedCount} 项乙方信息。`, "success");
-      else setStatus("用友查询完成，抬头字段无变化。", "success");
-      return;
-    }
-    setStatus(notice || "用友查询未命中。", "info");
+    openSupplierPatchModal("result", supplierPatch, schema);
+    setStatus("用友抬头查询完成。", "success");
   } catch (error) {
+    closeSupplierPatchModal();
     setStatus(formatError(error), "error");
+  } finally {
+    if (supplierPatchModal?.hidden) {
+      resetSupplierLookupButton();
+    }
   }
 }
 
@@ -1845,14 +1927,13 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
     lookupButton.type = "button";
     lookupButton.disabled = Boolean(options.disabled || options.readonly);
     lookupButton.addEventListener("click", () => {
-      void lookupSupplierTitle(options.lookupSupplier.task, options.lookupSupplier.schema);
+      void lookupSupplierTitle(options.lookupSupplier.task, options.lookupSupplier.schema, lookupButton);
     });
     editorRow.append(lookupButton);
     field.append(editorRow);
   } else {
     field.append(editor);
   }
-  if (options.autoFilled) field.append(createEl("span", "contract-field-badge", "系统自动填充"));
   return field;
 }
 
@@ -1896,7 +1977,6 @@ function createContractDateField(group, stats, prefix = "", options = {}) {
 
   field.append(createEl("span", "contract-field-label", `${prefix}${group.label}`));
   field.append(editorGroup);
-  if (group.keys.some((key) => options.autoFilledKeys?.has(key))) field.append(createEl("span", "contract-field-badge", "系统自动填充"));
   return field;
 }
 
@@ -2191,7 +2271,6 @@ async function renderFieldPreview(task) {
   if (schemaHasScalar(schema, "deliveryDays")) {
     applyDeliveryDateCalculation(extractedData).forEach((key) => autoFilledKeys.add(key));
   }
-  ensureSupplierAutoFilledKeys(task).forEach((key) => autoFilledKeys.add(key));
   syncLineItemCalculations(extractedData, previewSchema, task);
   const canEditPreview = !taskIsBusy(task) && task.status !== "completed";
   const stats = { recognized: 0, missing: 0 };
@@ -2211,7 +2290,6 @@ async function renderFieldPreview(task) {
     );
     paper.append(title);
     renderScalarPreview(paper, previewSchema, extractedData, stats, autoFilledKeys, canEditPreview, task);
-    renderSupplierPatchNotice(paper, task.fieldPreview?.supplierPatch, schema);
     renderTablePreview(paper, previewSchema, extractedData, stats, canEditPreview, task);
     contractPreviewEl.append(paper);
   }
@@ -2688,23 +2766,23 @@ async function runIdentifyTask(task) {
     const supplierPatched = task.fieldPreview.supplierPatch?.overwrittenFields?.length || task.fieldPreview.supplierPatch?.appliedFields?.length || 0;
     const supplierHint = supplierPatched ? ` 已从用友供应商档案回填 ${supplierPatched} 项乙方信息。` : "";
     const previewSchema = templateSchemaCache.get(templateSchemaFiles[task.templateType] || templateSchemaFiles[DEFAULT_TEMPLATE_TYPE]);
-    const supplierNotice = supplierPatchNotice(task.fieldPreview.supplierPatch, previewSchema);
     const attachmentHint = taskAttachmentModeText(task);
     const supplierStatus = supplierPatched
       ? `AI 已整理字段，并从用友供应商档案回填 ${supplierPatched} 项乙方信息。`
-      : supplierNotice
-        ? "AI 已整理字段，请在确认稿中查看用友抬头提示。"
-        : (missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。");
+      : (missing > 0 ? "AI 已整理字段，请重点确认红色提示。" : "AI 已整理字段，未发现缺失字段。");
+    if (shouldShowSupplierPatchModal(task.fieldPreview.supplierPatch)) {
+      openSupplierPatchModal("result", task.fieldPreview.supplierPatch, previewSchema);
+    }
     setTaskStatus(
       task,
       "needs_fields",
       missing > 0
-        ? `AI 已识别主字段，仍有 ${missing} 项需要人工确认。${supplierHint}${supplierNotice ? " 请在确认稿中查看用友抬头提示。" : ""}${attachmentHint ? ` ${attachmentHint}` : ""}`
-        : `AI 已识别字段，未发现缺失字段。${supplierHint}${supplierNotice ? " 请在确认稿中查看用友抬头提示。" : ""}${attachmentHint ? ` ${attachmentHint}` : ""}`,
+        ? `AI 已识别主字段，仍有 ${missing} 项需要人工确认。${supplierHint}${attachmentHint ? ` ${attachmentHint}` : ""}`
+        : `AI 已识别字段，未发现缺失字段。${supplierHint}${attachmentHint ? ` ${attachmentHint}` : ""}`,
     );
     setStatus(
       attachmentHint || supplierStatus,
-      attachmentHint || supplierNotice || missing > 0 ? "info" : "success",
+      attachmentHint || missing > 0 ? "info" : "success",
     );
   } catch (error) {
     const message = formatError(error);
@@ -2838,6 +2916,10 @@ generateButton.addEventListener("click", async () => {
 closeTaskDrawerButton?.addEventListener("click", closeTaskDrawer);
 taskDrawerBackdrop?.addEventListener("click", closeTaskDrawer);
 closeAccessModalButton?.addEventListener("click", closeAccessModal);
+closeSupplierPatchModalButton?.addEventListener("click", closeSupplierPatchModal);
+supplierPatchModal?.addEventListener("click", (event) => {
+  if (event.target === supplierPatchModal) closeSupplierPatchModal();
+});
 tableModeInputs.forEach((input) => {
   input.addEventListener("change", () => {
     setTaskTableMode(activeTask(), input.checked ? "attachment" : "template");
@@ -2853,7 +2935,11 @@ document.addEventListener("keydown", (event) => {
     closeCreatePanel({ clearFile: true });
     return;
   }
-  if (accessModal && !accessModal.hidden) closeAccessModal();
+  if (accessModal && !accessModal.hidden) {
+    closeAccessModal();
+    return;
+  }
+  if (supplierPatchModal && !supplierPatchModal.hidden) closeSupplierPatchModal();
 });
 
 updateSelectedFile();
