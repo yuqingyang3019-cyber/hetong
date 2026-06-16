@@ -41,7 +41,7 @@
             <button id="openCreateTaskButton" class="btn-primary task-board-create-button" type="button">新建任务</button>
             <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务；处理中可关闭详情继续处理下一份。</p>
           </div>
-          <div id="taskList" class="task-list"></div>
+          <div id="taskList" class="task-list" aria-label="任务列表"></div>
           <div id="taskCreatePanel" class="task-create-strip" hidden>
             <div class="create-panel-heading">
               <div>
@@ -154,8 +154,11 @@
 
           <footer class="drawer-actions">
             <div id="processingCard" class="processing-card drawer-footer-status" role="status" aria-live="polite" hidden>
-              <strong id="processingTitle">任务处理中</strong>
-              <p id="processingHint" class="hint">请稍候，系统正在处理当前报价单。</p>
+              <span class="processing-spinner" aria-hidden="true"></span>
+              <div class="processing-card-copy">
+                <strong id="processingTitle">任务处理中</strong>
+                <p id="processingHint" class="hint">请稍候，系统正在处理当前报价单。</p>
+              </div>
             </div>
             <div id="drawerDownloadAction" class="drawer-download-action" hidden></div>
             <p id="drawerActionHint" class="drawer-action-hint hint" aria-live="polite"></p>
@@ -185,6 +188,7 @@
     <div id="supplierPatchModal" class="modal-backdrop" role="presentation" hidden>
       <section class="supplier-patch-modal" role="dialog" aria-modal="true" aria-labelledby="supplierPatchModalTitle">
         <h2 id="supplierPatchModalTitle">乙方抬头提示</h2>
+        <p id="supplierPatchModalSubtitle" class="supplier-patch-modal-subtitle" hidden></p>
         <div id="supplierPatchModalBody"></div>
         <button id="closeSupplierPatchModalButton" class="btn-primary modal-close-button" type="button">知道了</button>
       </section>

@@ -31,6 +31,7 @@ const accessModalMessage = document.querySelector("#accessModalMessage");
 const closeAccessModalButton = document.querySelector("#closeAccessModalButton");
 const supplierPatchModal = document.querySelector("#supplierPatchModal");
 const supplierPatchModalBody = document.querySelector("#supplierPatchModalBody");
+const supplierPatchModalSubtitle = document.querySelector("#supplierPatchModalSubtitle");
 const closeSupplierPatchModalButton = document.querySelector("#closeSupplierPatchModalButton");
 const taskDrawer = document.querySelector("#taskDrawer");
 const taskDrawerBackdrop = document.querySelector("#taskDrawerBackdrop");
@@ -1635,15 +1636,82 @@ function setTaskTableMode(task, mode) {
   updateActionAvailability();
 }
 
+function buildSupplierPatchSummary(supplierPatch, schema) {
+  if (!supplierPatch || supplierPatch.reason === "not_attempted") return null;
+  const result = buildSupplierPatchResult(supplierPatch, schema);
+  if (!result) return null;
+  if (result.errorMessage) {
+    return {
+      tone: "warning",
+      text: result.errorMessage,
+      showDetail: true,
+    };
+  }
+  const foundCount = result.foundLabels.length;
+  const missingCount = result.missingLabels.length;
+  if (missingCount > 0) {
+    return {
+      tone: "warning",
+      text: `用友已读取 ${foundCount} 项，仍有 ${missingCount} 项需在确认稿中补充或到用友维护档案。`,
+      showDetail: true,
+    };
+  }
+  if (foundCount > 0) {
+    return {
+      tone: "success",
+      text: `已从用友读取 ${foundCount} 项乙方抬头。`,
+      showDetail: false,
+    };
+  }
+  return null;
+}
+
+function collectYonbipFilledKeys(supplierPatch) {
+  const keys = new Set();
+  if (!supplierPatch) return keys;
+  const sources = [
+    supplierPatch.overwrittenFields,
+    supplierPatch.appliedFields,
+    supplierPatch.patch && typeof supplierPatch.patch === "object" ? Object.keys(supplierPatch.patch) : [],
+  ];
+  sources.forEach((list) => {
+    if (!Array.isArray(list)) return;
+    list.forEach((key) => {
+      if (key) keys.add(key);
+    });
+  });
+  return keys;
+}
+
+function partiesGroupBadgeLabel(supplierPatch) {
+  if (!supplierPatch || supplierPatch.reason === "not_attempted") return "";
+  const missingCount = Array.isArray(supplierPatch.missingYonbipFields) ? supplierPatch.missingYonbipFields.length : 0;
+  if (!supplierPatch.matched) return "待补抬头";
+  if (missingCount > 0) return "用友部分缺失";
+  return "用友已参与";
+}
+
 function syncFieldPreviewSummary(stats) {
   if (!fieldPreviewSummary) return;
-  fieldPreviewSummary.className = `hint field-preview-summary${stats.missing ? " has-missing" : " all-recognized"}`;
+  const task = activeTask();
+  const supplierPatch = task?.fieldPreview?.supplierPatch;
+  const previewSchema = task
+    ? templateSchemaCache.get(templateSchemaFiles[task.templateType] || templateSchemaFiles[DEFAULT_TEMPLATE_TYPE])
+    : null;
+  const supplierSummary = buildSupplierPatchSummary(supplierPatch, previewSchema);
+  const supplierWarning = supplierSummary?.tone === "warning";
+  fieldPreviewSummary.className = [
+    "hint",
+    "field-preview-summary",
+    "is-sticky",
+    stats.missing ? "has-missing" : "all-recognized",
+    supplierWarning ? "has-supplier-warning" : "",
+  ].filter(Boolean).join(" ");
   fieldPreviewSummary.textContent = "";
   const message = stats.missing
     ? `按合同顺序展示：已识别 ${stats.recognized} 项，仍有 ${stats.missing} 项待填写。可直接修改字段，确认生成后空字段会在 Word 合同中留空。`
     : `按合同顺序展示：已识别 ${stats.recognized} 项，没有待填写字段。可直接修改字段后生成合同。`;
   fieldPreviewSummary.append(document.createTextNode(message));
-  const task = activeTask();
   const attachmentText = taskAttachmentModeText(task);
   if (attachmentText) {
     fieldPreviewSummary.append(document.createElement("br"), document.createTextNode(attachmentText));
@@ -1661,6 +1729,18 @@ function syncFieldPreviewSummary(stats) {
       ? "已填写协议内容覆盖：生成时将替换设备明细表格（含合计与金额行）。"
       : "未填写协议内容覆盖：生成时将使用下方明细表。";
     fieldPreviewSummary.append(document.createElement("br"), document.createTextNode(itemsOverrideHint));
+  }
+  if (supplierSummary) {
+    const hint = createEl("p", "supplier-inline-hint", supplierSummary.text);
+    fieldPreviewSummary.append(hint);
+    if (supplierSummary.showDetail) {
+      const detailButton = createEl("button", "field-preview-supplier-detail", "查看用友详情");
+      detailButton.type = "button";
+      detailButton.addEventListener("click", () => {
+        openSupplierPatchModal("result", supplierPatch, previewSchema);
+      });
+      fieldPreviewSummary.append(detailButton);
+    }
   }
   if (stats.missing) {
     const jumpButton = createEl("button", "field-preview-jump", "定位第一个待填写字段");
@@ -1717,10 +1797,8 @@ function buildSupplierPatchResult(supplierPatch, schema) {
 function shouldShowSupplierPatchModal(supplierPatch) {
   if (!supplierPatch) return false;
   if (supplierPatch.reason === "not_attempted") return false;
-  const missingCount = Array.isArray(supplierPatch.missingYonbipFields) ? supplierPatch.missingYonbipFields.length : 0;
-  if (supplierPatch.matched && missingCount > 0) return true;
-  if (!supplierPatch.matched && supplierPatch.reason) return true;
-  return false;
+  const autoPopupReasons = new Set(["not_found", "ambiguous", "lookup_error", "missing_supplier_name"]);
+  return autoPopupReasons.has(supplierPatch.reason);
 }
 
 function setSupplierLookupButtonLoading(button, loading) {
@@ -1800,8 +1878,22 @@ function openSupplierPatchModal(mode, supplierPatch, schema) {
   if (!supplierPatchModal) return;
   if (mode === "loading") {
     renderSupplierPatchModalLoading();
+    if (supplierPatchModalSubtitle) {
+      supplierPatchModalSubtitle.hidden = true;
+      supplierPatchModalSubtitle.textContent = "";
+    }
   } else {
     renderSupplierPatchModalResult(supplierPatch, schema);
+    const supplierName = String(supplierPatch?.patch?.supplierName || supplierPatch?.supplierName || "").trim();
+    if (supplierPatchModalSubtitle) {
+      if (supplierName) {
+        supplierPatchModalSubtitle.hidden = false;
+        supplierPatchModalSubtitle.textContent = `乙方：${supplierName}`;
+      } else {
+        supplierPatchModalSubtitle.hidden = true;
+        supplierPatchModalSubtitle.textContent = "";
+      }
+    }
   }
   supplierPatchModal.hidden = false;
   window.setTimeout(() => closeSupplierPatchModalButton?.focus(), 0);
@@ -1891,6 +1983,7 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
     "contract-preview-field",
     missing ? "is-missing" : "is-recognized",
     options.autoFilled ? "is-auto-filled" : "",
+    options.yonbipFilled ? "is-yonbip-filled" : "",
   ].filter(Boolean).join(" "));
   const editor = createEl("textarea", "contract-field-editor");
   editor.rows = 2;
@@ -1919,7 +2012,12 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
     refreshFieldPreviewSummary(options.schema, options.extractedData);
   });
 
-  field.append(createEl("span", "contract-field-label", `${prefix}${label}`));
+  const labelRow = createEl("span", "contract-field-label-row");
+  labelRow.append(createEl("span", "contract-field-label", `${prefix}${label}`));
+  if (options.yonbipFilled) {
+    labelRow.append(createEl("span", "yonbip-field-badge", "用友"));
+  }
+  field.append(labelRow);
   if (options.lookupSupplier) {
     const editorRow = createEl("div", "contract-supplier-name-editor-row");
     editorRow.append(editor);
@@ -2046,7 +2144,7 @@ function appendPaymentTermsOverrideField(groupBody, task, canEditPreview) {
   groupBody.append(field);
 }
 
-function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview, task) {
+function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview, task, yonbipFilledKeys = new Set()) {
   const scalars = previewScalars(schema?.scalars, task);
   if (!scalars.length && !supportsPaymentTermsOverride(task?.templateType)) return;
 
@@ -2055,6 +2153,7 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
   const body = createEl("div", "contract-preview-groups");
   const scalarEditors = new Map();
   const groups = createScalarFieldGroups(scalars, extractedData, task);
+  const supplierPatch = task?.fieldPreview?.supplierPatch;
   let displayIndex = 1;
 
   groups.forEach((group) => {
@@ -2073,7 +2172,16 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
       "contract-field-group-stat",
       group.stats.missing ? `${group.stats.missing} 项待补` : "已完整",
     );
-    groupHeader.append(title, stat);
+    groupHeader.append(title);
+    if (group.id === "parties") {
+      const badgeLabel = partiesGroupBadgeLabel(supplierPatch);
+      if (badgeLabel) {
+        const missingCount = Array.isArray(supplierPatch?.missingYonbipFields) ? supplierPatch.missingYonbipFields.length : 0;
+        const badgeClass = supplierPatch?.matched && missingCount === 0 ? "parties-group-badge" : "parties-group-badge is-warning";
+        groupHeader.append(createEl("span", badgeClass, badgeLabel));
+      }
+    }
+    groupHeader.append(stat);
     const groupBody = createEl("div", "contract-preview-flow");
 
     if (supportsPaymentTermsOverride(task?.templateType) && group.id === "payment") {
@@ -2103,6 +2211,7 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
           `${displayIndex}. `,
           {
             autoFilled: autoFilledKeys?.has(field.key) || field.key === "totalAmountChinese",
+            yonbipFilled: yonbipFilledKeys.has(field.key),
             extractedData,
             fieldKey: field.key,
             readonly: field.key === "totalAmountChinese",
@@ -2272,6 +2381,7 @@ async function renderFieldPreview(task) {
     applyDeliveryDateCalculation(extractedData).forEach((key) => autoFilledKeys.add(key));
   }
   syncLineItemCalculations(extractedData, previewSchema, task);
+  const yonbipFilledKeys = collectYonbipFilledKeys(task.fieldPreview?.supplierPatch);
   const canEditPreview = !taskIsBusy(task) && task.status !== "completed";
   const stats = { recognized: 0, missing: 0 };
 
@@ -2289,7 +2399,7 @@ async function renderFieldPreview(task) {
           : "以下内容按模板字段顺序生成，可直接修改后生成合同。"),
     );
     paper.append(title);
-    renderScalarPreview(paper, previewSchema, extractedData, stats, autoFilledKeys, canEditPreview, task);
+    renderScalarPreview(paper, previewSchema, extractedData, stats, autoFilledKeys, canEditPreview, task, yonbipFilledKeys);
     renderTablePreview(paper, previewSchema, extractedData, stats, canEditPreview, task);
     contractPreviewEl.append(paper);
   }
@@ -2594,8 +2704,10 @@ function renderTaskList() {
   createCard.type = "button";
   createCard.disabled = !sessionReady || incompleteTaskCount() >= MAX_TASKS;
   createCard.append(
-    createEl("strong", "", hasTasks ? "+ 新建报价单任务" : "还没有任务，上传第一份报价单"),
-    createEl("span", "", createCard.disabled ? uploadDisabledReason() : "点击新建任务，选择模板和报价单后开始解析"),
+    createEl("strong", "", hasTasks ? "+ 新建报价单任务" : "开始第一份合同"),
+    createEl("span", "", createCard.disabled
+      ? uploadDisabledReason()
+      : "选模板 → 可选上传报价单 → 确认字段后生成"),
   );
   createCard.addEventListener("click", openCreatePanel);
 
@@ -2618,9 +2730,7 @@ function renderTaskList() {
     );
     header.append(title, createEl("span", `task-status status-${task.status}`, statusLabel(task.status)));
 
-    const message = createEl("p", "task-message", task.message || "等待处理");
-    const stage = createEl("p", "task-stage", `${taskStageLabel(task)} · ${taskNextAction(task)}`);
-    const meta = createEl("p", "task-file-path", `${task.templateName} · ${task.fileName}`);
+    const stage = createEl("p", "task-stage", taskNextAction(task));
     const actions = createEl("div", "task-actions");
     const selectButton = createEl("button", "btn-secondary task-secondary-button", task.id === activeTaskId && drawerOpen ? "正在查看" : "查看详情");
     selectButton.type = "button";
@@ -2646,7 +2756,11 @@ function renderTaskList() {
     });
     actions.append(deleteButton);
 
-    card.append(header, stage, meta, message, actions);
+    card.append(header, stage);
+    if (task.status === "failed" && task.message) {
+      card.append(createEl("p", "task-message-failed", task.message));
+    }
+    card.append(actions);
     const downloadNode = createTaskDownloadNode(task);
     if (downloadNode) card.append(downloadNode);
     taskList.append(card);
