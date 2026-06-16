@@ -1512,6 +1512,43 @@ async def preview_quote_fields_api(
     }
 
 
+@app.post("/api/suppliers/lookup")
+async def supplier_lookup_api(request: Request, current_user: dict = Depends(get_current_user)) -> dict[str, Any]:
+    start = time.perf_counter()
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise api_error(400, "INVALID_ARGUMENT", "供应商查询请求体格式不正确") from exc
+    if not isinstance(payload, dict):
+        raise api_error(400, "INVALID_ARGUMENT", "供应商查询请求体格式不正确")
+    supplier_name = str(payload.get("supplierName") or "").strip()
+    log_info(
+        "supplier lookup api request start",
+        supplierName=supplier_name,
+        dingtalkUserId=current_user.get("userid"),
+    )
+    supplier_patch: dict[str, Any]
+    try:
+        supplier_patch = supplier_patch_from_yonbip({"supplierName": supplier_name})
+        log_info(
+            "supplier lookup api request finished",
+            supplierName=supplier_name,
+            matched=supplier_patch.get("matched"),
+            reason=supplier_patch.get("reason"),
+            missingYonbipFields=supplier_patch.get("missingYonbipFields"),
+            elapsedMs=elapsed_ms(start),
+        )
+    except Exception as exc:
+        supplier_patch = {"source": "yonbip", "matched": False, "patch": {}, "reason": "lookup_error", "error": str(exc)}
+        log_warning(
+            "supplier lookup api request failed",
+            supplierName=supplier_name,
+            error=str(exc),
+            elapsedMs=elapsed_ms(start),
+        )
+    return {"ok": True, "supplierPatch": supplier_patch}
+
+
 @app.post("/api/contracts/generate")
 async def generate_contract_api(request: Request, current_user: dict = Depends(get_current_user)) -> dict[str, Any]:
     start = time.perf_counter()

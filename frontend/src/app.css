@@ -1206,6 +1206,23 @@ button:disabled {
   margin: 0;
 }
 
+.contract-supplier-name-editor-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.contract-supplier-name-editor-row .contract-field-editor {
+  flex: 1;
+  min-width: 0;
+}
+
+.contract-supplier-lookup {
+  flex-shrink: 0;
+  margin-top: 1px;
+  white-space: nowrap;
+}
+
 .contract-preview-flow {
   display: grid;
   gap: 6px;

@@ -74,6 +74,17 @@ const dateFieldGroups = Object.freeze([
   { id: "deliveryDate", label: "最迟交货日期", keys: ["deliveryYear", "deliveryMonth", "deliveryDay"], suffixes: ["年", "月", "日"] },
   { id: "signatureDate", label: "签署日期", keys: ["signatureYear", "signatureMonth", "signatureDay"], suffixes: ["年", "月", "日"] },
 ]);
+const SUPPLIER_FIELD_LABELS = Object.freeze({
+  supplierName: "乙方名称",
+  supplierAddress: "乙方联系地址",
+  supplierBank: "乙方开户银行",
+  supplierAccount: "乙方银行账号",
+  supplierTaxNo: "乙方税号",
+  supplierPhone: "乙方电话",
+  supplierRepresentativeName: "乙方代表姓名",
+  supplierRepresentativePhone: "乙方代表电话",
+  supplierRepresentativeEmail: "乙方代表邮箱",
+});
 const fieldGroupDefinitions = Object.freeze([
   { id: "basic", label: "基础信息", hint: "合同编号、项目、签订与签署信息" },
   { id: "parties", label: "甲乙方信息", hint: "签约主体、联系方式与代表人" },
@@ -811,6 +822,19 @@ async function parseUploadedQuote(uploadId, taskTemplateType) {
     throw new Error(body.message || body.detail || body.error || "解析报价单失败");
   }
   return response.json();
+}
+
+async function lookupSupplierByName(supplierName) {
+  const response = await fetchAgent("/api/suppliers/lookup", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ supplierName }),
+  });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(body.message || body.detail || body.error || "用友查询失败");
+  }
+  return body;
 }
 
 async function previewQuoteFields(uploadId, quoteText, extraInfo, taskTemplateType, tableMode = "auto") {
@@ -1589,11 +1613,21 @@ function refreshFieldPreviewSummary(schema, extractedData) {
   syncFieldPreviewSummary(calculatePreviewStats(schema, extractedData));
 }
 
-function supplierPatchNotice(supplierPatch) {
+function supplierFieldLabel(key, schema) {
+  const scalar = previewScalars(schema?.scalars).find((field) => field.key === key);
+  return scalar?.label || SUPPLIER_FIELD_LABELS[key] || key;
+}
+
+function formatMissingSupplierFieldLabels(keys, schema) {
+  return keys.map((key) => supplierFieldLabel(key, schema)).join("、");
+}
+
+function supplierPatchNotice(supplierPatch, schema) {
   if (!supplierPatch) return "";
   const missingFields = Array.isArray(supplierPatch.missingYonbipFields) ? supplierPatch.missingYonbipFields : [];
   if (supplierPatch.matched && missingFields.length) {
-    return "用友抬头信息不完整，请补齐缺失项。";
+    const labels = formatMissingSupplierFieldLabels(missingFields, schema);
+    return `用友未返回以下抬头字段：${labels}，无法自动读取，请手动填写或到用友系统补充。`;
   }
   if (supplierPatch.matched || supplierPatch.appliedFields?.length) return "";
   const reason = supplierPatch.reason || "";
@@ -1604,8 +1638,8 @@ function supplierPatchNotice(supplierPatch) {
   return "";
 }
 
-function renderSupplierPatchNotice(paper, supplierPatch) {
-  const notice = supplierPatchNotice(supplierPatch);
+function renderSupplierPatchNotice(paper, supplierPatch, schema) {
+  const notice = supplierPatchNotice(supplierPatch, schema);
   if (!notice) return;
   const section = createEl("section", "contract-preview-section supplier-title-notice");
   section.append(
@@ -1613,6 +1647,65 @@ function renderSupplierPatchNotice(paper, supplierPatch) {
     createEl("p", "", notice),
   );
   paper.append(section);
+}
+
+function ensureSupplierAutoFilledKeys(task) {
+  if (!task.fieldPreview) return new Set();
+  if (!task.fieldPreview.supplierAutoFilledKeys) {
+    const initial = [
+      ...(task.fieldPreview.supplierPatch?.appliedFields || []),
+      ...(task.fieldPreview.supplierPatch?.overwrittenFields || []),
+    ];
+    task.fieldPreview.supplierAutoFilledKeys = new Set(initial);
+  }
+  return task.fieldPreview.supplierAutoFilledKeys;
+}
+
+function applySupplierPatchToExtracted(extractedData, supplierPatch) {
+  const patch = supplierPatch?.patch;
+  if (!patch || typeof patch !== "object") return new Set();
+  const changed = new Set();
+  Object.entries(patch).forEach(([key, value]) => {
+    const text = String(value ?? "").trim();
+    if (!text) return;
+    if (String(extractedData[key] ?? "").trim() !== text) {
+      extractedData[key] = text;
+      changed.add(key);
+    }
+  });
+  supplierPatch.appliedFields = [...changed].sort();
+  supplierPatch.overwrittenFields = [...changed].sort();
+  return changed;
+}
+
+async function lookupSupplierTitle(task, schema) {
+  const extractedData = task.fieldPreview?.extractedData;
+  if (!extractedData || typeof extractedData !== "object") return;
+  const supplierName = String(extractedData.supplierName ?? "").trim();
+  if (!supplierName) {
+    setStatus("请先填写乙方名称。", "error");
+    return;
+  }
+  try {
+    setStatus("正在查询用友供应商档案...", "info");
+    const body = await lookupSupplierByName(supplierName);
+    const supplierPatch = body.supplierPatch || {};
+    const changed = applySupplierPatchToExtracted(extractedData, supplierPatch);
+    task.fieldPreview.supplierPatch = supplierPatch;
+    changed.forEach((key) => ensureSupplierAutoFilledKeys(task).add(key));
+    await renderFieldPreview(task);
+    const notice = supplierPatchNotice(supplierPatch, schema);
+    const patchedCount = supplierPatch.appliedFields?.length || changed.size;
+    if (supplierPatch.matched) {
+      if (notice) setStatus(notice, "info");
+      else if (patchedCount) setStatus(`已从用友供应商档案回填 ${patchedCount} 项乙方信息。`, "success");
+      else setStatus("用友查询完成，抬头字段无变化。", "success");
+      return;
+    }
+    setStatus(notice || "用友查询未命中。", "info");
+  } catch (error) {
+    setStatus(formatError(error), "error");
+  }
 }
 
 function scrollToFirstMissingField() {
@@ -1678,7 +1771,20 @@ function createContractField(label, value, stats, prefix = "", options = {}) {
   });
 
   field.append(createEl("span", "contract-field-label", `${prefix}${label}`));
-  field.append(editor);
+  if (options.lookupSupplier) {
+    const editorRow = createEl("div", "contract-supplier-name-editor-row");
+    editorRow.append(editor);
+    const lookupButton = createEl("button", "btn-secondary contract-supplier-lookup", "查询用友抬头");
+    lookupButton.type = "button";
+    lookupButton.disabled = Boolean(options.disabled || options.readonly);
+    lookupButton.addEventListener("click", () => {
+      void lookupSupplierTitle(options.lookupSupplier.task, options.lookupSupplier.schema);
+    });
+    editorRow.append(lookupButton);
+    field.append(editorRow);
+  } else {
+    field.append(editor);
+  }
   if (options.autoFilled) field.append(createEl("span", "contract-field-badge", "系统自动填充"));
   return field;
 }
@@ -1823,6 +1929,7 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
             scalarEditors,
             schema,
             disabled: !canEditPreview,
+            lookupSupplier: field.key === "supplierName" ? { task, schema } : null,
           },
         ));
       }
@@ -1967,6 +2074,7 @@ async function renderFieldPreview(task) {
   if (schemaHasScalar(schema, "deliveryDays")) {
     applyDeliveryDateCalculation(extractedData).forEach((key) => autoFilledKeys.add(key));
   }
+  ensureSupplierAutoFilledKeys(task).forEach((key) => autoFilledKeys.add(key));
   syncLineItemCalculations(extractedData, previewSchema, task);
   const canEditPreview = !taskIsBusy(task) && task.status !== "completed";
   const stats = { recognized: 0, missing: 0 };
@@ -1986,7 +2094,7 @@ async function renderFieldPreview(task) {
     );
     paper.append(title);
     renderScalarPreview(paper, previewSchema, extractedData, stats, autoFilledKeys, canEditPreview, task);
-    renderSupplierPatchNotice(paper, task.fieldPreview?.supplierPatch);
+    renderSupplierPatchNotice(paper, task.fieldPreview?.supplierPatch, schema);
     renderTablePreview(paper, previewSchema, extractedData, stats, canEditPreview, task);
     contractPreviewEl.append(paper);
   }
@@ -2460,7 +2568,8 @@ async function runIdentifyTask(task) {
     const missing = task.fieldPreview.missingFields?.length || 0;
     const supplierPatched = task.fieldPreview.supplierPatch?.overwrittenFields?.length || task.fieldPreview.supplierPatch?.appliedFields?.length || 0;
     const supplierHint = supplierPatched ? ` 已从用友供应商档案回填 ${supplierPatched} 项乙方信息。` : "";
-    const supplierNotice = supplierPatchNotice(task.fieldPreview.supplierPatch);
+    const previewSchema = templateSchemaCache.get(templateSchemaFiles[task.templateType] || templateSchemaFiles[DEFAULT_TEMPLATE_TYPE]);
+    const supplierNotice = supplierPatchNotice(task.fieldPreview.supplierPatch, previewSchema);
     const attachmentHint = taskAttachmentModeText(task);
     const supplierStatus = supplierPatched
       ? `AI 已整理字段，并从用友供应商档案回填 ${supplierPatched} 项乙方信息。`

@@ -764,6 +764,55 @@ def test_field_preview_yonbip_failure_does_not_block() -> None:
     assert body["supplierPatch"]["reason"] == "lookup_error"
 
 
+def test_supplier_lookup_api_success() -> None:
+    fake_patch = {
+        "source": "yonbip",
+        "matched": True,
+        "patch": {"supplierTaxNo": "9133", "supplierAccount": "6222"},
+        "missingYonbipFields": ["supplierBank"],
+    }
+    with patch("agent.main.supplier_patch_from_yonbip", return_value=fake_patch):
+        response = client.post(
+            "/api/suppliers/lookup",
+            headers=agent_auth_header(),
+            json={"supplierName": "供应商A"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["supplierPatch"]["matched"] is True
+    assert body["supplierPatch"]["patch"]["supplierTaxNo"] == "9133"
+    assert body["supplierPatch"]["missingYonbipFields"] == ["supplierBank"]
+
+
+def test_supplier_lookup_api_missing_name() -> None:
+    response = client.post(
+        "/api/suppliers/lookup",
+        headers=agent_auth_header(),
+        json={"supplierName": "  "},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["supplierPatch"]["matched"] is False
+    assert body["supplierPatch"]["reason"] == "missing_supplier_name"
+
+
+def test_supplier_lookup_api_yonbip_error() -> None:
+    with patch("agent.main.supplier_patch_from_yonbip", side_effect=RuntimeError("YonBIP timeout")):
+        response = client.post(
+            "/api/suppliers/lookup",
+            headers=agent_auth_header(),
+            json={"supplierName": "供应商A"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["supplierPatch"]["matched"] is False
+    assert body["supplierPatch"]["reason"] == "lookup_error"
+
+
 def test_field_preview_complex_excel_uses_scalar_only_contract() -> None:
     content = xlsx_bytes([["品名", "数量"], *[[f"设备{i}", i] for i in range(1, 6)]])
     upload_id = upload_quote(

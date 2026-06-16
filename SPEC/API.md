@@ -441,6 +441,45 @@ Authorization: Bearer <agentAccessToken>
 - 若用友缺少税号、地址、电话、开户行或银行账号等合同需要的抬头字段，`missingYonbipFields` 应列出缺失字段，前端提示用户到用友系统补充供应商抬头信息或先手动填写。
 - FC 后端不生成、不下载、不上传 `supplier-cache.xlsx`，不在本地或钉盘长期保存供应商档案。
 
+### 6.5 用友供应商抬头查询
+
+```http
+POST /api/suppliers/lookup
+Authorization: Bearer <agentAccessToken>
+```
+
+请求：
+
+```json
+{
+  "supplierName": "某某供应商有限公司"
+}
+```
+
+响应：
+
+```json
+{
+  "ok": true,
+  "supplierPatch": {
+    "source": "yonbip",
+    "matched": true,
+    "patch": {
+      "supplierTaxNo": "9133...",
+      "supplierAccount": "6222..."
+    },
+    "missingYonbipFields": ["supplierBank"],
+    "reason": null
+  }
+}
+```
+
+规则：
+
+- 字段确认环节用户修改乙方名称后，可调用本接口再次按名称实时查询用友供应商档案。
+- 查询逻辑、回填字段、`supplierPatch` 结构与字段识别预览中的用友抬头回填一致。
+- 用友接口异常时返回 HTTP 200 和 `supplierPatch.reason = "lookup_error"`，不阻塞前端继续编辑和生成合同。
+
 ## 7. SDK 使用约束
 
 - 前端只使用钉钉客户端 JSAPI SDK 获取免登授权码。
