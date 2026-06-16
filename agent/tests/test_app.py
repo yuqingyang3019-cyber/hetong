@@ -19,7 +19,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from fastapi.testclient import TestClient
 
 from agent.contract import llm as contract_llm
-from agent.contract.config import TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
+from agent.contract.config import TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, get_template_typography, template_docx_path
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
 from agent.contract.render import (
     append_quote_attachment,
@@ -1219,16 +1219,33 @@ def test_confirmed_blank_fields_render_empty() -> None:
     assert '<w:u w:val="single"/>' not in item_xml
 
 
+def test_labor_subcontract_context_uses_fangsong_xiaosi() -> None:
+    config = get_template_config("laborSubcontract")
+    context = build_docxtpl_context({"projectName": "测试项目", "items": []}, config, blank_missing=True)
+    project_xml = str(context["projectName"])
+    assert 'w:eastAsia="仿宋"' in project_xml
+    assert 'w:sz w:val="24"' in project_xml
+
+
+def test_simple_contract_context_uses_songti() -> None:
+    config = get_template_config("simpleContract")
+    context = build_docxtpl_context({"contractNo": "SC-001", "items": []}, config, blank_missing=True)
+    contract_xml = str(context["contractNo"])
+    assert 'w:eastAsia="宋体"' in contract_xml
+    assert 'w:sz w:val="21"' in contract_xml
+
+
 def test_append_quote_attachment_adds_excel_tables(tmp_path: Path) -> None:
     docx_path = tmp_path / "contract.docx"
     Document().save(docx_path)
+    typography = get_template_typography("caigouhetong")
 
     append_quote_attachment(docx_path, {
         "sheets": [{
             "name": "报价",
             "rows": [["品名", "数量"], ["阀门", "2"]],
         }],
-    })
+    }, typography)
 
     document = Document(docx_path)
     paragraph_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
@@ -1250,7 +1267,7 @@ def test_append_quote_attachment_skips_empty_rows_without_adding_page(tmp_path: 
             "name": "报价",
             "rows": [["", ""], ["", ""]],
         }],
-    })
+    }, get_template_typography("caigouhetong"))
 
     document = Document(docx_path)
     assert len(document.paragraphs) == original_paragraph_count
@@ -1267,7 +1284,7 @@ def test_append_quote_attachment_does_not_require_heading_styles(tmp_path: Path)
             "name": "报价",
             "rows": [["品名", "数量"], ["阀门", "2"]],
         }],
-    })
+    }, get_template_typography("caigouhetong"))
 
     document = Document(docx_path)
     assert any(paragraph.text == "附件：报价单明细" for paragraph in document.paragraphs)
@@ -1283,7 +1300,7 @@ def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Pa
             "name": "报价",
             "rows": [["品名", "数量"], ["阀门", "2"]],
         }],
-    })
+    }, get_template_typography("caigouhetong"))
 
     with ZipFile(docx_path) as docx:
         xml = docx.read("word/document.xml").decode("utf-8")

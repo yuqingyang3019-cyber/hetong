@@ -1,22 +1,35 @@
 """Patch caigouhetong payment override block and paragraph indentation."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.text.paragraph import Paragraph
 
-ROOT = Path(__file__).resolve().parents[2]
+from agent.scripts.template_docx_utils import copy_run_format, first_formatted_run
+
 DOCX_PATH = ROOT / "agent" / "contract" / "templates" / "zhanweifu" / "caigouhetong.docx"
 
 
-def insert_paragraph_after(paragraph: Paragraph, text: str = "") -> Paragraph:
+def insert_paragraph_after(
+    paragraph: Paragraph,
+    text: str = "",
+    format_source: Paragraph | None = None,
+) -> Paragraph:
     new_p = OxmlElement("w:p")
     paragraph._element.addnext(new_p)
     new_para = Paragraph(new_p, paragraph._parent)
     if text:
-        new_para.add_run(text)
+        new_run = new_para.add_run(text)
+        source_run = first_formatted_run(format_source) if format_source is not None else None
+        if source_run is not None:
+            copy_run_format(source_run, new_run)
     return new_para
 
 
@@ -45,16 +58,17 @@ def ensure_override_block(doc: Document) -> None:
 
     heading_p = doc.paragraphs[heading_idx]
     end_p = doc.paragraphs[end_idx]
+    format_source = doc.paragraphs[start_idx]
 
-    if_block = insert_paragraph_after(heading_p, "{% if hasPaymentTermsOverride %}")
-    override_p = insert_paragraph_after(if_block, "{{r paymentTermsOverride }}")
-    insert_paragraph_after(override_p, "{% else %}")
+    if_block = insert_paragraph_after(heading_p, "{% if hasPaymentTermsOverride %}", format_source)
+    override_p = insert_paragraph_after(if_block, "{{r paymentTermsOverride }}", format_source)
+    insert_paragraph_after(override_p, "{% else %}", format_source)
 
     for paragraph in doc.paragraphs:
         if paragraph.text.startswith("（5）质保金"):
             end_p = paragraph
             break
-    insert_paragraph_after(end_p, "{% endif %}")
+    insert_paragraph_after(end_p, "{% endif %}", format_source)
 
 
 def sync_override_indent(doc: Document) -> None:

@@ -41,6 +41,37 @@ TEMPLATE_DISPLAY_NAME: dict[str, str] = {
 
 
 @dataclass(frozen=True)
+class TemplateTypography:
+    east_asia: str
+    size_half_pt: int
+
+    @property
+    def rich_text_font(self) -> str:
+        return f"eastAsia:{self.east_asia}"
+
+    @property
+    def size_pt(self) -> float:
+        return self.size_half_pt / 2
+
+
+_FANGSONG_WUHAO = TemplateTypography(east_asia="仿宋", size_half_pt=21)
+_FANGSONG_XIAOSI = TemplateTypography(east_asia="仿宋", size_half_pt=24)
+_SONGTI_WUHAO = TemplateTypography(east_asia="宋体", size_half_pt=21)
+_SONGTI_XIAOSI = TemplateTypography(east_asia="宋体", size_half_pt=24)
+
+TEMPLATE_TYPOGRAPHY: dict[str, TemplateTypography] = {
+    "caigouhetong": _FANGSONG_WUHAO,
+    "nonStandardNoInstall": _FANGSONG_WUHAO,
+    "nonStandardWithInstall": _FANGSONG_WUHAO,
+    "annualFramework": _FANGSONG_WUHAO,
+    "laborSubcontract": _FANGSONG_XIAOSI,
+    "professionalSubcontract": _FANGSONG_XIAOSI,
+    "simpleContract": _SONGTI_WUHAO,
+    "supplementaryAgreement": _SONGTI_XIAOSI,
+}
+
+
+@dataclass(frozen=True)
 class TemplateConfig:
     type: str
     display_name: str
@@ -76,6 +107,12 @@ def template_docx_path(template_type: str) -> Path:
 
 def template_schema_path(template_type: str) -> Path:
     return TEMPLATE_ROOT / f"{template_basename(template_type)}.placeholders.json"
+
+
+def get_template_typography(template_type: str) -> TemplateTypography:
+    if template_type not in TEMPLATE_TYPOGRAPHY:
+        raise ValueError(f"不支持的合同模板：{template_type}")
+    return TEMPLATE_TYPOGRAPHY[template_type]
 
 
 @lru_cache(maxsize=16)

@@ -1,14 +1,23 @@
 """Patch simple-contract.source.docx with docxtpl placeholders, preserving WPS layout."""
 from __future__ import annotations
 
-import re
 import shutil
+import sys
 from copy import deepcopy
 from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from docx import Document
 from docx.table import _Row
 from docx.text.paragraph import Paragraph
+
+from agent.scripts.template_docx_utils import (
+    replace_paragraph_text_preserving_format,
+    set_cell_text_preserving_format,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DIR = ROOT / "agent" / "contract" / "templates" / "zhanweifu"
@@ -37,13 +46,6 @@ def is_already_patched(doc: Document) -> bool:
     return False
 
 
-def append_to_paragraph(paragraph: Paragraph, suffix: str) -> None:
-    if paragraph.runs:
-        paragraph.runs[-1].text = f"{paragraph.runs[-1].text}{suffix}"
-        return
-    paragraph.add_run(suffix)
-
-
 def find_paragraph(cell, predicate) -> Paragraph:
     for paragraph in cell.paragraphs:
         if predicate(paragraph.text):
@@ -51,26 +53,12 @@ def find_paragraph(cell, predicate) -> Paragraph:
     raise RuntimeError(f"未找到匹配段落：{predicate}")
 
 
-def replace_paragraph_text(paragraph: Paragraph, old: str, new: str) -> None:
-    if old not in paragraph.text:
-        raise RuntimeError(f"段落中未找到锚点 {old!r}：{paragraph.text!r}")
-    if len(paragraph.runs) == 1:
-        paragraph.runs[0].text = paragraph.runs[0].text.replace(old, new, 1)
-        return
-    combined = "".join(run.text for run in paragraph.runs)
-    if old not in combined:
-        raise RuntimeError(f"段落 run 中未找到锚点 {old!r}")
-    updated = combined.replace(old, new, 1)
-    for index, run in enumerate(paragraph.runs):
-        run.text = updated if index == 0 else ""
-
-
 def replace_in_cell_lines(cell, replacements: list[tuple[str, str]]) -> None:
     for old, new in replacements:
         matched = False
         for paragraph in cell.paragraphs:
             if old in paragraph.text:
-                replace_paragraph_text(paragraph, old, new)
+                replace_paragraph_text_preserving_format(paragraph, old, new)
                 matched = True
                 break
         if not matched:
@@ -125,7 +113,7 @@ def patch_table2_items(doc: Document) -> None:
     if table.rows[0].cells[1].text.strip() != "产品名称":
         raise RuntimeError("TABLE2 表头结构已变更")
 
-    table.rows[1].cells[0].text = "{%tr for item in items %}"
+    set_cell_text_preserving_format(table.rows[1].cells[0], "{%tr for item in items %}")
     data_row = clone_row_after(table, 1)
     item_columns = [
         "{{r item.index }}",
@@ -138,10 +126,10 @@ def patch_table2_items(doc: Document) -> None:
         "{{r item.remark }}",
     ]
     for index, placeholder in enumerate(item_columns):
-        data_row.cells[index].text = placeholder
+        set_cell_text_preserving_format(data_row.cells[index], placeholder)
 
     end_row = clone_row_after(table, 2)
-    end_row.cells[0].text = "{%tr endfor %}"
+    set_cell_text_preserving_format(end_row.cells[0], "{%tr endfor %}")
 
 
 def patch_table2_amounts(doc: Document) -> None:
@@ -174,14 +162,14 @@ def patch_paragraphs(doc: Document) -> None:
     for paragraph in doc.paragraphs:
         text = paragraph.text
         if "交（提）货地点、方式及货物接收人：" in text and not delivery_patched:
-            replace_paragraph_text(
+            replace_paragraph_text_preserving_format(
                 paragraph,
                 "交（提）货地点、方式及货物接收人： 。",
                 "交（提）货地点、方式及货物接收人：{{r deliveryPlace }}、{{r deliveryMethod }}及{{r goodsRecipient }}。",
             )
             delivery_patched = True
         if text.startswith("九、结算方式及期限：") and not settlement_patched:
-            replace_paragraph_text(
+            replace_paragraph_text_preserving_format(
                 paragraph,
                 "九、结算方式及期限：  。",
                 "九、结算方式及期限：{{r settlementTerms }}。",
@@ -197,7 +185,7 @@ def patch_table3(doc: Document) -> None:
     cell = doc.tables[3].rows[0].cells[1]
     for paragraph in cell.paragraphs:
         if "单位名称（章）：" in paragraph.text:
-            replace_paragraph_text(paragraph, "单位名称（章）： ", "单位名称（章）：{{r supplierName }} ")
+            replace_paragraph_text_preserving_format(paragraph, "单位名称（章）： ", "单位名称（章）：{{r supplierName }} ")
             return
     raise RuntimeError("未找到供方落款段落")
 

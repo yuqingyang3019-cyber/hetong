@@ -21,12 +21,15 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 from docxtpl import DocxTemplate, RichText
 
-from .config import CONTRACTS_DIR, TemplateConfig, ensure_storage, template_docx_path
+from .config import (
+    CONTRACTS_DIR,
+    TemplateConfig,
+    TemplateTypography,
+    ensure_storage,
+    get_template_typography,
+    template_docx_path,
+)
 
-RICH_TEXT_FONT = "eastAsia:仿宋"
-RICH_TEXT_SIZE = 21
-TABLE_TEXT_FONT = "仿宋"
-TABLE_TEXT_SIZE_PT = 10.5
 LEFT_ALIGNED_HEADER_TABLE_COUNT = 2
 UNDERLINE_BLANK = "        "
 LogFunc = Callable[..., None]
@@ -82,23 +85,39 @@ def _value_for_context(value: Any, label: str, blank_missing: bool = False) -> s
     return str(value)
 
 
-def _rich_text(value: Any, label: str, blank_missing: bool = False, underline: bool = False) -> RichText:
+def _rich_text(
+    value: Any,
+    label: str,
+    typography: TemplateTypography,
+    blank_missing: bool = False,
+    underline: bool = False,
+) -> RichText:
     text = _value_for_context(value, label, blank_missing)
     if underline and blank_missing and not text.strip():
         text = UNDERLINE_BLANK
     rich_text = RichText()
-    rich_text.add(text, font=RICH_TEXT_FONT, size=RICH_TEXT_SIZE, underline=underline)
+    rich_text.add(
+        text,
+        font=typography.rich_text_font,
+        size=typography.size_half_pt,
+        underline=underline,
+    )
     return rich_text
 
 
-def _rich_text_multiline(value: Any, label: str, blank_missing: bool = False) -> RichText:
+def _rich_text_multiline(
+    value: Any,
+    label: str,
+    typography: TemplateTypography,
+    blank_missing: bool = False,
+) -> RichText:
     text = _value_for_context(value, label, blank_missing)
     rich_text = RichText()
     lines = text.splitlines() or [""]
     for index, line in enumerate(lines):
         if index:
-            rich_text.add("\n", font=RICH_TEXT_FONT, size=RICH_TEXT_SIZE, underline=False)
-        rich_text.add(line, font=RICH_TEXT_FONT, size=RICH_TEXT_SIZE, underline=False)
+            rich_text.add("\n", font=typography.rich_text_font, size=typography.size_half_pt, underline=False)
+        rich_text.add(line, font=typography.rich_text_font, size=typography.size_half_pt, underline=False)
     return rich_text
 
 
@@ -173,6 +192,7 @@ def apply_attachment_table_summary(render_data: dict[str, Any], config: Template
 
 
 def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, blank_missing: bool = False) -> dict[str, Any]:
+    typography = get_template_typography(config.type)
     scalar_labels = {field["key"]: field["label"] for field in config.schema.get("scalars", [])}
     context: dict[str, Any] = {}
     override_text = _stringify(render_data.get(PAYMENT_TERMS_OVERRIDE_KEY)).strip()
@@ -185,16 +205,27 @@ def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, b
         context[key] = _rich_text(
             render_data.get(key),
             scalar_labels.get(key, key),
+            typography,
             blank_missing,
             underline=key not in NO_UNDERLINE_SCALAR_KEYS,
         )
     context[PAYMENT_TERMS_OVERRIDE_KEY] = (
-        _rich_text_multiline(override_text, scalar_labels.get(PAYMENT_TERMS_OVERRIDE_KEY, "付款期限覆盖内容"), blank_missing)
+        _rich_text_multiline(
+            override_text,
+            scalar_labels.get(PAYMENT_TERMS_OVERRIDE_KEY, "付款期限覆盖内容"),
+            typography,
+            blank_missing,
+        )
         if override_text
         else RichText()
     )
     context[ITEMS_CONTENT_OVERRIDE_KEY] = (
-        _rich_text_multiline(items_override_text, scalar_labels.get(ITEMS_CONTENT_OVERRIDE_KEY, "协议内容覆盖"), blank_missing)
+        _rich_text_multiline(
+            items_override_text,
+            scalar_labels.get(ITEMS_CONTENT_OVERRIDE_KEY, "协议内容覆盖"),
+            typography,
+            blank_missing,
+        )
         if items_override_text
         else RichText()
     )
@@ -207,7 +238,13 @@ def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, b
             for row in rows:
                 source = row if isinstance(row, dict) else {}
                 mapped_rows.append({
-                    column: _rich_text(source.get(column), labels.get(column, column), blank_missing, underline=False)
+                    column: _rich_text(
+                        source.get(column),
+                        labels.get(column, column),
+                        typography,
+                        blank_missing,
+                        underline=False,
+                    )
                     for column in columns
                 })
         context[table_name] = mapped_rows
@@ -236,13 +273,15 @@ def _log(logger: LogFunc | None, message: str, **meta: Any) -> None:
         logger(message, **meta)
 
 
-def _set_run_font(run: Any, font_name: str = TABLE_TEXT_FONT, size_pt: float = TABLE_TEXT_SIZE_PT) -> None:
+def _set_run_font(run: Any, typography: TemplateTypography, size_pt: float | None = None) -> None:
+    font_name = typography.east_asia
     run.font.name = font_name
-    run.font.size = Pt(size_pt)
+    run.font.size = Pt(size_pt if size_pt is not None else typography.size_pt)
     run._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), font_name)
 
 
-def _format_template_tables(path: Path) -> None:
+def _format_template_tables(path: Path, template_type: str) -> None:
+    typography = get_template_typography(template_type)
     doc = Document(str(path))
     for table_index, table in enumerate(doc.tables):
         alignment = (
@@ -255,16 +294,16 @@ def _format_template_tables(path: Path) -> None:
                 for paragraph in cell.paragraphs:
                     paragraph.alignment = alignment
                     for run in paragraph.runs:
-                        _set_run_font(run)
+                        _set_run_font(run, typography)
     doc.save(str(path))
 
 
-def _add_attachment_heading(doc: Any, text: str, level: int) -> None:
+def _add_attachment_heading(doc: Any, text: str, level: int, typography: TemplateTypography) -> None:
     paragraph = doc.add_paragraph()
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER if level == 1 else WD_ALIGN_PARAGRAPH.LEFT
     run = paragraph.add_run(text)
     run.bold = True
-    _set_run_font(run, size_pt=14 if level == 1 else TABLE_TEXT_SIZE_PT)
+    _set_run_font(run, typography, size_pt=14 if level == 1 else typography.size_pt)
 
 
 def _set_table_grid_borders(table: Any) -> None:
@@ -329,7 +368,12 @@ def _strip_caigouhetong_attachment_section(path: Path, config: TemplateConfig, t
     doc.save(str(path))
 
 
-def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None, logger: LogFunc | None = None) -> None:
+def append_quote_attachment(
+    path: Path,
+    quote_attachment: dict[str, Any] | None,
+    typography: TemplateTypography,
+    logger: LogFunc | None = None,
+) -> None:
     sheets = quote_attachment.get("sheets") if isinstance(quote_attachment, dict) else None
     if not isinstance(sheets, list):
         return
@@ -346,16 +390,20 @@ def append_quote_attachment(path: Path, quote_attachment: dict[str, Any] | None,
     start = time.perf_counter()
     doc = Document(str(path))
     doc.add_page_break()
-    _add_attachment_heading(doc, "附件：报价单明细", level=1)
+    _add_attachment_heading(doc, "附件：报价单明细", level=1, typography=typography)
     for sheet_name, rows in valid_sheets:
-        _add_attachment_heading(doc, sheet_name, level=2)
+        _add_attachment_heading(doc, sheet_name, level=2, typography=typography)
         max_cols = max(len(row) for row in rows)
         table = doc.add_table(rows=len(rows), cols=max_cols)
         _set_table_autofit_layout(table)
         _set_table_grid_borders(table)
         for row_index, row in enumerate(rows):
             for col_index in range(max_cols):
-                table.cell(row_index, col_index).text = row[col_index] if col_index < len(row) else ""
+                cell = table.cell(row_index, col_index)
+                cell.text = row[col_index] if col_index < len(row) else ""
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        _set_run_font(run, typography)
     doc.save(str(path))
     _log(logger, "quote attachment appended", outputFile=path.name, sheetCount=len(valid_sheets), elapsedMs=_elapsed_ms(start))
 
@@ -371,6 +419,7 @@ def render_contract(
 ) -> Path:
     ensure_storage()
     template_path = template_docx_path(config.type)
+    typography = get_template_typography(config.type)
     output_path = CONTRACTS_DIR / f"{contract_id}.docx"
     if table_mode == "attachment" and config.table_bindings:
         apply_attachment_table_summary(render_data, config)
@@ -379,7 +428,7 @@ def render_contract(
     doc.render(build_docxtpl_context(render_data, config, blank_missing=blank_missing))
     doc.save(str(output_path))
     _strip_caigouhetong_attachment_section(output_path, config, table_mode)
-    _format_template_tables(output_path)
+    _format_template_tables(output_path, config.type)
     _log(logger, "contract template rendered", outputFile=output_path.name, templateType=config.type, elapsedMs=_elapsed_ms(template_start))
-    append_quote_attachment(output_path, quote_attachment, logger)
+    append_quote_attachment(output_path, quote_attachment, typography, logger)
     return output_path

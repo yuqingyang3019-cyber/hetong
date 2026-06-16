@@ -2,23 +2,31 @@
 from __future__ import annotations
 
 import shutil
+import sys
 import zipfile
 from copy import deepcopy
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from agent.scripts.template_docx_utils import (
+    W,
+    NS,
+    first_run_in_element,
+    make_paragraph_xml,
+    set_cell_text_preserving_format_xml,
+)
+
 TEMPLATE_DIR = ROOT / "agent" / "contract" / "templates" / "zhanweifu"
 SOURCE_PATH = TEMPLATE_DIR / "supplementary-agreement.source.docx"
 OUTPUT_PATH = TEMPLATE_DIR / "supplementary-agreement.docx"
 ROOT_SOURCE = ROOT / "增补协议模板.docx"
 PLACEHOLDER_MARKER = "{{r contractNo }}"
 OVERRIDE_BLOCK_MARKER = "{% if hasItemsContentOverride %}"
-
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-W = f"{{{W_NS}}}"
-NS = {"w": W_NS}
-XML_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
 
 
 def ensure_source() -> None:
@@ -33,18 +41,7 @@ def cell_text(cell: ET.Element) -> str:
 
 
 def set_cell_text(cell: ET.Element, text: str) -> None:
-    paragraphs = cell.findall("w:p", NS)
-    if not paragraphs:
-        paragraph = ET.SubElement(cell, f"{W}p")
-    else:
-        paragraph = paragraphs[0]
-    for run in list(paragraph.findall("w:r", NS)):
-        paragraph.remove(run)
-    run = ET.SubElement(paragraph, f"{W}r")
-    text_node = ET.SubElement(run, f"{W}t")
-    text_node.text = text
-    if text and (text[0] == " " or text[-1] == " "):
-        text_node.set(XML_SPACE, "preserve")
+    set_cell_text_preserving_format_xml(cell, text)
 
 
 def replace_in_paragraphs(parent: ET.Element, old: str, new: str) -> bool:
@@ -78,12 +75,9 @@ def paragraph_text(paragraph: ET.Element) -> str:
     return "".join(node.text or "" for node in paragraph.iter(f"{W}t"))
 
 
-def make_paragraph(text: str) -> ET.Element:
-    paragraph = ET.Element(f"{W}p")
-    run = ET.SubElement(paragraph, f"{W}r")
-    text_node = ET.SubElement(run, f"{W}t")
-    text_node.text = text
-    return paragraph
+def make_paragraph(text: str, format_from: ET.Element | None = None) -> ET.Element:
+    format_run = first_run_in_element(format_from) if format_from is not None else None
+    return make_paragraph_xml(text, format_run)
 
 
 def insert_body_element_after(body: ET.Element, anchor: ET.Element, element: ET.Element) -> None:
@@ -114,10 +108,12 @@ def ensure_items_override_block(body: ET.Element) -> None:
     if intro_paragraph is None or items_table is None:
         raise RuntimeError("未找到协议内容补充段落或设备明细表")
 
-    insert_body_element_after(body, intro_paragraph, make_paragraph("{% else %}"))
-    insert_body_element_after(body, intro_paragraph, make_paragraph("{{r itemsContentOverride }}"))
-    insert_body_element_after(body, intro_paragraph, make_paragraph("{% if hasItemsContentOverride %}"))
-    insert_body_element_after(body, items_table, make_paragraph("{% endif %}"))
+    format_source = intro_paragraph
+
+    insert_body_element_after(body, intro_paragraph, make_paragraph("{% else %}", format_source))
+    insert_body_element_after(body, intro_paragraph, make_paragraph("{{r itemsContentOverride }}", format_source))
+    insert_body_element_after(body, intro_paragraph, make_paragraph("{% if hasItemsContentOverride %}", format_source))
+    insert_body_element_after(body, items_table, make_paragraph("{% endif %}", format_source))
 
 
 def patch_items_table(table: ET.Element) -> None:
