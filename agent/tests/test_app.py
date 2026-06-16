@@ -21,7 +21,14 @@ from fastapi.testclient import TestClient
 from agent.contract import llm as contract_llm
 from agent.contract.config import TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, template_docx_path
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
-from agent.contract.render import append_quote_attachment, build_docxtpl_context, merge_render_data, render_contract
+from agent.contract.render import (
+    append_quote_attachment,
+    apply_attachment_table_summary,
+    build_attachment_summary_row,
+    build_docxtpl_context,
+    merge_render_data,
+    render_contract,
+)
 from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_line_item_calculations, apply_tax_calculations, contract_download_payload, contract_file_name, generate_contract, sign_session_payload
 from agent.yonyou_vendor import (
     EXPLICIT_VENDOR_DATA_FIELDS,
@@ -1429,6 +1436,101 @@ def test_render_contract_template_mode_keeps_items_rows_without_fixed_attachment
 
     assert "设备A" in xml
     assert "附件一：设备采购清单" not in xml
+
+
+def test_build_attachment_summary_row_for_caigouhetong() -> None:
+    config = get_template_config("caigouhetong")
+    columns = config.table_bindings["items"]
+    row = build_attachment_summary_row(columns, {
+        "purchaseSubject": "阀门及配件",
+        "totalAmount": "113000",
+    })
+
+    assert row == {
+        "index": "1",
+        "name": "阀门及配件",
+        "spec": "详情见附件",
+        "unit": "",
+        "quantity": "",
+        "unitPrice": "",
+        "totalPrice": "113000",
+        "tagNo": "",
+    }
+
+
+def test_build_attachment_summary_row_for_labor_subcontract() -> None:
+    config = get_template_config("laborSubcontract")
+    columns = config.table_bindings["items"]
+    row = build_attachment_summary_row(columns, {
+        "workDescription": "清包工劳务",
+        "totalAmount": "50000",
+    })
+
+    assert row["index"] == "1"
+    assert row["laborItem"] == "清包工劳务"
+    assert row["remark"] == "详情见附件"
+    assert row["totalPrice"] == "50000"
+
+
+def test_build_attachment_summary_row_for_professional_subcontract() -> None:
+    config = get_template_config("professionalSubcontract")
+    columns = config.table_bindings["items"]
+    row = build_attachment_summary_row(columns, {
+        "engineeringScope": "机电安装",
+    })
+
+    assert row["node"] == "机电安装"
+    assert row["progressDescription"] == "详情见附件"
+    assert row["paymentRate"] == ""
+
+
+def test_apply_attachment_table_summary_replaces_existing_rows() -> None:
+    config = get_template_config("caigouhetong")
+    render_data = merge_render_data({
+        "purchaseSubject": "阀门及配件",
+        "totalAmount": "113000",
+        "items": [{"index": "1", "name": "旧明细", "spec": "旧规格", "unit": "台", "quantity": "1", "unitPrice": "1", "totalPrice": "1", "tagNo": ""}],
+    }, config)
+
+    apply_attachment_table_summary(render_data, config)
+
+    assert render_data["items"] == [{
+        "index": "1",
+        "name": "阀门及配件",
+        "spec": "详情见附件",
+        "unit": "",
+        "quantity": "",
+        "unitPrice": "",
+        "totalPrice": "113000",
+        "tagNo": "",
+    }]
+
+
+def test_render_contract_attachment_mode_inserts_summary_row() -> None:
+    config = get_template_config("caigouhetong")
+    render_data = merge_render_data({
+        "supplierName": "供应商A",
+        "purchaseSubject": "阀门及配件",
+        "totalAmount": "113000",
+        "items": [],
+    }, config)
+
+    output_path = render_contract(
+        render_data,
+        config,
+        "test_attachment_summary_row",
+        blank_missing=True,
+        table_mode="attachment",
+    )
+    try:
+        with ZipFile(output_path) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+    finally:
+        output_path.unlink(missing_ok=True)
+
+    assert "阀门及配件" in xml
+    assert "详情见附件" in xml
+    assert "113000" in xml
 
 
 def test_render_contract_payment_terms_override_keeps_indent() -> None:

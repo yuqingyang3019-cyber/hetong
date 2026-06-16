@@ -337,7 +337,7 @@ Authorization: Bearer <agentAccessToken>
 }
 ```
 
-`tableMode` 取值为 `template`、`attachment`，兼容旧值 `auto`：前端默认传 `template`，按合同模板识别并填表；用户显式勾选“将表格作为附件”后传 `attachment`，只识别主字段并将 Excel 原表追加到合同末尾。`auto` 仅作为兼容值按服务端自动规则处理，新交互不默认使用。
+`tableMode` 取值为 `template`、`attachment`，兼容旧值 `auto`：前端默认传 `template`，按合同模板识别并填表；用户显式勾选“将表格作为附件”后传 `attachment`，只识别主字段并将 Excel 原表追加到合同末尾。`attachment` 模式下 `extractedData.items` 可为空，服务端渲染时会自动注入一行总结明细。`auto` 仅作为兼容值按服务端自动规则处理，新交互不默认使用。
 
 ### 6.4 生成合同
 

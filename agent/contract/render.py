@@ -31,6 +31,12 @@ LEFT_ALIGNED_HEADER_TABLE_COUNT = 2
 UNDERLINE_BLANK = "        "
 LogFunc = Callable[..., None]
 PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
+ATTACHMENT_DETAIL_REF = "详情见附件"
+TITLE_SCALAR_KEYS = ("purchaseSubject", "workDescription", "projectName", "engineeringScope")
+TITLE_COLUMN_KEYS = ("name", "laborItem", "node")
+DETAIL_COLUMN_KEYS = ("spec", "remark", "progressDescription")
+AMOUNT_SCALAR_KEY = "totalAmount"
+AMOUNT_COLUMN_KEY = "totalPrice"
 NO_UNDERLINE_SCALAR_KEYS = {
     "signYear",
     "signMonth",
@@ -125,6 +131,43 @@ def merge_render_data(patch: dict[str, Any], config: TemplateConfig) -> dict[str
     out.setdefault("signatureMonth", parts["month"])
     out.setdefault("signatureDay", parts["day"])
     return out
+
+
+def _first_non_empty_scalar(scalars: dict[str, Any], keys: tuple[str, ...]) -> str:
+    for key in keys:
+        value = _stringify(scalars.get(key)).strip()
+        if value:
+            return value
+    return ""
+
+
+def _first_column(columns: list[str], candidates: tuple[str, ...]) -> str | None:
+    for candidate in candidates:
+        if candidate in columns:
+            return candidate
+    return None
+
+
+def build_attachment_summary_row(columns: list[str], scalars: dict[str, Any]) -> dict[str, str]:
+    row = {column: "" for column in columns}
+    if "index" in row:
+        row["index"] = "1"
+    title_column = _first_column(columns, TITLE_COLUMN_KEYS)
+    if title_column:
+        row[title_column] = _first_non_empty_scalar(scalars, TITLE_SCALAR_KEYS)
+    detail_column = _first_column(columns, DETAIL_COLUMN_KEYS)
+    if detail_column:
+        row[detail_column] = ATTACHMENT_DETAIL_REF
+    if AMOUNT_COLUMN_KEY in row:
+        row[AMOUNT_COLUMN_KEY] = _stringify(scalars.get(AMOUNT_SCALAR_KEY)).strip()
+    return row
+
+
+def apply_attachment_table_summary(render_data: dict[str, Any], config: TemplateConfig) -> None:
+    for table_name, columns in config.table_bindings.items():
+        if not columns:
+            continue
+        render_data[table_name] = [build_attachment_summary_row(columns, render_data)]
 
 
 def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, blank_missing: bool = False) -> dict[str, Any]:
@@ -320,6 +363,8 @@ def render_contract(
     ensure_storage()
     template_path = template_docx_path(config.type)
     output_path = CONTRACTS_DIR / f"{contract_id}.docx"
+    if table_mode == "attachment" and config.table_bindings:
+        apply_attachment_table_summary(render_data, config)
     template_start = time.perf_counter()
     doc = DocxTemplate(str(template_path))
     doc.render(build_docxtpl_context(render_data, config, blank_missing=blank_missing))

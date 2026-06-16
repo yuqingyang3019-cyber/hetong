@@ -1072,6 +1072,36 @@ function createEmptyTableRow(columns) {
   return row;
 }
 
+const ATTACHMENT_DETAIL_REF = "详情见附件";
+const ATTACHMENT_TITLE_SCALAR_KEYS = ["purchaseSubject", "workDescription", "projectName", "engineeringScope"];
+const ATTACHMENT_TITLE_COLUMN_KEYS = ["name", "laborItem", "node"];
+const ATTACHMENT_DETAIL_COLUMN_KEYS = ["spec", "remark", "progressDescription"];
+
+function firstNonEmptyScalar(data, keys) {
+  for (const key of keys) {
+    const value = String(data?.[key] ?? "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function firstColumnKey(columns, candidates) {
+  const keys = new Set((Array.isArray(columns) ? columns : []).map((column) => column?.key).filter(Boolean));
+  return candidates.find((candidate) => keys.has(candidate)) || null;
+}
+
+function buildAttachmentSummaryRow(columns, extractedData) {
+  const columnKeys = (Array.isArray(columns) ? columns : []).map((column) => column?.key).filter(Boolean);
+  const row = Object.fromEntries(columnKeys.map((key) => [key, ""]));
+  if ("index" in row) row.index = "1";
+  const titleColumn = firstColumnKey(columns, ATTACHMENT_TITLE_COLUMN_KEYS);
+  if (titleColumn) row[titleColumn] = firstNonEmptyScalar(extractedData, ATTACHMENT_TITLE_SCALAR_KEYS);
+  const detailColumn = firstColumnKey(columns, ATTACHMENT_DETAIL_COLUMN_KEYS);
+  if (detailColumn) row[detailColumn] = ATTACHMENT_DETAIL_REF;
+  if ("totalPrice" in row) row.totalPrice = String(extractedData?.totalAmount ?? "").trim();
+  return row;
+}
+
 function buildEmptyExtractedData(schema) {
   const data = {};
   previewScalars(schema?.scalars).forEach((field) => {
@@ -1947,15 +1977,25 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
 function renderTablePreview(paper, schema, extractedData, stats, canEditPreview, task) {
   const tableEntries = Object.entries(schema?.tables || {});
   if (!tableEntries.length) return;
-  const enableLineItemCalculation = !tableModeUsesAttachment(task);
+  const attachmentSummaryMode = tableModeUsesAttachment(task);
+  const enableLineItemCalculation = !attachmentSummaryMode;
   const enableRowActions = canEditPreview && enableLineItemCalculation;
 
   tableEntries.forEach(([tableName, tableDef], tableIndex) => {
     const columns = Array.isArray(tableDef?.columns) ? tableDef.columns : [];
     const rowsValue = extractedData?.[tableName];
-    const rows = Array.isArray(rowsValue) ? rowsValue : [];
+    const rows = attachmentSummaryMode
+      ? [buildAttachmentSummaryRow(columns, extractedData)]
+      : (Array.isArray(rowsValue) ? rowsValue : []);
     const section = createEl("section", "contract-preview-section");
     section.append(createEl("h4", "", `${tableIndex + 1}. ${tableDef?.label || tableName}`));
+    if (attachmentSummaryMode) {
+      section.append(createEl(
+        "p",
+        "contract-preview-muted",
+        "附件模式下正文表格仅保留一行总结，完整 Excel 明细将附到 Word 合同末尾。",
+      ));
+    }
 
     if (!rows.length) {
       stats.missing += 1;
@@ -2005,20 +2045,20 @@ function renderTablePreview(paper, schema, extractedData, stats, canEditPreview,
       }
       columns.forEach((column) => {
         const value = row && typeof row === "object" ? getByDotPath(row, column.key) : null;
-        markPreviewStat(stats, value);
+        if (!attachmentSummaryMode) markPreviewStat(stats, value);
         const autoFilled = supportsLineItemCalculation
           && column.key === "totalPrice"
           && parseDecimalField(row?.quantity) != null
           && parseDecimalField(row?.unitPrice) != null;
         const cell = createEl("td", [
-          isBlankField(value) ? "is-missing" : "is-recognized",
+          attachmentSummaryMode || !isBlankField(value) ? "is-recognized" : "is-missing",
           autoFilled ? "is-auto-filled" : "",
         ].filter(Boolean).join(" "));
         const editor = createEl("textarea", "contract-table-editor");
         editor.rows = 2;
         editor.value = fieldValueForEditor(value);
-        editor.placeholder = "待填写";
-        editor.disabled = !canEditPreview;
+        editor.placeholder = attachmentSummaryMode ? "" : "待填写";
+        editor.disabled = !canEditPreview || attachmentSummaryMode;
         editor.setAttribute("aria-label", `${tableDef?.label || tableName} 第 ${rowIndex + 1} 行 ${column.label || column.key}`);
         rowEditors.set(column.key, { editor, cell });
         const onCellEdit = () => handleTableCellEdit({
@@ -2059,9 +2099,7 @@ function renderTablePreview(paper, schema, extractedData, stats, canEditPreview,
 
 async function renderFieldPreview(task) {
   const schema = await loadTemplateSchema(task.templateType);
-  const previewSchema = tableModeUsesAttachment(task)
-    ? { ...schema, tables: {} }
-    : schema;
+  const previewSchema = schema;
   const extractedData = task.fieldPreview?.extractedData && typeof task.fieldPreview.extractedData === "object" ? task.fieldPreview.extractedData : {};
   const autoFilledKeys = applyAutoDateDefaults(extractedData);
   if (schemaHasScalar(schema, "taxRate")) {
@@ -2089,7 +2127,7 @@ async function renderFieldPreview(task) {
       createEl("p", "contract-preview-muted", task.manualEntry
         ? "未上传报价单，请按模板字段顺序手工补充内容后生成合同。"
         : tableModeUsesAttachment(task)
-          ? "以下只展示合同主字段；Excel 明细将附到 Word 合同末尾。"
+          ? "以下展示合同主字段；正文表格仅保留一行总结，完整 Excel 明细将附到 Word 合同末尾。"
           : "以下内容按模板字段顺序生成，可直接修改后生成合同。"),
     );
     paper.append(title);
