@@ -1568,6 +1568,61 @@ def test_render_contract_payment_terms_override_keeps_indent() -> None:
         output_without_override.unlink(missing_ok=True)
 
 
+def test_render_contract_items_content_override_for_supplementary_agreement() -> None:
+    config = get_template_config("supplementaryAgreement")
+    base_data = {
+        "contractNo": "BC-001",
+        "supplierName": "供应商A",
+        "originalSignYear": "2025",
+        "originalSignMonth": "01",
+        "originalSignDay": "15",
+        "originalContractNo": "HT-001",
+        "originalContractTitle": "测试项目设备",
+        "amendmentReason": "设计变更。",
+        "totalAmount": "1000",
+        "totalAmountChinese": "壹仟元整",
+        "discountAmountChinese": "玖佰元整",
+        "amountWithoutTax": "884.96",
+        "deliveryYear": "2025",
+        "deliveryMonth": "06",
+        "deliveryDay": "30",
+        "items": [{
+            "index": "1",
+            "name": "设备A",
+            "spec": "A-100",
+            "quantity": "1",
+            "unit": "台",
+            "unitPrice": "1000",
+            "totalPrice": "1000",
+            "remark": "",
+        }],
+    }
+    override_data = merge_render_data({
+        **base_data,
+        "itemsContentOverride": "一、补充内容说明\n二、合计人民币壹仟元整",
+    }, config)
+    output_with_override = render_contract(override_data, config, "test_supplement_items_override")
+    try:
+        with ZipFile(output_with_override) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+        assert "补充内容说明" in xml
+        assert "合计人民币壹仟元整" in xml
+        assert "设备名称" not in xml
+        assert "{%tr for item in items %}" not in xml
+    finally:
+        output_with_override.unlink(missing_ok=True)
+
+    default_data = merge_render_data(base_data, config)
+    output_without_override = render_contract(default_data, config, "test_supplement_items_default")
+    try:
+        with ZipFile(output_without_override) as docx:
+            xml = docx.read("word/document.xml").decode("utf-8")
+        assert "设备名称" in xml
+        assert "设备A" in xml
+    finally:
+        output_without_override.unlink(missing_ok=True)
+
+
 @pytest.mark.parametrize("template_type", ["caigouhetong", "nonStandardNoInstall", "nonStandardWithInstall"])
 def test_equipment_item_rows_render_vertically(template_type: str) -> None:
     config = get_template_config(template_type)

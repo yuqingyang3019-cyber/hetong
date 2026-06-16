@@ -31,6 +31,7 @@ LEFT_ALIGNED_HEADER_TABLE_COUNT = 2
 UNDERLINE_BLANK = "        "
 LogFunc = Callable[..., None]
 PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
+ITEMS_CONTENT_OVERRIDE_KEY = "itemsContentOverride"
 ATTACHMENT_DETAIL_REF = "详情见附件"
 TITLE_SCALAR_KEYS = ("purchaseSubject", "workDescription", "projectName", "engineeringScope")
 TITLE_COLUMN_KEYS = ("name", "laborItem", "node")
@@ -59,6 +60,7 @@ NO_UNDERLINE_SCALAR_KEYS = {
     "buyerAuthorizedRepresentative",
     "supplierAuthorizedRepresentative",
     PAYMENT_TERMS_OVERRIDE_KEY,
+    ITEMS_CONTENT_OVERRIDE_KEY,
 }
 
 
@@ -174,9 +176,11 @@ def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, b
     scalar_labels = {field["key"]: field["label"] for field in config.schema.get("scalars", [])}
     context: dict[str, Any] = {}
     override_text = _stringify(render_data.get(PAYMENT_TERMS_OVERRIDE_KEY)).strip()
+    items_override_text = _stringify(render_data.get(ITEMS_CONTENT_OVERRIDE_KEY)).strip()
     context["hasPaymentTermsOverride"] = bool(override_text)
+    context["hasItemsContentOverride"] = bool(items_override_text)
     for key in config.scalar_keys:
-        if key == PAYMENT_TERMS_OVERRIDE_KEY:
+        if key in (PAYMENT_TERMS_OVERRIDE_KEY, ITEMS_CONTENT_OVERRIDE_KEY):
             continue
         context[key] = _rich_text(
             render_data.get(key),
@@ -187,6 +191,11 @@ def build_docxtpl_context(render_data: dict[str, Any], config: TemplateConfig, b
     context[PAYMENT_TERMS_OVERRIDE_KEY] = (
         _rich_text_multiline(override_text, scalar_labels.get(PAYMENT_TERMS_OVERRIDE_KEY, "付款期限覆盖内容"), blank_missing)
         if override_text
+        else RichText()
+    )
+    context[ITEMS_CONTENT_OVERRIDE_KEY] = (
+        _rich_text_multiline(items_override_text, scalar_labels.get(ITEMS_CONTENT_OVERRIDE_KEY, "协议内容覆盖"), blank_missing)
+        if items_override_text
         else RichText()
     )
     for table_name, columns in config.table_bindings.items():

@@ -13,6 +13,7 @@ SOURCE_PATH = TEMPLATE_DIR / "supplementary-agreement.source.docx"
 OUTPUT_PATH = TEMPLATE_DIR / "supplementary-agreement.docx"
 ROOT_SOURCE = ROOT / "增补协议模板.docx"
 PLACEHOLDER_MARKER = "{{r contractNo }}"
+OVERRIDE_BLOCK_MARKER = "{% if hasItemsContentOverride %}"
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 W = f"{{{W_NS}}}"
@@ -73,8 +74,50 @@ def clone_row_after(table: ET.Element, row_index: int) -> ET.Element:
     return new_row
 
 
-def is_already_patched(xml: str) -> bool:
+def paragraph_text(paragraph: ET.Element) -> str:
+    return "".join(node.text or "" for node in paragraph.iter(f"{W}t"))
+
+
+def make_paragraph(text: str) -> ET.Element:
+    paragraph = ET.Element(f"{W}p")
+    run = ET.SubElement(paragraph, f"{W}r")
+    text_node = ET.SubElement(run, f"{W}t")
+    text_node.text = text
+    return paragraph
+
+
+def insert_body_element_after(body: ET.Element, anchor: ET.Element, element: ET.Element) -> None:
+    insert_at = list(body).index(anchor) + 1
+    body.insert(insert_at, element)
+
+
+def is_placeholder_patched(xml: str) -> bool:
     return PLACEHOLDER_MARKER in xml
+
+
+def has_items_override_block(xml: str) -> bool:
+    return OVERRIDE_BLOCK_MARKER in xml
+
+
+def ensure_items_override_block(body: ET.Element) -> None:
+    if any(
+        OVERRIDE_BLOCK_MARKER in paragraph_text(child)
+        for child in body.findall("w:p", NS)
+    ):
+        return
+
+    intro_paragraph = next(
+        (child for child in body if child.tag == f"{W}p" and paragraph_text(child).strip() == "协议内容补充部分为："),
+        None,
+    )
+    items_table = next((child for child in body if child.tag == f"{W}tbl"), None)
+    if intro_paragraph is None or items_table is None:
+        raise RuntimeError("未找到协议内容补充段落或设备明细表")
+
+    insert_body_element_after(body, intro_paragraph, make_paragraph("{% else %}"))
+    insert_body_element_after(body, intro_paragraph, make_paragraph("{{r itemsContentOverride }}"))
+    insert_body_element_after(body, intro_paragraph, make_paragraph("{% if hasItemsContentOverride %}"))
+    insert_body_element_after(body, items_table, make_paragraph("{% endif %}"))
 
 
 def patch_items_table(table: ET.Element) -> None:
@@ -124,34 +167,35 @@ def patch_signature_table(table: ET.Element) -> None:
 
 
 def patch_document_xml(xml: str) -> str:
-    if is_already_patched(xml):
-        return xml
-
     root = ET.fromstring(xml)
     body = root.find("w:body", NS)
     if body is None:
         raise RuntimeError("document.xml 缺少 body")
 
-    require_replace(body, "合同编号：", "合同编号：{{r contractNo }}")
-    require_replace(body, "乙方（全称）：", "乙方（全称）：{{r supplierName }}")
-    require_replace(
-        body,
-        "双方于 年 月 日签订合同编号为       的     采购合同",
-        "双方于 {{r originalSignYear }} 年 {{r originalSignMonth }} 月 {{r originalSignDay }} 日签订合同编号为 {{r originalContractNo }} 的 {{r originalContractTitle }} 采购合同",
-    )
-    require_replace(body, "设计变更或采购需求变更。", "{{r amendmentReason }}")
-    require_replace(
-        body,
-        "1.1供货时间：   年   月   日。",
-        "1.1供货时间：{{r deliveryYear }} 年 {{r deliveryMonth }} 月 {{r deliveryDay }} 日。",
-    )
-    require_replace(body, "乙方：", "乙方：{{r supplierName }}")
+    if not is_placeholder_patched(xml):
+        require_replace(body, "合同编号：", "合同编号：{{r contractNo }}")
+        require_replace(body, "乙方（全称）：", "乙方（全称）：{{r supplierName }}")
+        require_replace(
+            body,
+            "双方于 年 月 日签订合同编号为       的     采购合同",
+            "双方于 {{r originalSignYear }} 年 {{r originalSignMonth }} 月 {{r originalSignDay }} 日签订合同编号为 {{r originalContractNo }} 的 {{r originalContractTitle }} 采购合同",
+        )
+        require_replace(body, "设计变更或采购需求变更。", "{{r amendmentReason }}")
+        require_replace(
+            body,
+            "1.1供货时间：   年   月   日。",
+            "1.1供货时间：{{r deliveryYear }} 年 {{r deliveryMonth }} 月 {{r deliveryDay }} 日。",
+        )
+        require_replace(body, "乙方：", "乙方：{{r supplierName }}")
 
-    tables = body.findall("w:tbl", NS)
-    if len(tables) < 2:
-        raise RuntimeError("模板表格数量不足")
-    patch_items_table(tables[0])
-    patch_signature_table(tables[1])
+        tables = body.findall("w:tbl", NS)
+        if len(tables) < 2:
+            raise RuntimeError("模板表格数量不足")
+        patch_items_table(tables[0])
+        patch_signature_table(tables[1])
+
+    if not has_items_override_block(xml):
+        ensure_items_override_block(body)
 
     ET.register_namespace("w", W_NS)
     return ET.tostring(root, encoding="unicode", xml_declaration=False)

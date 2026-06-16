@@ -97,6 +97,14 @@ const taxCalculationFieldKeys = Object.freeze(["totalAmount", "amountWithoutTax"
 const deliveryCalculationFieldKeys = Object.freeze(["deliveryDays"]);
 const PAYMENT_TERMS_OVERRIDE_TEMPLATE = "caigouhetong";
 const PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride";
+const SUPPLEMENTARY_AGREEMENT_TEMPLATE = "supplementaryAgreement";
+const ITEMS_CONTENT_OVERRIDE_KEY = "itemsContentOverride";
+const SUPPLEMENT_TABLE_SCALAR_KEYS = Object.freeze([
+  "totalAmount",
+  "totalAmountChinese",
+  "discountAmountChinese",
+  "amountWithoutTax",
+]);
 const busyStatuses = new Set(["uploading", "parsing", "identifying", "generating"]);
 const completedStatuses = new Set(["completed"]);
 const templateSchemaCache = new Map();
@@ -1047,8 +1055,20 @@ function supportsPaymentTermsOverride(templateType) {
   return templateType === PAYMENT_TERMS_OVERRIDE_TEMPLATE;
 }
 
-function previewScalars(scalars) {
-  return (Array.isArray(scalars) ? scalars : []).filter((field) => field?.key !== PAYMENT_TERMS_OVERRIDE_KEY);
+function supportsItemsContentOverride(templateType) {
+  return templateType === SUPPLEMENTARY_AGREEMENT_TEMPLATE;
+}
+
+function itemsContentOverrideActive(task) {
+  return supportsItemsContentOverride(task?.templateType) && Boolean(String(task?.itemsContentOverrideText || "").trim());
+}
+
+function previewScalars(scalars, task = null) {
+  const skipKeys = new Set([PAYMENT_TERMS_OVERRIDE_KEY, ITEMS_CONTENT_OVERRIDE_KEY]);
+  if (itemsContentOverrideActive(task)) {
+    SUPPLEMENT_TABLE_SCALAR_KEYS.forEach((key) => skipKeys.add(key));
+  }
+  return (Array.isArray(scalars) ? scalars : []).filter((field) => !skipKeys.has(field?.key));
 }
 
 function cloneExtractedData(data) {
@@ -1194,15 +1214,21 @@ function buildExtractedDataForGenerate(task, schema) {
   } else {
     delete extractedData[PAYMENT_TERMS_OVERRIDE_KEY];
   }
+  const itemsOverrideText = String(task.itemsContentOverrideText || "").trim();
+  if (supportsItemsContentOverride(task.templateType) && itemsOverrideText) {
+    extractedData[ITEMS_CONTENT_OVERRIDE_KEY] = itemsOverrideText;
+  } else {
+    delete extractedData[ITEMS_CONTENT_OVERRIDE_KEY];
+  }
   if (schema) syncLineItemCalculations(extractedData, schema, task);
   return extractedData;
 }
 
-function createScalarFieldGroups(scalars, extractedData) {
-  const schemaKeys = new Set(previewScalars(scalars).map((field) => field.key));
+function createScalarFieldGroups(scalars, extractedData, task = null) {
+  const schemaKeys = new Set(previewScalars(scalars, task).map((field) => field.key));
   const renderedDateGroups = new Set();
   const groups = new Map(fieldGroupDefinitions.map((group) => [group.id, { ...group, entries: [], stats: { recognized: 0, missing: 0 } }]));
-  previewScalars(scalars).forEach((field) => {
+  previewScalars(scalars, task).forEach((field) => {
     const dateGroup = dateFieldGroupForKey(field.key);
     if (dateGroup && dateFieldGroupCanRender(dateGroup, schemaKeys)) {
       if (renderedDateGroups.has(dateGroup.id)) return;
@@ -1487,9 +1513,13 @@ function setRecognizedClass(element, value) {
   element.classList.toggle("is-recognized", !missing);
 }
 
-function calculatePreviewStats(schema, extractedData) {
+function calculatePreviewStats(schema, extractedData, task = null) {
   const stats = { recognized: 0, missing: 0 };
-  previewScalars(schema?.scalars).forEach((field) => markPreviewStat(stats, getByDotPath(extractedData, field.key)));
+  previewScalars(schema?.scalars, task).forEach((field) => markPreviewStat(stats, getByDotPath(extractedData, field.key)));
+
+  if (itemsContentOverrideActive(task)) {
+    return stats;
+  }
 
   Object.entries(schema?.tables || {}).forEach(([tableName, tableDef]) => {
     const columns = Array.isArray(tableDef?.columns) ? tableDef.columns : [];
@@ -1621,6 +1651,13 @@ function syncFieldPreviewSummary(stats) {
       ? "已填写付款期限覆盖：生成时将替换默认 5 条付款条款。"
       : "未填写付款期限覆盖：生成时将使用付款比例字段生成默认条款。";
     fieldPreviewSummary.append(document.createElement("br"), document.createTextNode(overrideHint));
+  }
+  if (task && supportsItemsContentOverride(task.templateType)) {
+    const itemsOverrideText = String(task.itemsContentOverrideText || "").trim();
+    const itemsOverrideHint = itemsOverrideText
+      ? "已填写协议内容覆盖：生成时将替换设备明细表格（含合计与金额行）。"
+      : "未填写协议内容覆盖：生成时将使用下方明细表。";
+    fieldPreviewSummary.append(document.createElement("br"), document.createTextNode(itemsOverrideHint));
   }
   if (stats.missing) {
     const jumpButton = createEl("button", "field-preview-jump", "定位第一个待填写字段");
@@ -1863,6 +1900,39 @@ function createContractDateField(group, stats, prefix = "", options = {}) {
   return field;
 }
 
+function appendItemsContentOverrideField(container, task, canEditPreview) {
+  const field = createEl("div", "contract-preview-field payment-terms-override-field items-content-override-field is-recognized");
+  field.append(createEl("span", "contract-field-label", "协议内容覆盖（可选）"));
+  field.append(createEl(
+    "p",
+    "payment-terms-override-hint",
+    "填写后将替换协议内容补充表格（含合计与金额行）；留空则使用下方明细表。",
+  ));
+  const status = createEl("p", "payment-terms-override-status");
+  status.setAttribute("aria-live", "polite");
+  const editor = createEl("textarea", "contract-field-editor payment-terms-override-editor");
+  editor.rows = 8;
+  editor.value = task.itemsContentOverrideText || "";
+  editor.placeholder = "可粘贴自定义协议补充内容，支持多行";
+  editor.disabled = !canEditPreview;
+  editor.setAttribute("aria-label", "协议内容覆盖");
+  const syncStatus = () => {
+    const hasValue = Boolean(String(editor.value || "").trim());
+    field.classList.toggle("has-value", hasValue);
+    status.textContent = hasValue
+      ? "已填写协议内容覆盖：生成时会替换设备明细表格。"
+      : "未填写协议内容覆盖：将使用下方明细表。";
+  };
+  editor.addEventListener("input", () => {
+    task.itemsContentOverrideText = editor.value;
+    syncStatus();
+    void renderFieldPreview(task);
+  });
+  syncStatus();
+  field.append(status, editor);
+  container.append(field);
+}
+
 function appendPaymentTermsOverrideField(groupBody, task, canEditPreview) {
   const field = createEl("div", "contract-preview-field payment-terms-override-field is-recognized");
   field.append(createEl("span", "contract-field-label", "付款期限覆盖（可选）"));
@@ -1897,14 +1967,14 @@ function appendPaymentTermsOverrideField(groupBody, task, canEditPreview) {
 }
 
 function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys, canEditPreview, task) {
-  const scalars = previewScalars(schema?.scalars);
+  const scalars = previewScalars(schema?.scalars, task);
   if (!scalars.length && !supportsPaymentTermsOverride(task?.templateType)) return;
 
   const section = createEl("section", "contract-preview-section");
   section.append(createEl("h4", "", "合同条款字段"));
   const body = createEl("div", "contract-preview-groups");
   const scalarEditors = new Map();
-  const groups = createScalarFieldGroups(scalars, extractedData);
+  const groups = createScalarFieldGroups(scalars, extractedData, task);
   let displayIndex = 1;
 
   groups.forEach((group) => {
@@ -1976,10 +2046,19 @@ function renderScalarPreview(paper, schema, extractedData, stats, autoFilledKeys
 
 function renderTablePreview(paper, schema, extractedData, stats, canEditPreview, task) {
   const tableEntries = Object.entries(schema?.tables || {});
-  if (!tableEntries.length) return;
+  if (!tableEntries.length && !supportsItemsContentOverride(task?.templateType)) return;
+  const overrideActive = itemsContentOverrideActive(task);
   const attachmentSummaryMode = tableModeUsesAttachment(task);
-  const enableLineItemCalculation = !attachmentSummaryMode;
+  const enableLineItemCalculation = !attachmentSummaryMode && !overrideActive;
   const enableRowActions = canEditPreview && enableLineItemCalculation;
+
+  if (supportsItemsContentOverride(task?.templateType)) {
+    const overrideSection = createEl("section", "contract-preview-section");
+    overrideSection.append(createEl("h4", "", "协议内容补充"));
+    appendItemsContentOverrideField(overrideSection, task, canEditPreview);
+    paper.append(overrideSection);
+    if (overrideActive) return;
+  }
 
   tableEntries.forEach(([tableName, tableDef], tableIndex) => {
     const columns = Array.isArray(tableDef?.columns) ? tableDef.columns : [];
@@ -2212,6 +2291,7 @@ function createTask(file) {
     extraInfo: "",
     fieldPreview: null,
     paymentTermsOverrideText: "",
+    itemsContentOverrideText: "",
     attachmentMode: null,
     tableMode: "auto",
     upload: null,
@@ -2238,6 +2318,7 @@ function createManualTask() {
     extraInfo: "",
     fieldPreview: null,
     paymentTermsOverrideText: "",
+    itemsContentOverrideText: "",
     attachmentMode: { enabled: false, tableMode: "template" },
     tableMode: "template",
     upload: null,

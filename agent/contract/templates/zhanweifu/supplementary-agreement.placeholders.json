@@ -65,6 +65,10 @@
     {
       "key": "deliveryDay",
       "label": "供货日"
+    },
+    {
+      "key": "itemsContentOverride",
+      "label": "协议内容覆盖（可选）"
     }
   ],
   "tables": {
