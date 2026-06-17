@@ -1,6 +1,4 @@
-import { ui } from "./store.js";
-import { TEMPLATE_OPTIONS, templateLabel } from "./constants.js";
-
+const statusEl = document.querySelector("#status");
 const generateButton = document.querySelector("#generateButton");
 const identifyFieldsButton = document.querySelector("#identifyFieldsButton");
 const quoteFile = document.querySelector("#quoteFile");
@@ -14,11 +12,17 @@ const tableAttachmentMode = document.querySelector("#tableAttachmentMode");
 const tableModeStatus = document.querySelector("#tableModeStatus");
 const fieldPreviewSummary = document.querySelector("#fieldPreviewSummary");
 const contractPreviewEl = document.querySelector("#contractPreview");
+const templateType = document.querySelector("#templateType");
+const taskCreatePanel = document.querySelector("#taskCreatePanel");
 const openCreateTaskButton = document.querySelector("#openCreateTaskButton");
 const cancelCreateTaskButton = document.querySelector("#cancelCreateTaskButton");
 const confirmCreateTaskButton = document.querySelector("#confirmCreateTaskButton");
 const createTaskHint = document.querySelector("#createTaskHint");
+const taskList = document.querySelector("#taskList");
 const taskQueueHint = document.querySelector("#taskQueueHint");
+const activeTaskTitle = document.querySelector("#activeTaskTitle");
+const activeTaskHint = document.querySelector("#activeTaskHint");
+const userNameEl = document.querySelector("#userName");
 const uploadDropzone = document.querySelector("#uploadDropzone");
 const fileNameText = document.querySelector("#fileNameText");
 const fileMetaText = document.querySelector("#fileMetaText");
@@ -32,13 +36,17 @@ const closeSupplierPatchModalButton = document.querySelector("#closeSupplierPatc
 const taskDrawer = document.querySelector("#taskDrawer");
 const taskDrawerBackdrop = document.querySelector("#taskDrawerBackdrop");
 const closeTaskDrawerButton = document.querySelector("#closeTaskDrawerButton");
+const processingCard = document.querySelector("#processingCard");
+const processingTitle = document.querySelector("#processingTitle");
+const processingHint = document.querySelector("#processingHint");
+const drawerStepItems = Array.from(document.querySelectorAll("[data-drawer-step]"));
 const drawerDownloadAction = document.querySelector("#drawerDownloadAction");
 const drawerActionHint = document.querySelector("#drawerActionHint");
 const taskLogCard = document.querySelector("#taskLogCard");
 const taskLogDetails = document.querySelector("#taskLogDetails");
 const taskLogText = document.querySelector("#taskLogText");
 
-export const MAX_TASKS = 5;
+const MAX_TASKS = 5;
 const supportedQuoteFileExtensions = new Set([
   ".pdf",
   ".xls",
@@ -104,16 +112,17 @@ const SUPPLEMENT_TABLE_SCALAR_KEYS = Object.freeze([
 const busyStatuses = new Set(["uploading", "parsing", "identifying", "generating"]);
 const completedStatuses = new Set(["completed"]);
 const templateSchemaCache = new Map();
-const ui.tasks = [];
+const tasks = [];
 
 let authContext = { dingtalkConfigured: false, corpId: "", clientId: "", agentBaseUrl: "" };
 let agentAuth = { baseUrl: "", token: "", expiresAt: 0 };
-let ui.sessionReady = false;
-let ui.activeTaskId = null;
-let ui.drawerOpen = false;
+let sessionReady = false;
+let activeTaskId = null;
+let drawerOpen = false;
+let drawerLastFocus = null;
 let uploadDragDepth = 0;
-let ui.createPanelOpen = false;
-let ui.pendingQuoteFile = null;
+let createPanelOpen = false;
+let pendingQuoteFile = null;
 
 function apiUrl(path) {
   return path;
@@ -185,7 +194,8 @@ function appendTaskLog(task, text) {
   const time = new Date().toLocaleTimeString("zh-CN", { hour12: false });
   const entry = message.split("\n").map((line) => `[${time}] ${line}`).join("\n");
   task.log = `${task.log || ""}${entry}\n`;
-  if (task.id === ui.activeTaskId) syncTaskLogPanel(task);
+  renderTaskList();
+  if (task.id === activeTaskId) syncTaskLogPanel(task);
 }
 
 function formatError(error) {
@@ -207,6 +217,20 @@ function configState(value) {
   return value ? "已配置" : "缺失";
 }
 
+function setStatus(message, tone = "info") {
+  if (!statusEl) return;
+  if (!message) {
+    statusEl.textContent = "";
+    statusEl.hidden = true;
+    statusEl.classList.remove("is-error", "is-success");
+    return;
+  }
+  statusEl.hidden = false;
+  statusEl.textContent = message;
+  statusEl.classList.toggle("is-error", tone === "error");
+  statusEl.classList.toggle("is-success", tone === "success");
+  if (!drawerOpen) statusEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
 
 function formatFileSize(size) {
   if (!Number.isFinite(size) || size <= 0) return "0 KB";
@@ -232,19 +256,19 @@ function updateSelectedFile() {
 }
 
 function clearPendingQuoteFile() {
-  ui.pendingQuoteFile = null;
+  pendingQuoteFile = null;
   quoteFile.value = "";
   syncUploadPrompt();
 }
 
-export function uploadDisabledReason() {
-  if (!ui.sessionReady) return "完成钉钉免登后即可上传报价单。";
+function uploadDisabledReason() {
+  if (!sessionReady) return "完成钉钉免登后即可上传报价单。";
   if (incompleteTaskCount() >= MAX_TASKS) return `未完成任务已达到 ${MAX_TASKS} 个，请先完成或删除任务。`;
   return "";
 }
 
 function syncUploadPrompt() {
-  const file = ui.pendingQuoteFile || quoteFile.files?.[0];
+  const file = pendingQuoteFile || quoteFile.files?.[0];
   const disabledReason = uploadDisabledReason();
   uploadDropzone?.classList.toggle("has-file", Boolean(file));
   uploadDropzone?.classList.toggle("is-disabled", Boolean(disabledReason));
@@ -261,28 +285,29 @@ function syncUploadPrompt() {
 }
 
 function activeTask() {
-  return ui.tasks.find((task) => task.id === ui.activeTaskId) || null;
+  return tasks.find((task) => task.id === activeTaskId) || null;
 }
 
-export function taskIsBusy(task) {
+function taskIsBusy(task) {
   return Boolean(task && busyStatuses.has(task.status));
 }
 
-export function incompleteTaskCount() {
-  return ui.tasks.filter((task) => !completedStatuses.has(task.status)).length;
+function incompleteTaskCount() {
+  return tasks.filter((task) => !completedStatuses.has(task.status)).length;
 }
 
 function updateActionAvailability() {
   const current = activeTask();
   const atLimit = incompleteTaskCount() >= MAX_TASKS;
-  const controlsDisabled = !ui.sessionReady;
+  const controlsDisabled = !sessionReady;
   const activeBusy = taskIsBusy(current);
   const canEditCurrent = Boolean(current) && !activeBusy && current.status !== "completed";
 
   quoteFile.disabled = controlsDisabled || atLimit;
+  templateType.disabled = controlsDisabled || atLimit;
   syncUploadPrompt();
-  if (openCreateTaskButton) openCreateTaskButton.disabled = controlsDisabled || atLimit || ui.createPanelOpen;
-  if (cancelCreateTaskButton) cancelCreateTaskButton.disabled = controlsDisabled && !ui.createPanelOpen;
+  if (openCreateTaskButton) openCreateTaskButton.disabled = controlsDisabled || atLimit || createPanelOpen;
+  if (cancelCreateTaskButton) cancelCreateTaskButton.disabled = controlsDisabled && !createPanelOpen;
   if (confirmCreateTaskButton) confirmCreateTaskButton.disabled = controlsDisabled || atLimit;
 
   quoteTextPreview.disabled = !canEditCurrent || !current?.quoteText;
@@ -327,11 +352,13 @@ function handleUploadDrop(event) {
   setUploadDragging(false);
 
   if (quoteFile.disabled) {
+    setStatus("请先完成免登或释放任务额度后再上传报价单。", "error");
     return;
   }
 
   const files = Array.from(event.dataTransfer?.files || []);
   if (files.length !== 1) {
+    setStatus("每次只能拖入一份报价单。", "error");
     return;
   }
 
@@ -342,12 +369,14 @@ function handleUploadDrop(event) {
 function setPendingQuoteFile(file) {
   const validationMessage = validateQuoteFile(file);
   if (validationMessage) {
-    ui.pendingQuoteFile = null;
+    setStatus(validationMessage, "error");
+    pendingQuoteFile = null;
     quoteFile.value = "";
     updateActionAvailability();
     return false;
   }
-  ui.pendingQuoteFile = file;
+  pendingQuoteFile = file;
+  setStatus("");
   updateActionAvailability();
   return true;
 }
@@ -363,8 +392,27 @@ function drawerStepForTask(task) {
 
 function setDrawerStep(currentStep, task = null) {
   const order = ["upload", "text", "review", "generate"];
-  ui.drawerStep = !currentStep ? "" : currentStep === "done" || order.includes(currentStep) ? currentStep : "review";
-  ui.drawerStepTask = task;
+  const normalizedStep = !currentStep ? "" : currentStep === "done" || order.includes(currentStep) ? currentStep : "review";
+  const activeIndex = order.indexOf(normalizedStep);
+  const skipUploadAndText = Boolean(task?.manualEntry && normalizedStep === "review");
+  drawerStepItems.forEach((item) => {
+    const itemIndex = order.indexOf(item.dataset.drawerStep);
+    item.classList.remove("is-active", "is-complete");
+    item.removeAttribute("aria-current");
+    if (normalizedStep === "done") {
+      item.classList.add("is-complete");
+      return;
+    }
+    if (skipUploadAndText && (item.dataset.drawerStep === "upload" || item.dataset.drawerStep === "text")) {
+      item.classList.add("is-complete");
+    } else if (itemIndex >= 0 && itemIndex < activeIndex) {
+      item.classList.add("is-complete");
+    }
+    if (item.dataset.drawerStep === normalizedStep) {
+      item.classList.add("is-active");
+      item.setAttribute("aria-current", "step");
+    }
+  });
 }
 
 function failedStepLabel(step) {
@@ -389,7 +437,7 @@ function taskStageLabel(task) {
   return "准备中";
 }
 
-export function taskNextAction(task) {
+function taskNextAction(task) {
   if (!task) return "";
   if (task.status === "uploading") return "正在上传，可关闭详情继续新建任务。";
   if (task.status === "parsing") return "正在解析，完成后请确认文本。";
@@ -421,6 +469,10 @@ function setDrawerBusy(task) {
 }
 
 function syncProcessingPanel(task) {
+  if (!processingCard) return;
+  const show = Boolean(task && (taskIsBusy(task) || (!task.quoteText && task.status === "failed")));
+  processingCard.hidden = !show;
+  if (!show) return;
   const smartTitles = {
     uploading: "智能助手正在接收报价单",
     parsing: "AI 正在读取报价单内容",
@@ -435,11 +487,10 @@ function syncProcessingPanel(task) {
     generating: "合同会根据你确认过的字段生成，可以先处理其他报价单。",
     failed: "任务处理失败，请返回任务卡片重试或删除。",
   };
-  const show = Boolean(task && (taskIsBusy(task) || (!task.quoteText && task.status === "failed")));
-  ui.processingVisible = show;
-  if (!show) return;
-  ui.processingTitle = smartTitles[task.status] || statusLabel(task.status);
-  ui.processingHint = smartHints[task.status] || task.message || "请稍候，系统正在处理当前报价单。";
+  if (processingTitle) processingTitle.textContent = smartTitles[task.status] || statusLabel(task.status);
+  if (processingHint) {
+    processingHint.textContent = smartHints[task.status] || task.message || "请稍候，系统正在处理当前报价单。";
+  }
 }
 
 function syncDrawerDownload(task) {
@@ -466,7 +517,8 @@ function syncTaskLogPanel(task) {
 }
 
 function setInteractionEnabled(enabled) {
-  ui.sessionReady = enabled;
+  sessionReady = enabled;
+  renderTaskList();
   updateActionAvailability();
 }
 
@@ -496,16 +548,19 @@ function closeAccessModal() {
 }
 
 function blockNonDingTalkAccess(message = "请在钉钉客户端内打开合同生成助手。") {
-  ui.sessionReady = false;
+  sessionReady = false;
   setInteractionEnabled(false);
   appendStageLog("环境检查失败", message);
+  setStatus("当前环境不可用", "error");
   showAccessModal("合同生成助手仅支持从钉钉微应用访问。请返回钉钉客户端后重新打开应用。");
 }
 
 function showUserBar(user) {
-  const base = user?.name || user?.nick || "已登录";
-  const nick = user?.nick && user.nick !== user.name ? user.nick : null;
-  ui.userName = nick ? `${base}（${nick}）` : base;
+  if (userNameEl) {
+    const base = user?.name || user?.nick || "已登录";
+    const nick = user?.nick && user.nick !== user.name ? user.nick : null;
+    userNameEl.textContent = nick ? `${base}（${nick}）` : base;
+  }
 }
 
 async function refreshAuthMe() {
@@ -603,7 +658,7 @@ function requestDingTalkAuthCode(corpId, clientId = "", timeoutMs = 12000) {
 }
 
 async function initAuth() {
-  ui.sessionReady = false;
+  sessionReady = false;
   appendStageLog("免登初始化", "开始");
   appendStageLog(
     "运行环境",
@@ -619,11 +674,13 @@ async function initAuth() {
     const message = `读取鉴权配置失败：${formatError(error)}`;
     appendStageLog("读取鉴权配置失败", message);
     setInteractionEnabled(false);
+    setStatus(message, "error");
     return;
   }
   if (!configResponse.ok) {
     appendStageLog("读取鉴权配置失败", `HTTP ${configResponse.status}`);
     setInteractionEnabled(false);
+    setStatus(`读取鉴权配置失败：HTTP ${configResponse.status}`, "error");
     return;
   }
   authContext = await configResponse.json();
@@ -639,9 +696,10 @@ async function initAuth() {
   }
 
   if (!authContext.dingtalkConfigured) {
-    ui.sessionReady = false;
+    sessionReady = false;
     setInteractionEnabled(false);
     appendStageLog("免登配置失败", "服务端未配置钉钉应用");
+    setStatus("服务端未配置钉钉应用，无法免登。", "error");
     return;
   }
 
@@ -663,29 +721,35 @@ async function initAuth() {
       await refreshAgentToken();
       showUserBar(me.user);
       setInteractionEnabled(true);
+      setStatus("");
     } catch (error) {
       const message = `登录态刷新失败：${formatError(error)}，请重新打开应用。`;
       appendStageLog("刷新业务访问凭证失败", message);
       setInteractionEnabled(false);
+      setStatus(message, "error");
     }
     return;
   }
 
-  ui.sessionReady = false;
+  sessionReady = false;
   setInteractionEnabled(false);
+  setStatus("正在钉钉内免登…");
+
   const searchParams = new URLSearchParams(window.location.search);
   const corpIdFromUrl = searchParams.get("corpid") || searchParams.get("corpId") || "";
   const corpId = corpIdFromUrl || authContext.corpId || "";
   const clientId = authContext.clientId || "";
 
   if (!corpId) {
-    ui.sessionReady = false;
+    sessionReady = false;
     appendStageLog("免登配置失败", "缺少 corpId");
+    setStatus("缺少 corpId：请在微应用首页 URL 附带 corpId= 或在服务端配置 DINGTALK_CORP_ID。", "error");
     return;
   }
   if (!clientId) {
-    ui.sessionReady = false;
+    sessionReady = false;
     appendStageLog("免登配置失败", "缺少 clientId");
+    setStatus("缺少钉钉 Client ID，无法免登。", "error");
     return;
   }
 
@@ -730,10 +794,12 @@ async function initAuth() {
     }
     appendStageLog("免登完成", "已通过钉钉免登并获取业务访问凭证");
     setInteractionEnabled(true);
+    setStatus("");
   }).catch((error) => {
-    ui.sessionReady = false;
+    sessionReady = false;
     const message = error instanceof Error ? error.message : "免登失败";
     appendStageLog("免登失败", message);
+    setStatus(message, "error");
     setInteractionEnabled(false);
   });
 }
@@ -810,7 +876,7 @@ function fileToDataUrl(file) {
   });
 }
 
-export async function downloadDingDriveContract(payload) {
+async function downloadDingDriveContract(payload) {
   const dingDrive = payload?.dingDrive || {};
   if (!dingDrive.spaceId || !dingDrive.fileId) throw new Error("未返回钉盘文件信息");
   const fileName = dingDrive.fileName || payload?.fileName || "合同.docx";
@@ -883,7 +949,7 @@ async function generateContract(task, quoteText, extraInfo, extractedData) {
 }
 
 function activeGeneratingTask(taskId = "") {
-  return ui.tasks.find((task) => task.status === "generating" && task.id !== taskId) || null;
+  return tasks.find((task) => task.status === "generating" && task.id !== taskId) || null;
 }
 
 function createEl(tagName, className, text) {
@@ -1561,6 +1627,10 @@ function setTaskTableMode(task, mode) {
   task.fieldPreview = null;
   const attachmentSelected = tableModeUsesAttachment(task);
   setTaskStatus(task, "needs_text", "请重新识别字段。");
+  setStatus(
+    attachmentSelected ? "已启用附件模式，请重新识别字段。" : "已恢复默认方式，请重新识别字段。",
+    "info",
+  );
   syncTableModeControls(task);
   resetFieldPreviewUi();
   updateActionAvailability();
@@ -1856,6 +1926,7 @@ async function lookupSupplierTitle(task, schema, lookupButton) {
   if (!extractedData || typeof extractedData !== "object") return;
   const supplierName = String(extractedData.supplierName ?? "").trim();
   if (!supplierName) {
+    setStatus("请先填写乙方名称。", "error");
     return;
   }
   setSupplierLookupButtonLoading(lookupButton, true);
@@ -1867,8 +1938,10 @@ async function lookupSupplierTitle(task, schema, lookupButton) {
     task.fieldPreview.supplierPatch = supplierPatch;
     await renderFieldPreview(task);
     openSupplierPatchModal("result", supplierPatch, schema);
+    setStatus("用友抬头查询完成。", "success");
   } catch (error) {
     closeSupplierPatchModal();
+    setStatus(formatError(error), "error");
   } finally {
     if (supplierPatchModal?.hidden) {
       resetSupplierLookupButton();
@@ -1881,6 +1954,7 @@ function scrollToFirstMissingField() {
     ".contract-preview-field.is-missing, .contract-preview-table td.is-missing, .contract-preview-table-empty.is-missing",
   );
   if (!target) {
+    setStatus("当前确认稿没有待填写字段。", "success");
     return;
   }
   target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -2347,7 +2421,7 @@ function resetFieldPreviewUi() {
 }
 
 function clearActiveEditor() {
-  ui.processingVisible = false;
+  if (processingCard) processingCard.hidden = true;
   if (taskLogCard) taskLogCard.hidden = true;
   if (taskLogText) taskLogText.textContent = "";
   previewCard.hidden = true;
@@ -2366,7 +2440,7 @@ function clearActiveEditor() {
   syncDrawerVisibility(false);
 }
 
-export function statusLabel(status) {
+function statusLabel(status) {
   return {
     uploading: "上传中",
     parsing: "解析中",
@@ -2384,18 +2458,19 @@ function setTaskStatus(task, status, message = "", failedStep = null) {
   task.message = message;
   task.failedStep = failedStep;
   if (message) appendTaskLog(task, `${message}\n`);
+  renderTaskList();
   syncActiveTaskEditor();
   updateActionAvailability();
 }
 
 function createTask(file) {
-  const templateName = templateLabel(ui.createTemplateType);
+  const selected = templateType.selectedOptions?.[0];
   return {
     id: `task_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
     file,
     fileName: file.name || "报价单",
-    templateType: ui.createTemplateType,
-    templateName,
+    templateType: templateType.value,
+    templateName: selected?.textContent || templateType.value,
     manualEntry: false,
     status: "uploading",
     message: "等待上传报价单",
@@ -2415,12 +2490,13 @@ function createTask(file) {
 }
 
 function createManualTask() {
-  const templateName = templateLabel(ui.createTemplateType);
+  const selected = templateType.selectedOptions?.[0];
+  const templateName = selected?.textContent || templateType.value;
   return {
     id: `task_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
     file: null,
     fileName: `手工填写 · ${templateName}`,
-    templateType: ui.createTemplateType,
+    templateType: templateType.value,
     templateName,
     manualEntry: true,
     status: "needs_fields",
@@ -2441,136 +2517,134 @@ function createManualTask() {
 }
 
 async function startManualTask() {
-  if (!ui.sessionReady) {
+  if (!sessionReady) {
+    setStatus("请先完成钉钉免登后再创建任务。", "error");
     return false;
   }
   if (incompleteTaskCount() >= MAX_TASKS) {
+    setStatus("未完成任务已达到 5 个，请先完成或删除任务。", "error");
     return false;
   }
 
   const task = createManualTask();
   task.fieldPreview = await buildManualFieldPreview(task.templateType);
-  ui.tasks.unshift(task);
+  tasks.unshift(task);
   selectTask(task.id);
   closeCreatePanel({ clearFile: true, keepStatus: true });
+  setStatus("已创建手工填写任务，请在字段确认稿中补充合同字段。", "success");
   return true;
 }
 
 function startTaskFromFile(file) {
   const validationMessage = validateQuoteFile(file);
   if (validationMessage) {
+    setStatus(validationMessage, "error");
     updateActionAvailability();
     return false;
   }
-  if (!ui.sessionReady) {
+  if (!sessionReady) {
+    setStatus("请先完成钉钉免登后再上传报价单。", "error");
     return false;
   }
   if (incompleteTaskCount() >= MAX_TASKS) {
+    setStatus("未完成任务已达到 5 个，请先完成或删除任务。", "error");
     return false;
   }
 
   const task = createTask(file);
-  ui.tasks.unshift(task);
+  tasks.unshift(task);
   selectTask(task.id);
   closeCreatePanel({ clearFile: true, keepStatus: true });
+  setStatus("已创建任务，正在上传解析...");
   void runParseTask(task);
   return true;
 }
 
-export function selectTask(taskId) {
-  ui.activeTaskId = taskId;
-  ui.drawerOpen = Boolean(ui.activeTaskId);
+function selectTask(taskId) {
+  activeTaskId = taskId;
+  drawerOpen = Boolean(activeTaskId);
+  renderTaskList();
   syncActiveTaskEditor();
   updateActionAvailability();
 }
 
 function closeTaskDrawer() {
-  ui.drawerOpen = false;
+  drawerOpen = false;
   setDrawerBusy(null);
   syncDrawerVisibility(false);
+  renderTaskList();
   updateActionAvailability();
 }
 
-export function openCreatePanel() {
+function openCreatePanel() {
   if (incompleteTaskCount() >= MAX_TASKS) {
+    setStatus("未完成任务已达到 5 个，请先完成或删除任务。", "error");
     updateActionAvailability();
     return;
   }
-  ui.createPanelOpen = true;
-  document.querySelector("#taskCreatePanel")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  window.setTimeout(() => document.querySelector("#createTemplateType")?.focus(), 0);
+  createPanelOpen = true;
+  setStatus("");
+  renderTaskList();
+  taskCreatePanel?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  window.setTimeout(() => templateType?.focus(), 0);
 }
 
-export function closeCreatePanel(options = {}) {
-  ui.createPanelOpen = false;
+function closeCreatePanel(options = {}) {
+  createPanelOpen = false;
+  if (taskCreatePanel) taskCreatePanel.hidden = true;
   if (options.clearFile !== false) clearPendingQuoteFile();
+  if (!options.keepStatus) setStatus("");
+  renderTaskList();
 }
 
-export function confirmCreateTask() {
-  if (!ui.sessionReady) {
+function confirmCreateTask() {
+  if (!sessionReady) {
+    setStatus("请先完成钉钉免登后再创建任务。", "error");
     updateActionAvailability();
     return;
   }
   if (incompleteTaskCount() >= MAX_TASKS) {
+    setStatus("未完成任务已达到 5 个，请先完成或删除任务。", "error");
     updateActionAvailability();
     return;
   }
-  if (ui.pendingQuoteFile) {
-    startTaskFromFile(ui.pendingQuoteFile);
+  if (pendingQuoteFile) {
+    startTaskFromFile(pendingQuoteFile);
     return;
   }
   void startManualTask();
 }
 
 function syncDrawerVisibility(hasContent) {
-  ui.drawerSheetOpen = Boolean(ui.drawerOpen && hasContent);
+  const open = Boolean(drawerOpen && hasContent);
+  document.body.classList.toggle("drawer-open", open);
+  if (taskDrawer) {
+    const wasOpen = !taskDrawer.hidden;
+    taskDrawer.hidden = !open;
+    taskDrawer.setAttribute("aria-hidden", open ? "false" : "true");
+    if (open && !wasOpen) {
+      drawerLastFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      window.setTimeout(() => closeTaskDrawerButton?.focus(), 0);
+    }
+    if (!open && wasOpen && drawerLastFocus && document.contains(drawerLastFocus)) {
+      drawerLastFocus.focus();
+      drawerLastFocus = null;
+    }
+  }
+  if (taskDrawerBackdrop) taskDrawerBackdrop.hidden = !open;
 }
 
-export function removeTask(taskId) {
-  const index = ui.tasks.findIndex((task) => task.id === taskId);
-  if (index < 0 || taskIsBusy(ui.tasks[index])) return;
-  ui.tasks.splice(index, 1);
-  if (ui.activeTaskId === taskId) {
-    ui.activeTaskId = ui.tasks[0]?.id || null;
-    ui.drawerOpen = Boolean(ui.activeTaskId);
+function removeTask(taskId) {
+  const index = tasks.findIndex((task) => task.id === taskId);
+  if (index < 0 || taskIsBusy(tasks[index])) return;
+  tasks.splice(index, 1);
+  if (activeTaskId === taskId) {
+    activeTaskId = tasks[0]?.id || null;
+    drawerOpen = Boolean(activeTaskId);
   }
+  renderTaskList();
   syncActiveTaskEditor();
   updateActionAvailability();
-}
-
-export function taskCardClass(task) {
-  return [
-    "task-card",
-    task.id === ui.activeTaskId ? "is-active" : "",
-    taskIsBusy(task) ? "is-busy" : "",
-    task.status === "failed" ? "is-error" : "",
-    task.status === "completed" ? "is-complete" : "",
-  ].filter(Boolean).join(" ");
-}
-
-export async function downloadTask(task) {
-  if (!task?.download?.dingDrive?.fileId) return;
-  const payload = task.download;
-  const markDownloadFailed = (error) => {
-    const message = formatError(error);
-    task.downloadState = "ready";
-    appendTaskLog(task, `下载失败：${message}\n`);
-    syncDrawerDownload(task);
-    updateActionAvailability();
-  };
-  try {
-    task.downloadState = "downloading";
-    syncDrawerDownload(task);
-    updateActionAvailability();
-    const result = await downloadDingDriveContract(payload);
-    const message = `已触发下载：${result.fileName}。${result.savePathHint}`;
-    task.downloadState = "downloaded";
-    appendTaskLog(task, `${message}\n`);
-    syncDrawerDownload(task);
-    updateActionAvailability();
-  } catch (error) {
-    markDownloadFailed(error);
-  }
 }
 
 function createTaskDownloadNode(task) {
@@ -2586,8 +2660,33 @@ function createTaskDownloadNode(task) {
     );
     button.type = "button";
     button.disabled = isDownloading;
-    button.addEventListener("click", () => {
-      void downloadTask(task);
+    button.addEventListener("click", async () => {
+      const markDownloadFailed = (error) => {
+        const message = formatError(error);
+        task.downloadState = "ready";
+        appendTaskLog(task, `下载失败：${message}\n`);
+        setStatus(`下载失败：${message}`, "error");
+        renderTaskList();
+        syncDrawerDownload(task);
+        updateActionAvailability();
+      };
+      try {
+        task.downloadState = "downloading";
+        renderTaskList();
+        syncDrawerDownload(task);
+        updateActionAvailability();
+        setStatus("正在准备合同下载...");
+        const result = await downloadDingDriveContract(payload);
+        const message = `已触发下载：${result.fileName}。${result.savePathHint}`;
+        task.downloadState = "downloaded";
+        appendTaskLog(task, `${message}\n`);
+        setStatus(message, "success");
+        renderTaskList();
+        syncDrawerDownload(task);
+        updateActionAvailability();
+      } catch (error) {
+        markDownloadFailed(error);
+      }
     });
     return button;
   }
@@ -2595,6 +2694,89 @@ function createTaskDownloadNode(task) {
     return createEl("p", "task-file-path", `合同已存入钉盘：${payload.filePath || payload.dingDrive.filePath}`);
   }
     return createEl("p", "task-file-path", "合同已存入钉盘，可在钉盘目录查看。");
+}
+
+function renderTaskList() {
+  if (!taskList) return;
+  taskList.textContent = "";
+  const hasTasks = tasks.length > 0;
+  const createCard = createEl("button", `new-task-card${hasTasks ? "" : " is-empty"}`, "");
+  createCard.type = "button";
+  createCard.disabled = !sessionReady || incompleteTaskCount() >= MAX_TASKS;
+  createCard.append(
+    createEl("strong", "", hasTasks ? "+ 新建报价单任务" : "开始第一份合同"),
+    createEl("span", "", createCard.disabled
+      ? uploadDisabledReason()
+      : "选模板 → 可选上传报价单 → 确认字段后生成"),
+  );
+  createCard.addEventListener("click", openCreatePanel);
+
+  tasks.forEach((task, index) => {
+    const card = createEl("article", [
+      "task-card",
+      task.id === activeTaskId ? "is-active" : "",
+      taskIsBusy(task) ? "is-busy" : "",
+      task.status === "failed" ? "is-error" : "",
+      task.status === "completed" ? "is-complete" : "",
+    ].filter(Boolean).join(" "));
+    card.setAttribute("aria-current", task.id === activeTaskId ? "true" : "false");
+    card.setAttribute("aria-busy", taskIsBusy(task) ? "true" : "false");
+
+    const header = createEl("div", "task-card-header");
+    const title = createEl("div", "task-title");
+    title.append(
+      createEl("strong", "", `${index + 1}. ${task.fileName}`),
+      createEl("small", "", task.templateName),
+    );
+    header.append(title, createEl("span", `task-status status-${task.status}`, statusLabel(task.status)));
+
+    const stage = createEl("p", "task-stage", taskNextAction(task));
+    const actions = createEl("div", "task-actions");
+    const selectButton = createEl("button", "btn-secondary task-secondary-button", task.id === activeTaskId && drawerOpen ? "正在查看" : "查看详情");
+    selectButton.type = "button";
+    selectButton.addEventListener("click", () => {
+      selectTask(task.id);
+    });
+    actions.append(selectButton);
+
+    if (task.status === "failed") {
+      const retryButton = createEl("button", "btn-secondary task-secondary-button", "重试");
+      retryButton.type = "button";
+      retryButton.addEventListener("click", () => {
+        retryTask(task);
+      });
+      actions.append(retryButton);
+    }
+
+    const deleteButton = createEl("button", "btn-danger task-secondary-button", "删除");
+    deleteButton.type = "button";
+    deleteButton.disabled = taskIsBusy(task);
+    deleteButton.addEventListener("click", () => {
+      removeTask(task.id);
+    });
+    actions.append(deleteButton);
+
+    card.append(header, stage);
+    if (task.status === "failed" && task.message) {
+      card.append(createEl("p", "task-message-failed", task.message));
+    }
+    card.append(actions);
+    const downloadNode = createTaskDownloadNode(task);
+    if (downloadNode) card.append(downloadNode);
+    taskList.append(card);
+  });
+  if (createPanelOpen && taskCreatePanel) {
+    taskCreatePanel.hidden = false;
+    taskCreatePanel.classList.add("is-creating");
+    taskList.append(taskCreatePanel);
+  } else {
+    if (taskCreatePanel) {
+      taskCreatePanel.hidden = true;
+      taskCreatePanel.classList.remove("is-creating");
+    }
+    taskList.append(createCard);
+  }
+  updateActionAvailability();
 }
 
 async function syncActiveTaskEditor() {
@@ -2613,15 +2795,19 @@ async function syncActiveTaskEditor() {
   syncDrawerDownload(task);
   syncTaskLogPanel(task);
 
-  ui.drawerTitle = `${task.fileName} · ${statusLabel(task.status)}`;
-  const helperHint = task.manualEntry && task.status === "needs_fields"
-    ? "未上传报价单，请直接在字段确认稿中手工补充合同字段。"
-    : task.status === "needs_text"
-      ? "AI 已整理出报价单文本，请先校对识别内容；有问题直接修改，再识别字段。"
-      : task.status === "needs_fields"
-        ? "AI 已按模板匹配字段，红色内容代表还需要人工补充或确认，可直接修改。"
-        : task.message || "请按当前阶段继续处理任务。";
-  ui.drawerHint = `${task.templateName}。${helperHint}`;
+  if (activeTaskTitle) {
+    activeTaskTitle.textContent = `${task.fileName} · ${statusLabel(task.status)}`;
+  }
+  if (activeTaskHint) {
+    const helperHint = task.manualEntry && task.status === "needs_fields"
+      ? "未上传报价单，请直接在字段确认稿中手工补充合同字段。"
+      : task.status === "needs_text"
+        ? "AI 已整理出报价单文本，请先校对识别内容；有问题直接修改，再识别字段。"
+        : task.status === "needs_fields"
+          ? "AI 已按模板匹配字段，红色内容代表还需要人工补充或确认，可直接修改。"
+          : task.message || "请按当前阶段继续处理任务。";
+    activeTaskHint.textContent = `${task.templateName}。${helperHint}`;
+  }
   if (generateButton) {
     generateButton.hidden = !(taskHasWorkbenchContent && task.status === "needs_fields");
     const generatingTask = activeGeneratingTask(task.id);
@@ -2671,9 +2857,11 @@ async function runParseTask(task) {
     const attachmentHint = taskAttachmentModeText(task);
     setTaskStatus(task, "needs_text", `解析完成：${parsed.textLength || 0} 字符，请确认文本并识别字段。`);
     if (attachmentHint) appendTaskLog(task, `${attachmentHint}\n`);
+    setStatus(attachmentHint || "任务解析完成，请确认文本。", attachmentHint ? "info" : "success");
   } catch (error) {
     const message = formatError(error);
     setTaskStatus(task, "failed", `处理失败：${message}`, task.upload ? "parse" : "upload");
+    setStatus(message, "error");
   }
 }
 
@@ -2683,6 +2871,7 @@ async function runIdentifyTask(task) {
     task.extraInfo = extraInfoText?.value.trim() || task.extraInfo || "";
     task.fieldPreview = null;
     setTaskStatus(task, "identifying", "字段识别中：AI 正在匹配合同字段，可关闭当前任务详情并新建其他任务。");
+    setStatus("字段识别中，可关闭当前任务详情去新建任务，不用停在这里等待。");
     task.fieldPreview = await previewQuoteFields(task.upload.id, task.quoteText.trim(), task.extraInfo, task.templateType, effectiveTableMode(task));
     task.tableMode = normalizeTableMode(task.fieldPreview.tableMode || task.tableMode);
     task.attachmentMode = task.fieldPreview.attachmentMode || task.attachmentMode;
@@ -2705,9 +2894,14 @@ async function runIdentifyTask(task) {
         ? `AI 已识别主字段，仍有 ${missing} 项需要人工确认。${supplierHint}${attachmentHint ? ` ${attachmentHint}` : ""}`
         : `AI 已识别字段，未发现缺失字段。${supplierHint}${attachmentHint ? ` ${attachmentHint}` : ""}`,
     );
+    setStatus(
+      attachmentHint || supplierStatus,
+      attachmentHint || missing > 0 ? "info" : "success",
+    );
   } catch (error) {
     const message = formatError(error);
     setTaskStatus(task, "failed", `字段识别失败：${message}`, "identify");
+    setStatus(message, "error");
   }
 }
 
@@ -2716,6 +2910,7 @@ async function runGenerateTask(task) {
   if (!task.manualEntry && !task.upload) return;
   const generatingTask = activeGeneratingTask(task.id);
   if (generatingTask) {
+    setStatus("已有合同正在生成，请等待当前生成完成后再继续。", "error");
     appendTaskLog(task, `等待任务「${generatingTask.title || generatingTask.fileName || generatingTask.id}」生成完成后再提交。`);
     return;
   }
@@ -2732,10 +2927,11 @@ async function runGenerateTask(task) {
   } catch (error) {
     const message = formatError(error);
     setTaskStatus(task, "failed", `处理失败：${message}`, "generate");
+    setStatus(message, "error");
   }
 }
 
-export function retryTask(task) {
+function retryTask(task) {
   if (task.failedStep === "upload" || task.failedStep === "parse") {
     void runParseTask(task);
     return;
@@ -2767,14 +2963,20 @@ cancelCreateTaskButton?.addEventListener("click", () => {
 });
 confirmCreateTaskButton?.addEventListener("click", confirmCreateTask);
 
+templateType.addEventListener("change", () => {
+  setStatus("模板已切换，将用于下一份报价单。");
+});
+
 quoteTextPreview.addEventListener("input", () => {
   const task = activeTask();
   if (!task || taskIsBusy(task)) return;
   task.quoteText = quoteTextPreview.value;
   task.fieldPreview = null;
   if (task.status !== "failed") task.status = "needs_text";
+  renderTaskList();
   resetFieldPreviewUi();
   setDrawerStep("text");
+  setStatus("解析内容已修改，请重新识别合同字段。");
   updateActionAvailability();
 });
 
@@ -2784,18 +2986,22 @@ extraInfoText?.addEventListener("input", () => {
   task.extraInfo = extraInfoText.value;
   task.fieldPreview = null;
   if (task.status !== "failed") task.status = "needs_text";
+  renderTaskList();
   resetFieldPreviewUi();
   setDrawerStep("text");
+  setStatus("额外信息已修改，请重新识别合同字段。");
   updateActionAvailability();
 });
 
 identifyFieldsButton?.addEventListener("click", async () => {
   const task = activeTask();
   if (!task) {
+    setStatus("请先选择任务。", "error");
     return;
   }
   const quoteText = quoteTextPreview.value.trim();
   if (!quoteText) {
+    setStatus("解析文本为空，请补充后再识别字段。", "error");
     return;
   }
   task.quoteText = quoteText;
@@ -2805,13 +3011,16 @@ identifyFieldsButton?.addEventListener("click", async () => {
 generateButton.addEventListener("click", async () => {
   const task = activeTask();
   if (!task) {
+    setStatus("请先选择任务。", "error");
     return;
   }
   if (!task.fieldPreview?.extractedData) {
+    setStatus("请先识别并确认合同字段。", "error");
     return;
   }
   const quoteText = quoteTextPreview.value.trim();
   if (!task.manualEntry && !quoteText) {
+    setStatus("解析文本为空，请补充后再生成合同。", "error");
     return;
   }
   if (quoteText) task.quoteText = quoteText;
@@ -2836,7 +3045,7 @@ document.addEventListener("keydown", (event) => {
     closeTaskDrawer();
     return;
   }
-  if (ui.createPanelOpen) {
+  if (createPanelOpen) {
     closeCreatePanel({ clearFile: true });
     return;
   }
@@ -2847,9 +3056,8 @@ document.addEventListener("keydown", (event) => {
   if (supplierPatchModal && !supplierPatchModal.hidden) closeSupplierPatchModal();
 });
 
-export function bootstrapCore() {
-  updateSelectedFile();
-  clearActiveEditor();
-  updateActionAvailability();
-  void initAuth();
-}
+updateSelectedFile();
+renderTaskList();
+clearActiveEditor();
+updateActionAvailability();
+void initAuth();

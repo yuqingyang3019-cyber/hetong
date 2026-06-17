@@ -1,253 +1,199 @@
-<!doctype html>
-<html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#f8fafc" />
-    <title>合同生成助手（内测版）</title>
-    <link rel="stylesheet" href="/app.css" />
-    <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.41/dingtalk.open.js"></script>
-    <script src="/config.js"></script>
-  </head>
-  <body>
-    <main class="page">
-      <section class="card workbench-card">
-        <header class="app-hero">
-          <div class="hero-copy">
-            <div class="hero-head">
-              <div class="hero-brand">
-                <span class="hero-product">合同生成助手</span>
-                <span class="beta-badge" title="当前处于内测版本">内测版</span>
-              </div>
-              <p class="hero-greeting">你好，<span class="user-name">{{ ui.userName }}</span></p>
-            </div>
-            <p class="hero-flow" aria-label="合同生成流程">上传报价单 → 确认字段 → 生成下载</p>
-          </div>
-        </header>
-
-        <div id="taskQueueCard" class="task-queue-panel">
-          <div class="task-queue-heading">
-            <div>
-              <p class="eyebrow">任务队列</p>
-              <h2>任务看板</h2>
-            </div>
-            <button id="openCreateTaskButton" class="btn-primary task-board-create-button" type="button">新建任务</button>
-            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务；处理中可关闭详情继续处理下一份。</p>
-          </div>
-
-          <div id="taskBoard" class="task-board-root">
-            <div class="task-list" aria-label="任务列表">
-              <article
-                v-for="(task, index) in ui.tasks"
-                :key="task.id"
-                :class="taskCardClass(task)"
-                :aria-current="task.id === ui.activeTaskId ? 'true' : 'false'"
-                :aria-busy="taskIsBusy(task) ? 'true' : 'false'"
-              >
-                <div class="task-card-header">
-                  <div class="task-title">
-                    <strong>{{ index + 1 }}. {{ task.fileName }}</strong>
-                    <small>{{ task.templateName }}</small>
-                  </div>
-                  <span :class="'task-status status-' + task.status">{{ statusLabel(task.status) }}</span>
-                </div>
-                <p class="task-stage">{{ taskNextAction(task) }}</p>
-                <p v-if="task.status === 'failed' && task.message" class="task-message-failed">{{ task.message }}</p>
-                <div class="task-actions">
-                  <button class="btn-secondary task-secondary-button" type="button" @click="selectTask(task.id)">
-                    {{ selectButtonLabel(task) }}
-                  </button>
-                  <button
-                    v-if="task.status === 'failed'"
-                    class="btn-secondary task-secondary-button"
-                    type="button"
-                    @click="retryTask(task)"
-                  >
-                    重试
-                  </button>
-                  <button
-                    class="btn-danger task-secondary-button"
-                    type="button"
-                    :disabled="taskIsBusy(task)"
-                    @click="removeTask(task.id)"
-                  >
-                    删除
-                  </button>
-                </div>
-                <button
-                  v-if="showTaskDownloadButton(task)"
-                  type="button"
-                  :class="taskDownloadClass(task)"
-                  :disabled="task.downloadState === 'downloading'"
-                  @click="downloadTask(task)"
-                >
-                  {{ taskDownloadLabel(task) }}
-                </button>
-                <p v-else-if="taskDownloadPath(task)" class="task-file-path">合同已存入钉盘：{{ taskDownloadPath(task) }}</p>
-                <p v-else-if="taskDownloadFallback(task)" class="task-file-path">合同已存入钉盘，可在钉盘目录查看。</p>
-              </article>
-
-              <button
-                v-if="!ui.createPanelOpen"
-                type="button"
-                :class="'new-task-card' + (hasTasks() ? '' : ' is-empty')"
-                :disabled="createCardDisabled()"
-                @click="openCreatePanel()"
-              >
-                <strong>{{ createCardTitle() }}</strong>
-                <span>{{ createCardHint() }}</span>
-              </button>
-            </div>
-
-            <div id="taskCreatePanel" class="task-create-strip" :class="ui.createPanelOpen ? 'is-creating' : ''" v-show="ui.createPanelOpen">
-              <div class="create-panel-heading">
-                <div>
-                  <p class="eyebrow">新建任务</p>
-                  <h2>选择模板和报价单（可选）</h2>
-                </div>
-                <button id="cancelCreateTaskButton" class="btn-secondary task-secondary-button" type="button" @click="closeCreatePanel({ clearFile: true })">取消</button>
-              </div>
-              <div class="create-panel-controls">
-                <label class="field template-field">
-                  <span class="field-label">合同模板</span>
-                  <select id="createTemplateType" v-model="ui.createTemplateType">
-                    <option v-for="option in TEMPLATE_OPTIONS" :key="option.value" :value="option.value">{{ option.label }}</option>
-                  </select>
-                </label>
-
-                <label class="field file-field" for="quoteFile">
-                  <span class="field-label">报价单文件 <small>可选</small></span>
-                  <span class="upload-dropzone" id="uploadDropzone">
-                    <span class="upload-mark" aria-hidden="true">
-                      <svg viewBox="0 0 24 24" role="img" focusable="false">
-                        <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
-                      </svg>
-                    </span>
-                    <span class="upload-copy">
-                      <span id="fileNameText" class="upload-title">拖拽或点击选择报价单文件</span>
-                      <span id="fileMetaText" class="upload-meta">支持 PDF、Excel 和常见图片格式；可不传报价单，创建后在字段确认稿中手工补充</span>
-                    </span>
-                  </span>
-                  <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png,.bmp,.gif,.tif,.tiff,.webp" />
-                </label>
-              </div>
-              <div class="create-panel-actions">
-                <p id="createTaskHint" class="hint">选择合同模板后即可创建任务；上传报价单将自动解析，不上传则进入手工填写。</p>
-                <button id="confirmCreateTaskButton" class="btn-primary" type="button" @click="confirmCreateTask()">确认创建任务</button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <div id="taskDrawerBackdrop" class="drawer-backdrop" hidden></div>
-    <aside id="taskDrawer" class="task-drawer" role="dialog" aria-modal="true" aria-labelledby="activeTaskTitle" aria-hidden="true" hidden>
-      <div class="drawer-shell">
-        <div class="drawer-grip" aria-hidden="true"></div>
-        <header id="drawerChromeRoot" class="drawer-header">
-          <div>
-            <p class="eyebrow">当前任务</p>
-            <h2 id="activeTaskTitle">{{ ui.drawerTitle }}</h2>
-            <p class="hint" id="activeTaskHint">{{ ui.drawerHint }}</p>
-            <div id="drawerStepRail" class="drawer-step-rail" aria-label="任务阶段">
-              <span data-drawer-step="upload" :class="drawerStepClass('upload')" :aria-current="drawerStepAria('upload')">1 上传解析</span>
-              <span data-drawer-step="text" :class="drawerStepClass('text')" :aria-current="drawerStepAria('text')">2 确认文本</span>
-              <span data-drawer-step="review" :class="drawerStepClass('review')" :aria-current="drawerStepAria('review')">3 确认字段</span>
-              <span data-drawer-step="generate" :class="drawerStepClass('generate')" :aria-current="drawerStepAria('generate')">4 生成下载</span>
-            </div>
-          </div>
-          <button id="closeTaskDrawerButton" class="btn-secondary drawer-close" type="button" aria-label="关闭任务详情">关闭</button>
-        </header>
-
-        <div class="drawer-content">
-          <section id="previewCard" class="drawer-panel preview-card" hidden>
-            <div class="drawer-section-heading">
-              <h3>报价单解析内容</h3>
-              <p class="hint">先校对解析文本，必要时补充付款、交付、签约主体等信息。</p>
-            </div>
-            <label class="field">
-              <span class="field-label">解析内容</span>
-              <textarea id="quoteTextPreview" rows="12"></textarea>
-            </label>
-            <label class="field">
-              <span class="field-label">额外信息提供 <small>可选</small></span>
-              <textarea id="extraInfoText" class="textarea-compact" rows="5" placeholder="例如：付款比例、交货地点、联系人、开户行、税号、签约主体等报价单中没有的信息。"></textarea>
-              <span class="field-help">识别字段时会同时读取“解析内容”和“额外信息”，补充信息优先用于填补缺失字段。</span>
-            </label>
-            <fieldset id="tableModeField" class="table-mode-field" hidden>
-              <legend class="visually-hidden">Excel 明细处理方式</legend>
-              <label class="table-mode-option">
-                <input id="tableAttachmentMode" type="checkbox" name="tableMode" value="attachment" />
-                <span>
-                  <strong>将 Excel 明细作为附件</strong>
-                  <small>勾选后只识别合同主字段，Excel 原表附到 Word 合同末尾。</small>
-                </span>
-              </label>
-              <p id="tableModeStatus" class="table-mode-status" aria-live="polite" hidden></p>
-            </fieldset>
-          </section>
-
-          <section id="fieldPreviewCard" class="drawer-panel field-preview-card" hidden>
-            <div class="drawer-section-heading">
-              <h3>合同字段确认稿</h3>
-              <p class="hint" id="fieldPreviewSummary">请按合同字段顺序确认识别结果，可直接修改字段；空字段生成到 Word 合同时会留空。</p>
-            </div>
-            <div id="contractPreview" class="contract-preview-shell"></div>
-          </section>
-
-          <section id="taskLogCard" class="drawer-panel task-log-card" hidden>
-            <details id="taskLogDetails" class="task-log">
-              <summary>查看任务日志</summary>
-              <pre id="taskLogText"></pre>
-            </details>
-          </section>
-        </div>
-
-        <footer class="drawer-actions">
-          <div id="drawerProcessingRoot">
-            <div id="processingCard" class="processing-card drawer-footer-status" role="status" aria-live="polite" v-show="ui.processingVisible">
-              <span class="processing-spinner" aria-hidden="true"></span>
-              <div class="processing-card-copy">
-                <strong id="processingTitle">{{ ui.processingTitle }}</strong>
-                <p id="processingHint" class="hint">{{ ui.processingHint }}</p>
-              </div>
-            </div>
-          </div>
-          <div id="drawerDownloadAction" class="drawer-download-action" hidden></div>
-          <p id="drawerActionHint" class="drawer-action-hint hint" aria-live="polite"></p>
-          <button id="identifyFieldsButton" class="btn-primary drawer-primary-action" type="button" disabled>识别当前任务字段</button>
-          <button id="generateButton" class="btn-primary drawer-primary-action" type="button" disabled>确认识别结果并生成合同</button>
-        </footer>
-      </div>
-    </aside>
-
-    <div id="accessModal" class="modal-backdrop" role="presentation" hidden>
-      <section class="access-modal" role="dialog" aria-modal="true" aria-labelledby="accessModalTitle">
-        <div class="modal-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" role="img" focusable="false">
-            <path d="M12 8v5m0 3h.01M10.3 4.7 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.7a2 2 0 0 0-3.4 0Z" />
-          </svg>
-        </div>
-        <div>
-          <p class="eyebrow">访问受限</p>
-          <h2 id="accessModalTitle">请在钉钉客户端内打开</h2>
-          <p id="accessModalMessage" class="hint">合同生成助手仅支持从钉钉微应用访问，网页环境无法完成免登。</p>
-        </div>
-        <button id="closeAccessModalButton" class="btn-secondary modal-close-button" type="button">关闭</button>
-      </section>
-    </div>
-
-    <div id="supplierPatchModal" class="modal-backdrop" role="presentation" hidden>
-      <section class="supplier-patch-modal" role="dialog" aria-modal="true" aria-labelledby="supplierPatchModalTitle">
-        <h2 id="supplierPatchModalTitle">乙方抬头提示</h2>
-        <p id="supplierPatchModalSubtitle" class="supplier-patch-modal-subtitle" hidden></p>
-        <div id="supplierPatchModalBody"></div>
-        <button id="closeSupplierPatchModalButton" class="btn-primary modal-close-button" type="button">知道了</button>
-      </section>
-    </div>
-
-    <script type="module" src="/app/main.js"></script>
-  </body>
-</html>
-
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#f8fafc" />
+    <title>合同生成助手（内测版）</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="https://g.alicdn.com/dingding/dingtalk-jsapi/3.0.41/dingtalk.open.js"></script>
+    <script src="/config.js"></script>
+  </head>
+  <body>
+    <main class="page">
+      <header class="app-hero">
+        <div class="hero-copy">
+          <div class="hero-top">
+            <div class="hero-brand">
+              <span class="hero-product">合同生成助手</span>
+              <span class="beta-badge" title="当前处于内测版本">内测版</span>
+            </div>
+            <p class="hero-greeting">你好，<span id="userName" class="user-name">你</span></p>
+          </div>
+          <div class="hero-steps" aria-label="合同生成流程">
+            <span>1 选模板</span>
+            <span>2 传报价单</span>
+            <span>3 补字段</span>
+            <span>4 生成下载</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="card workbench-card">
+        <p id="status" class="status" aria-live="polite" hidden></p>
+
+        <div id="taskQueueCard" class="task-queue-panel">
+          <div class="task-queue-heading">
+            <div>
+              <p class="eyebrow">任务队列</p>
+              <h2>任务看板</h2>
+            </div>
+            <button id="openCreateTaskButton" class="btn-primary task-board-create-button" type="button">新建任务</button>
+            <p class="hint" id="taskQueueHint">最多同时保留 5 个未完成任务；处理中可关闭详情继续处理下一份。</p>
+          </div>
+          <div id="taskList" class="task-list" aria-label="任务列表"></div>
+          <div id="taskCreatePanel" class="task-create-strip" hidden>
+            <div class="create-panel-heading">
+              <div>
+                <p class="eyebrow">新建任务</p>
+                <h2>选择模板和报价单（可选）</h2>
+              </div>
+              <button id="cancelCreateTaskButton" class="btn-secondary task-secondary-button" type="button">取消</button>
+            </div>
+            <div class="create-panel-controls">
+              <label class="field template-field">
+                <span class="field-label">合同模板</span>
+                <select id="templateType">
+                  <option value="simpleContract">简易合同（产品购销）</option>
+                  <option value="caigouhetong">采购合同（通用设备）</option>
+                  <option value="nonStandardNoInstall">设备采购合同（不含安装）</option>
+                  <option value="nonStandardWithInstall">设备采购合同（含安装）</option>
+                  <option value="annualFramework">年度采购框架合同</option>
+                  <option value="professionalSubcontract">专业工程分包合同</option>
+                  <option value="laborSubcontract">劳务分包合同（清包工）</option>
+                  <option value="supplementaryAgreement">合同补充协议书</option>
+                </select>
+              </label>
+
+              <label class="field file-field" for="quoteFile">
+                <span class="field-label">报价单文件 <small>可选</small></span>
+                <span class="upload-dropzone" id="uploadDropzone">
+                  <span class="upload-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" role="img" focusable="false">
+                      <path d="M12 16V4m0 0 4 4m-4-4-4 4M5 15v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3" />
+                    </svg>
+                  </span>
+                  <span class="upload-copy">
+                    <span id="fileNameText" class="upload-title">拖拽或点击选择报价单文件</span>
+                    <span id="fileMetaText" class="upload-meta">支持 PDF、Excel 和常见图片格式；可不传报价单，创建后在字段确认稿中手工补充</span>
+                  </span>
+                </span>
+                <input id="quoteFile" class="visually-hidden" type="file" accept=".pdf,.xls,.xlsx,.jpg,.jpeg,.png,.bmp,.gif,.tif,.tiff,.webp" />
+              </label>
+            </div>
+            <div class="create-panel-actions">
+              <p id="createTaskHint" class="hint">选择合同模板后即可创建任务；上传报价单将自动解析，不上传则进入手工填写。</p>
+              <button id="confirmCreateTaskButton" class="btn-primary" type="button" disabled>确认创建任务</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <div id="taskDrawerBackdrop" class="drawer-backdrop" hidden></div>
+      <aside id="taskDrawer" class="task-drawer" role="dialog" aria-modal="true" aria-labelledby="activeTaskTitle" aria-hidden="true" hidden>
+        <div class="drawer-shell">
+          <div class="drawer-grip" aria-hidden="true"></div>
+          <header class="drawer-header">
+            <div>
+              <p class="eyebrow">当前任务</p>
+              <h2 id="activeTaskTitle">确认解析文本并补充信息</h2>
+              <p class="hint" id="activeTaskHint">请检查当前任务的报价单解析文本，必要时可直接修正；额外信息会和解析文本一起交给 LLM 识别合同字段。</p>
+              <div id="drawerStepRail" class="drawer-step-rail" aria-label="任务阶段">
+                <span data-drawer-step="upload">1 上传解析</span>
+                <span data-drawer-step="text">2 确认文本</span>
+                <span data-drawer-step="review">3 确认字段</span>
+                <span data-drawer-step="generate">4 生成下载</span>
+              </div>
+            </div>
+            <button id="closeTaskDrawerButton" class="btn-secondary drawer-close" type="button" aria-label="关闭任务详情">关闭</button>
+          </header>
+
+          <div class="drawer-content">
+            <section id="previewCard" class="drawer-panel preview-card" hidden>
+              <div class="drawer-section-heading">
+                <h3>报价单解析内容</h3>
+                <p class="hint">先校对解析文本，必要时补充付款、交付、签约主体等信息。</p>
+              </div>
+              <label class="field">
+                <span class="field-label">解析内容</span>
+                <textarea id="quoteTextPreview" rows="12"></textarea>
+              </label>
+              <label class="field">
+                <span class="field-label">额外信息提供 <small>可选</small></span>
+                <textarea id="extraInfoText" class="textarea-compact" rows="5" placeholder="例如：付款比例、交货地点、联系人、开户行、税号、签约主体等报价单中没有的信息。"></textarea>
+                <span class="field-help">识别字段时会同时读取“解析内容”和“额外信息”，补充信息优先用于填补缺失字段。</span>
+              </label>
+              <fieldset id="tableModeField" class="table-mode-field" hidden>
+                <legend class="visually-hidden">Excel 明细处理方式</legend>
+                <label class="table-mode-option">
+                  <input id="tableAttachmentMode" type="checkbox" name="tableMode" value="attachment" />
+                  <span>
+                    <strong>将 Excel 明细作为附件</strong>
+                    <small>勾选后只识别合同主字段，Excel 原表附到 Word 合同末尾。</small>
+                  </span>
+                </label>
+                <p id="tableModeStatus" class="table-mode-status" aria-live="polite" hidden></p>
+              </fieldset>
+            </section>
+
+            <section id="fieldPreviewCard" class="drawer-panel field-preview-card" hidden>
+              <div class="drawer-section-heading">
+                <h3>合同字段确认稿</h3>
+                <p class="hint" id="fieldPreviewSummary">请按合同字段顺序确认识别结果，可直接修改字段；空字段生成到 Word 合同时会留空。</p>
+              </div>
+              <div id="contractPreview" class="contract-preview-shell"></div>
+            </section>
+
+            <section id="taskLogCard" class="drawer-panel task-log-card" hidden>
+              <details id="taskLogDetails" class="task-log">
+                <summary>查看任务日志</summary>
+                <pre id="taskLogText"></pre>
+              </details>
+            </section>
+          </div>
+
+          <footer class="drawer-actions">
+            <div id="processingCard" class="processing-card drawer-footer-status" role="status" aria-live="polite" hidden>
+              <span class="processing-spinner" aria-hidden="true"></span>
+              <div class="processing-card-copy">
+                <strong id="processingTitle">任务处理中</strong>
+                <p id="processingHint" class="hint">请稍候，系统正在处理当前报价单。</p>
+              </div>
+            </div>
+            <div id="drawerDownloadAction" class="drawer-download-action" hidden></div>
+            <p id="drawerActionHint" class="drawer-action-hint hint" aria-live="polite"></p>
+            <button id="identifyFieldsButton" class="btn-primary drawer-primary-action" type="button" disabled>识别当前任务字段</button>
+            <button id="generateButton" class="btn-primary drawer-primary-action" type="button" disabled>确认识别结果并生成合同</button>
+          </footer>
+        </div>
+      </aside>
+    </main>
+
+    <div id="accessModal" class="modal-backdrop" role="presentation" hidden>
+      <section class="access-modal" role="dialog" aria-modal="true" aria-labelledby="accessModalTitle">
+        <div class="modal-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" role="img" focusable="false">
+            <path d="M12 8v5m0 3h.01M10.3 4.7 2.6 18a2 2 0 0 0 1.7 3h15.4a2 2 0 0 0 1.7-3L13.7 4.7a2 2 0 0 0-3.4 0Z" />
+          </svg>
+        </div>
+        <div>
+          <p class="eyebrow">访问受限</p>
+          <h2 id="accessModalTitle">请在钉钉客户端内打开</h2>
+          <p id="accessModalMessage" class="hint">合同生成助手仅支持从钉钉微应用访问，网页环境无法完成免登。</p>
+        </div>
+        <button id="closeAccessModalButton" class="btn-secondary modal-close-button" type="button">关闭</button>
+      </section>
+    </div>
+
+    <div id="supplierPatchModal" class="modal-backdrop" role="presentation" hidden>
+      <section class="supplier-patch-modal" role="dialog" aria-modal="true" aria-labelledby="supplierPatchModalTitle">
+        <h2 id="supplierPatchModalTitle">乙方抬头提示</h2>
+        <p id="supplierPatchModalSubtitle" class="supplier-patch-modal-subtitle" hidden></p>
+        <div id="supplierPatchModalBody"></div>
+        <button id="closeSupplierPatchModalButton" class="btn-primary modal-close-button" type="button">知道了</button>
+      </section>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
