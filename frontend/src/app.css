@@ -118,41 +118,52 @@ h2 {
 
 .hero-copy {
   background:
-    linear-gradient(135deg, rgba(22, 119, 255, 0.1), rgba(11, 128, 103, 0.06)),
+    linear-gradient(135deg, rgba(22, 119, 255, 0.08), rgba(11, 128, 103, 0.04)),
     var(--color-card);
-  border: 1px solid rgba(22, 119, 255, 0.18);
-  border-radius: calc(var(--radius-lg) + 6px);
-  box-shadow: var(--shadow-md);
+  border: 1px solid rgba(22, 119, 255, 0.14);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
   display: grid;
-  gap: var(--space-3);
-  padding: var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
 }
 
-h1 {
-  color: var(--color-primary);
-  font-size: clamp(1.55rem, 5.5vw, 2.35rem);
-  letter-spacing: -0.055em;
-  line-height: 1.12;
-  margin: 0;
-}
-
-h1 .user-name {
-  color: var(--color-accent);
-  display: inline;
-  font-size: inherit;
-  font-weight: inherit;
-}
-
-.hero-title-row {
+.hero-top {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
   gap: var(--space-2);
   justify-content: space-between;
 }
 
-.hero-title-row .eyebrow {
+.hero-brand {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.hero-product {
+  color: var(--color-primary);
+  font-size: 0.9375rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+}
+
+.hero-greeting {
+  color: var(--color-secondary);
+  flex-shrink: 0;
+  font-size: 0.875rem;
+  line-height: 1.3;
   margin: 0;
+  text-align: right;
+}
+
+.hero-greeting .user-name {
+  color: var(--color-accent);
+  font-size: inherit;
+  font-weight: 800;
 }
 
 .beta-badge {
@@ -161,26 +172,17 @@ h1 .user-name {
   border-radius: 999px;
   color: var(--color-warning);
   flex-shrink: 0;
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 800;
   letter-spacing: 0.04em;
   line-height: 1;
-  margin-top: 0.35rem;
-  padding: 6px 9px;
-}
-
-.hero-description {
-  color: var(--color-secondary);
-  font-size: 0.95rem;
-  line-height: 1.6;
-  margin: 0;
-  max-width: 620px;
+  padding: 4px 7px;
 }
 
 .hero-steps {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .hero-steps span {
@@ -188,10 +190,13 @@ h1 .user-name {
   border: 1px solid rgba(22, 119, 255, 0.14);
   border-radius: 999px;
   color: #21456f;
-  font-size: 0.8125rem;
+  flex: 1 1 auto;
+  font-size: 0.75rem;
   font-weight: 800;
-  padding: 8px 10px;
+  min-width: 0;
+  padding: 4px 8px;
   text-align: center;
+  white-space: nowrap;
 }
 
 .user-name {
@@ -2035,7 +2040,23 @@ pre {
   }
 
   .hero-copy {
-    padding: var(--space-3);
+    padding: var(--space-2) max(14px, env(safe-area-inset-left)) var(--space-2) max(14px, env(safe-area-inset-right));
+  }
+
+  .hero-steps {
+    flex-wrap: nowrap;
+    margin: 0 calc(-1 * max(14px, env(safe-area-inset-left)));
+    overflow-x: auto;
+    padding: 0 max(14px, env(safe-area-inset-left));
+    scrollbar-width: none;
+  }
+
+  .hero-steps::-webkit-scrollbar {
+    display: none;
+  }
+
+  .hero-steps span {
+    flex: 0 0 auto;
   }
 
   .drawer-shell {
@@ -2096,8 +2117,8 @@ pre {
     max-width: 100%;
   }
 
-  .hero-steps {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+  .hero-steps span {
+    flex: 1 1 0;
   }
 
   .task-create-strip {
@@ -2118,10 +2139,6 @@ pre {
   .task-create-strip,
   .task-queue-panel {
     padding: var(--space-3);
-  }
-
-  .hero-steps {
-    grid-template-columns: 1fr 1fr;
   }
 
   .upload-dropzone {
