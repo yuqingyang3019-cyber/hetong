@@ -21,8 +21,6 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 from docxtpl import DocxTemplate, RichText
 
-from agent.scripts.template_docx_utils import normalize_run_if_body
-
 from .config import (
     CONTRACTS_DIR,
     TemplateConfig,
@@ -31,6 +29,7 @@ from .config import (
     get_template_typography,
     template_docx_path,
 )
+from .docx_typography import normalize_run_if_body
 
 LEFT_ALIGNED_HEADER_TABLE_COUNT = 2
 UNDERLINE_BLANK = "        "

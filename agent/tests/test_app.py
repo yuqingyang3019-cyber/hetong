@@ -1383,6 +1383,25 @@ def test_render_contract_body_paragraph_font_after_placeholder() -> None:
         output_path.unlink(missing_ok=True)
 
 
+def test_contract_render_imports_with_fc_layout() -> None:
+    import subprocess
+
+    agent_dir = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import importlib; importlib.import_module('contract.render')",
+        ],
+        cwd=str(agent_dir),
+        env={**os.environ, "PYTHONPATH": str(agent_dir)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+
+
 def test_render_annual_framework_extended_scalars() -> None:
     config = get_template_config("annualFramework")
     render_data = merge_render_data({
