@@ -63,7 +63,13 @@ jobs:
         run: npm run build
 
       - name: Node syntax check
-        run: node --check frontend/dist/app.js
+        run: |
+          node --check frontend/dist/app/main.js
+          node --check frontend/dist/app/core.js
+          node --check frontend/dist/app/store.js
+          node --check frontend/dist/app/task-board.js
+          node --check frontend/dist/app/drawer-chrome.js
+          node --check frontend/dist/app/hero.js
 
   deploy:
     needs: test
