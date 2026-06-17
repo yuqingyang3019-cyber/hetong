@@ -1353,6 +1353,36 @@ def test_render_contract_centers_template_table_text() -> None:
         output_path.unlink(missing_ok=True)
 
 
+def test_render_contract_body_paragraph_font_after_placeholder() -> None:
+    config = get_template_config("caigouhetong")
+    render_data = merge_render_data({
+        "contractNo": "HT-001",
+        "supplierName": "供应商A",
+        "projectName": "项目A",
+        "purchaseSubject": "阀门设备",
+        "deliveryPlace": "杭州余杭",
+        "items": [{"index": "1", "name": "阀门", "spec": "DN50", "unit": "台", "quantity": "2", "unitPrice": "10", "totalPrice": "20", "tagNo": "T1"}],
+    }, config)
+
+    output_path = render_contract(render_data, config, "test_body_paragraph_font")
+    try:
+        document = Document(output_path)
+        target_paragraphs = [
+            paragraph
+            for paragraph in document.paragraphs
+            if "交货地点" in paragraph.text or "就甲方" in paragraph.text
+        ]
+        assert target_paragraphs
+        for paragraph in target_paragraphs:
+            formatted_runs = [run for run in paragraph.runs if run.text.strip()]
+            assert formatted_runs
+            for run in formatted_runs:
+                assert run.font.name == "仿宋"
+                assert run.font.size.pt == 10.5
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
 def test_render_annual_framework_extended_scalars() -> None:
     config = get_template_config("annualFramework")
     render_data = merge_render_data({

@@ -21,6 +21,8 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 from docxtpl import DocxTemplate, RichText
 
+from agent.scripts.template_docx_utils import normalize_run_if_body
+
 from .config import (
     CONTRACTS_DIR,
     TemplateConfig,
@@ -280,6 +282,15 @@ def _set_run_font(run: Any, typography: TemplateTypography, size_pt: float | Non
     run._element.get_or_add_rPr().get_or_add_rFonts().set(qn("w:eastAsia"), font_name)
 
 
+def _format_template_body_paragraphs(path: Path, template_type: str) -> None:
+    typography = get_template_typography(template_type)
+    doc = Document(str(path))
+    for paragraph in doc.paragraphs:
+        for run in paragraph.runs:
+            normalize_run_if_body(run, typography.east_asia, typography.size_half_pt)
+    doc.save(str(path))
+
+
 def _format_template_tables(path: Path, template_type: str) -> None:
     typography = get_template_typography(template_type)
     doc = Document(str(path))
@@ -428,6 +439,7 @@ def render_contract(
     doc.render(build_docxtpl_context(render_data, config, blank_missing=blank_missing))
     doc.save(str(output_path))
     _strip_caigouhetong_attachment_section(output_path, config, table_mode)
+    _format_template_body_paragraphs(output_path, config.type)
     _format_template_tables(output_path, config.type)
     _log(logger, "contract template rendered", outputFile=output_path.name, templateType=config.type, elapsedMs=_elapsed_ms(template_start))
     append_quote_attachment(output_path, quote_attachment, typography, logger)
