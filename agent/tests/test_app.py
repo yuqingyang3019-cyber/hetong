@@ -1311,6 +1311,13 @@ def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Pa
     assert '<w:insideV w:val="single"' in xml
 
 
+def _grid_col_widths_from_xml(xml: str, table_index: int = -1) -> list[int]:
+    tbl_blocks = re.findall(r"<w:tbl>.*?</w:tbl>", xml, re.DOTALL)
+    assert tbl_blocks, "document.xml 中未找到表格"
+    tbl_xml = tbl_blocks[table_index]
+    return [int(width) for width in re.findall(r'<w:gridCol w:w="(\d+)"', tbl_xml)]
+
+
 def test_choose_attachment_write_strategy_tiers() -> None:
     assert choose_attachment_write_strategy(2, 2) == "cell_api"
     assert choose_attachment_write_strategy(10, 20) == "cell_api"
@@ -1341,7 +1348,38 @@ def test_append_quote_attachment_large_table_uses_xml_bulk(tmp_path: Path) -> No
     with ZipFile(docx_path) as docx:
         xml = docx.read("word/document.xml").decode("utf-8")
     assert "<w:tblBorders>" in xml
-    assert '<w:tblLayout w:type="autofit"' in xml
+    assert '<w:tblW w:w="5000" w:type="pct"' in xml
+    assert '<w:tblLayout w:type="fixed"' in xml
+    grid_widths = _grid_col_widths_from_xml(xml)
+    assert len(grid_widths) == 10
+    assert sum(grid_widths) == 9026
+
+
+def test_append_quote_attachment_xml_bulk_column_widths_follow_content(tmp_path: Path) -> None:
+    docx_path = tmp_path / "contract-quote-widths.docx"
+    Document().save(docx_path)
+    header = ["序号", "设备名称", "设备型号", "数量", "单位", "单价", "小计", "备注"]
+    body = [
+        ["1", "控制柜主体很长的名称", "X-100", "2", "台", "1000", "2000", ""],
+        ["2", "短名", "Y-200", "1", "套", "500", "500", "详见清单"],
+    ]
+    body.extend(
+        [str(index), "短名", f"Y-{index}", "1", "套", "500", "500", ""]
+        for index in range(3, 32)
+    )
+    rows = [header, *body]
+
+    append_quote_attachment(docx_path, {"sheets": [{"name": "方案报价表", "rows": rows}]}, get_template_typography("caigouhetong"))
+
+    with ZipFile(docx_path) as docx:
+        xml = docx.read("word/document.xml").decode("utf-8")
+    grid_widths = _grid_col_widths_from_xml(xml)
+    assert len(grid_widths) == 8
+    assert sum(grid_widths) == 9026
+    assert grid_widths[1] > grid_widths[0]
+    assert grid_widths[1] > grid_widths[3]
+    assert grid_widths[1] != grid_widths[2]
+    assert len(set(grid_widths)) > 1
 
 
 def test_append_quote_attachment_chunked_table_writes_all_rows(tmp_path: Path) -> None:
@@ -1356,6 +1394,13 @@ def test_append_quote_attachment_chunked_table_writes_all_rows(tmp_path: Path) -
     assert len(table.rows) == 500
     assert len(table.rows[0].cells) == 50
     assert table.cell(499, 49).text == "行499列50"
+    with ZipFile(docx_path) as docx:
+        xml = docx.read("word/document.xml").decode("utf-8")
+    assert '<w:tblW w:w="5000" w:type="pct"' in xml
+    assert '<w:tblLayout w:type="fixed"' in xml
+    grid_widths = _grid_col_widths_from_xml(xml)
+    assert len(grid_widths) == 50
+    assert sum(grid_widths) == 9026
 
 
 def test_append_quote_attachment_logs_write_strategy(tmp_path: Path) -> None:

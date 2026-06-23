@@ -36,6 +36,9 @@ UNDERLINE_BLANK = "        "
 SMALL_CELL_LIMIT = 200
 BULK_CELL_LIMIT = 20_000
 CHUNK_ROW_SIZE = 100
+ATTACHMENT_TABLE_WIDTH_PCT = "5000"
+ATTACHMENT_TABLE_CONTENT_WIDTH_DXA = 9026
+ATTACHMENT_COLUMN_MIN_WEIGHT = 2
 LogFunc = Callable[..., None]
 PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
 ITEMS_CONTENT_OVERRIDE_KEY = "itemsContentOverride"
@@ -373,6 +376,45 @@ def _append_table_autofit_layout(tbl_pr: OxmlElement) -> None:
     tbl_pr.append(layout)
 
 
+def _append_table_width(tbl_pr: OxmlElement) -> None:
+    tbl_w = OxmlElement("w:tblW")
+    tbl_w.set(qn("w:w"), ATTACHMENT_TABLE_WIDTH_PCT)
+    tbl_w.set(qn("w:type"), "pct")
+    tbl_pr.append(tbl_w)
+
+
+def _append_table_layout(tbl_pr: OxmlElement, layout_type: str) -> None:
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), layout_type)
+    tbl_pr.append(layout)
+
+
+def _column_content_weights(rows: list[list[str]], max_cols: int, min_weight: int = ATTACHMENT_COLUMN_MIN_WEIGHT) -> list[int]:
+    weights: list[int] = []
+    for col_index in range(max_cols):
+        max_len = 0
+        for row in rows:
+            if col_index < len(row):
+                max_len = max(max_len, len(str(row[col_index]).strip()))
+        weights.append(max(max_len, min_weight))
+    return weights
+
+
+def _proportional_column_widths(weights: list[int], total_width_dxa: int) -> list[int]:
+    if not weights:
+        return []
+    weight_total = sum(weights)
+    if weight_total <= 0:
+        equal = total_width_dxa // len(weights)
+        return [equal] * len(weights)
+    widths = [int(total_width_dxa * weight / weight_total) for weight in weights]
+    remainder = total_width_dxa - sum(widths)
+    if remainder:
+        widest_index = max(range(len(widths)), key=widths.__getitem__)
+        widths[widest_index] += remainder
+    return widths
+
+
 def _build_table_cell_xml(text: str) -> OxmlElement:
     tc = OxmlElement("w:tc")
     paragraph = OxmlElement("w:p")
@@ -395,24 +437,29 @@ def _build_table_row_xml(row: list[str], max_cols: int) -> OxmlElement:
     return tr
 
 
-def _build_table_properties_xml() -> OxmlElement:
+def _build_attachment_table_properties_xml() -> OxmlElement:
     tbl_pr = OxmlElement("w:tblPr")
-    _append_table_autofit_layout(tbl_pr)
+    _append_table_width(tbl_pr)
+    _append_table_layout(tbl_pr, "fixed")
     _append_table_borders(tbl_pr)
     return tbl_pr
 
 
-def _build_table_grid_xml(max_cols: int) -> OxmlElement:
+def _build_table_grid_xml(rows: list[list[str]], max_cols: int) -> OxmlElement:
+    weights = _column_content_weights(rows, max_cols)
+    col_widths = _proportional_column_widths(weights, ATTACHMENT_TABLE_CONTENT_WIDTH_DXA)
     tbl_grid = OxmlElement("w:tblGrid")
-    for _ in range(max_cols):
-        tbl_grid.append(OxmlElement("w:gridCol"))
+    for width_dxa in col_widths:
+        grid_col = OxmlElement("w:gridCol")
+        grid_col.set(qn("w:w"), str(width_dxa))
+        tbl_grid.append(grid_col)
     return tbl_grid
 
 
 def _build_table_xml(rows: list[list[str]], max_cols: int) -> OxmlElement:
     tbl = OxmlElement("w:tbl")
-    tbl.append(_build_table_properties_xml())
-    tbl.append(_build_table_grid_xml(max_cols))
+    tbl.append(_build_attachment_table_properties_xml())
+    tbl.append(_build_table_grid_xml(rows, max_cols))
     for row in rows:
         tbl.append(_build_table_row_xml(row, max_cols))
     return tbl
@@ -459,8 +506,8 @@ def _append_attachment_table(
         _apply_typography_to_table(doc.tables[-1], typography)
     else:
         tbl = OxmlElement("w:tbl")
-        tbl.append(_build_table_properties_xml())
-        tbl.append(_build_table_grid_xml(max_cols))
+        tbl.append(_build_attachment_table_properties_xml())
+        tbl.append(_build_table_grid_xml(rows, max_cols))
         _append_table_rows_chunked(tbl, rows, max_cols, CHUNK_ROW_SIZE)
         doc.element.body.append(tbl)
         _apply_typography_to_table(doc.tables[-1], typography)
