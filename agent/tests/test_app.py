@@ -22,13 +22,16 @@ from agent.contract import llm as contract_llm
 from agent.contract.config import TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, get_template_typography, template_docx_path
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
 from agent.contract.render import (
+    HEADER_DXA_PER_UNIT,
     append_quote_attachment,
     apply_attachment_table_summary,
     build_attachment_summary_row,
     build_docxtpl_context,
     choose_attachment_write_strategy,
+    compute_attachment_column_widths,
     merge_render_data,
     render_contract,
+    _text_display_width,
 )
 from agent.main import STATIC_DIR, app, apply_delivery_date_calculation, apply_line_item_calculations, apply_tax_calculations, contract_download_payload, contract_file_name, generate_contract, sign_session_payload
 from agent.yonyou_vendor import (
@@ -1311,10 +1314,14 @@ def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Pa
     assert '<w:insideV w:val="single"' in xml
 
 
-def _grid_col_widths_from_xml(xml: str, table_index: int = -1) -> list[int]:
+def _grid_col_widths_from_xml(xml: str, expected_cols: int | None = None) -> list[int]:
+    widths = [int(width) for width in re.findall(r'<w:gridCol[^>]*w:w="(\d+)"', xml)]
+    if expected_cols is not None:
+        assert len(widths) >= expected_cols, f"document.xml 中 gridCol 数量不足：{len(widths)} < {expected_cols}"
+        return widths[-expected_cols:]
     tbl_blocks = re.findall(r"<w:tbl>.*?</w:tbl>", xml, re.DOTALL)
     assert tbl_blocks, "document.xml 中未找到表格"
-    tbl_xml = tbl_blocks[table_index]
+    tbl_xml = tbl_blocks[-1]
     return [int(width) for width in re.findall(r'<w:gridCol w:w="(\d+)"', tbl_xml)]
 
 
@@ -1350,35 +1357,52 @@ def test_append_quote_attachment_large_table_uses_xml_bulk(tmp_path: Path) -> No
     assert "<w:tblBorders>" in xml
     assert '<w:tblW w:w="5000" w:type="pct"' in xml
     assert '<w:tblLayout w:type="fixed"' in xml
-    grid_widths = _grid_col_widths_from_xml(xml)
+    grid_widths = _grid_col_widths_from_xml(xml, expected_cols=10)
     assert len(grid_widths) == 10
     assert sum(grid_widths) == 9026
+
+
+def test_column_content_weights_use_display_width() -> None:
+    assert _text_display_width("单价 (元)") > _text_display_width("1")
+    assert _text_display_width("设备名称") > _text_display_width("1")
+
+    rows = [
+        ["序号", "设备名称", "单价 (元)"],
+        ["1", "控制柜", "1"],
+    ]
+    widths = compute_attachment_column_widths(rows, 3)
+    assert len(widths) == 3
+    assert sum(widths) == 9026
+    assert widths[2] >= _text_display_width("单价 (元)") * HEADER_DXA_PER_UNIT
+    assert widths[2] > widths[0]
 
 
 def test_append_quote_attachment_xml_bulk_column_widths_follow_content(tmp_path: Path) -> None:
     docx_path = tmp_path / "contract-quote-widths.docx"
     Document().save(docx_path)
-    header = ["序号", "设备名称", "设备型号", "数量", "单位", "单价", "小计", "备注"]
+    header = ["序号", "设备名称", "设备型号", "数量", "单价 (元)", "小计 (元)", "备注"]
     body = [
-        ["1", "控制柜主体很长的名称", "X-100", "2", "台", "1000", "2000", ""],
-        ["2", "短名", "Y-200", "1", "套", "500", "500", "详见清单"],
+        ["1", "控制柜主体很长的名称", "X-100", "1", "1", "1", ""],
+        ["2", "短名", "Y-200", "2", "2", "2", "详见清单"],
     ]
     body.extend(
-        [str(index), "短名", f"Y-{index}", "1", "套", "500", "500", ""]
+        [str(index), "短名", f"Y-{index}", "1", "1", "1", ""]
         for index in range(3, 32)
     )
     rows = [header, *body]
+    unit_price_header_min = _text_display_width("单价 (元)") * HEADER_DXA_PER_UNIT
 
     append_quote_attachment(docx_path, {"sheets": [{"name": "方案报价表", "rows": rows}]}, get_template_typography("caigouhetong"))
 
     with ZipFile(docx_path) as docx:
         xml = docx.read("word/document.xml").decode("utf-8")
-    grid_widths = _grid_col_widths_from_xml(xml)
-    assert len(grid_widths) == 8
+    grid_widths = _grid_col_widths_from_xml(xml, expected_cols=7)
+    assert len(grid_widths) == 7
     assert sum(grid_widths) == 9026
     assert grid_widths[1] > grid_widths[0]
-    assert grid_widths[1] > grid_widths[3]
-    assert grid_widths[1] != grid_widths[2]
+    assert grid_widths[4] >= unit_price_header_min
+    assert grid_widths[4] > grid_widths[3]
+    assert grid_widths[5] >= _text_display_width("小计 (元)") * HEADER_DXA_PER_UNIT
     assert len(set(grid_widths)) > 1
 
 
@@ -1398,7 +1422,7 @@ def test_append_quote_attachment_chunked_table_writes_all_rows(tmp_path: Path) -
         xml = docx.read("word/document.xml").decode("utf-8")
     assert '<w:tblW w:w="5000" w:type="pct"' in xml
     assert '<w:tblLayout w:type="fixed"' in xml
-    grid_widths = _grid_col_widths_from_xml(xml)
+    grid_widths = _grid_col_widths_from_xml(xml, expected_cols=50)
     assert len(grid_widths) == 50
     assert sum(grid_widths) == 9026
 
