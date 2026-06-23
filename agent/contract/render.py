@@ -33,6 +33,9 @@ from .docx_typography import normalize_run_if_body
 
 LEFT_ALIGNED_HEADER_TABLE_COUNT = 2
 UNDERLINE_BLANK = "        "
+SMALL_CELL_LIMIT = 200
+BULK_CELL_LIMIT = 20_000
+CHUNK_ROW_SIZE = 100
 LogFunc = Callable[..., None]
 PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
 ITEMS_CONTENT_OVERRIDE_KEY = "itemsContentOverride"
@@ -343,6 +346,127 @@ def _set_table_autofit_layout(table: Any) -> None:
     layout.set(qn("w:type"), "autofit")
 
 
+def choose_attachment_write_strategy(row_count: int, col_count: int) -> str:
+    cell_count = row_count * col_count
+    if cell_count <= SMALL_CELL_LIMIT:
+        return "cell_api"
+    if cell_count <= BULK_CELL_LIMIT:
+        return "xml_bulk"
+    return "xml_chunked"
+
+
+def _append_table_borders(tbl_pr: OxmlElement) -> None:
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        element = OxmlElement(f"w:{edge}")
+        element.set(qn("w:val"), "single")
+        element.set(qn("w:sz"), "4")
+        element.set(qn("w:space"), "0")
+        element.set(qn("w:color"), "000000")
+        borders.append(element)
+    tbl_pr.append(borders)
+
+
+def _append_table_autofit_layout(tbl_pr: OxmlElement) -> None:
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "autofit")
+    tbl_pr.append(layout)
+
+
+def _build_table_cell_xml(text: str) -> OxmlElement:
+    tc = OxmlElement("w:tc")
+    paragraph = OxmlElement("w:p")
+    run = OxmlElement("w:r")
+    text_node = OxmlElement("w:t")
+    if text and (text[0].isspace() or text[-1].isspace()):
+        text_node.set(qn("xml:space"), "preserve")
+    text_node.text = text
+    run.append(text_node)
+    paragraph.append(run)
+    tc.append(paragraph)
+    return tc
+
+
+def _build_table_row_xml(row: list[str], max_cols: int) -> OxmlElement:
+    tr = OxmlElement("w:tr")
+    for col_index in range(max_cols):
+        value = row[col_index] if col_index < len(row) else ""
+        tr.append(_build_table_cell_xml(value))
+    return tr
+
+
+def _build_table_properties_xml() -> OxmlElement:
+    tbl_pr = OxmlElement("w:tblPr")
+    _append_table_autofit_layout(tbl_pr)
+    _append_table_borders(tbl_pr)
+    return tbl_pr
+
+
+def _build_table_grid_xml(max_cols: int) -> OxmlElement:
+    tbl_grid = OxmlElement("w:tblGrid")
+    for _ in range(max_cols):
+        tbl_grid.append(OxmlElement("w:gridCol"))
+    return tbl_grid
+
+
+def _build_table_xml(rows: list[list[str]], max_cols: int) -> OxmlElement:
+    tbl = OxmlElement("w:tbl")
+    tbl.append(_build_table_properties_xml())
+    tbl.append(_build_table_grid_xml(max_cols))
+    for row in rows:
+        tbl.append(_build_table_row_xml(row, max_cols))
+    return tbl
+
+
+def _append_table_rows_chunked(tbl: OxmlElement, rows: list[list[str]], max_cols: int, chunk_size: int) -> None:
+    for start in range(0, len(rows), chunk_size):
+        chunk = rows[start : start + chunk_size]
+        for row in chunk:
+            tbl.append(_build_table_row_xml(row, max_cols))
+
+
+def _fill_table_with_cell_api(table: Any, rows: list[list[str]], max_cols: int) -> None:
+    for row_index, row in enumerate(rows):
+        for col_index in range(max_cols):
+            table.cell(row_index, col_index).text = row[col_index] if col_index < len(row) else ""
+
+
+def _apply_typography_to_table(table: Any, typography: TemplateTypography) -> None:
+    for row in table.rows:
+        for cell in row.cells:
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    _set_run_font(run, typography)
+
+
+def _append_attachment_table(
+    doc: Any,
+    rows: list[list[str]],
+    strategy: str,
+    typography: TemplateTypography,
+) -> dict[str, int]:
+    max_cols = max(len(row) for row in rows)
+    row_count = len(rows)
+    cell_count = row_count * max_cols
+    if strategy == "cell_api":
+        table = doc.add_table(rows=row_count, cols=max_cols)
+        _set_table_autofit_layout(table)
+        _set_table_grid_borders(table)
+        _fill_table_with_cell_api(table, rows, max_cols)
+        _apply_typography_to_table(table, typography)
+    elif strategy == "xml_bulk":
+        doc.element.body.append(_build_table_xml(rows, max_cols))
+        _apply_typography_to_table(doc.tables[-1], typography)
+    else:
+        tbl = OxmlElement("w:tbl")
+        tbl.append(_build_table_properties_xml())
+        tbl.append(_build_table_grid_xml(max_cols))
+        _append_table_rows_chunked(tbl, rows, max_cols, CHUNK_ROW_SIZE)
+        doc.element.body.append(tbl)
+        _apply_typography_to_table(doc.tables[-1], typography)
+    return {"rowCount": row_count, "colCount": max_cols, "cellCount": cell_count}
+
+
 def _strip_caigouhetong_attachment_section(path: Path, config: TemplateConfig, table_mode: str) -> None:
     if config.type != "caigouhetong" or table_mode == "attachment":
         return
@@ -401,21 +525,22 @@ def append_quote_attachment(
     doc = Document(str(path))
     doc.add_page_break()
     _add_attachment_heading(doc, "附件：报价单明细", level=1, typography=typography)
+    sheet_stats: list[dict[str, Any]] = []
     for sheet_name, rows in valid_sheets:
         _add_attachment_heading(doc, sheet_name, level=2, typography=typography)
         max_cols = max(len(row) for row in rows)
-        table = doc.add_table(rows=len(rows), cols=max_cols)
-        _set_table_autofit_layout(table)
-        _set_table_grid_borders(table)
-        for row_index, row in enumerate(rows):
-            for col_index in range(max_cols):
-                cell = table.cell(row_index, col_index)
-                cell.text = row[col_index] if col_index < len(row) else ""
-                for paragraph in cell.paragraphs:
-                    for run in paragraph.runs:
-                        _set_run_font(run, typography)
+        strategy = choose_attachment_write_strategy(len(rows), max_cols)
+        table_stats = _append_attachment_table(doc, rows, strategy, typography)
+        sheet_stats.append({"sheetName": sheet_name, "writeStrategy": strategy, **table_stats})
     doc.save(str(path))
-    _log(logger, "quote attachment appended", outputFile=path.name, sheetCount=len(valid_sheets), elapsedMs=_elapsed_ms(start))
+    _log(
+        logger,
+        "quote attachment appended",
+        outputFile=path.name,
+        sheetCount=len(valid_sheets),
+        sheetStats=sheet_stats,
+        elapsedMs=_elapsed_ms(start),
+    )
 
 
 def render_contract(

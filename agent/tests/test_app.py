@@ -26,6 +26,7 @@ from agent.contract.render import (
     apply_attachment_table_summary,
     build_attachment_summary_row,
     build_docxtpl_context,
+    choose_attachment_write_strategy,
     merge_render_data,
     render_contract,
 )
@@ -1308,6 +1309,129 @@ def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Pa
     assert '<w:tblLayout w:type="autofit"' in xml
     assert '<w:insideH w:val="single"' in xml
     assert '<w:insideV w:val="single"' in xml
+
+
+def test_choose_attachment_write_strategy_tiers() -> None:
+    assert choose_attachment_write_strategy(2, 2) == "cell_api"
+    assert choose_attachment_write_strategy(10, 20) == "cell_api"
+    assert choose_attachment_write_strategy(100, 8) == "xml_bulk"
+    assert choose_attachment_write_strategy(451, 10) == "xml_bulk"
+    assert choose_attachment_write_strategy(500, 50) == "xml_chunked"
+
+
+def _attachment_rows(row_count: int, col_count: int) -> list[list[str]]:
+    header = [f"列{index}" for index in range(1, col_count + 1)]
+    body = [[f"行{row}列{col}" for col in range(1, col_count + 1)] for row in range(1, row_count)]
+    return [header, *body]
+
+
+def test_append_quote_attachment_large_table_uses_xml_bulk(tmp_path: Path) -> None:
+    docx_path = tmp_path / "contract-large.docx"
+    Document().save(docx_path)
+    rows = _attachment_rows(451, 10)
+
+    append_quote_attachment(docx_path, {"sheets": [{"name": "报价", "rows": rows}]}, get_template_typography("caigouhetong"))
+
+    document = Document(docx_path)
+    table = document.tables[-1]
+    assert len(table.rows) == 451
+    assert len(table.rows[0].cells) == 10
+    assert table.cell(0, 0).text == "列1"
+    assert table.cell(450, 9).text == "行450列10"
+    with ZipFile(docx_path) as docx:
+        xml = docx.read("word/document.xml").decode("utf-8")
+    assert "<w:tblBorders>" in xml
+    assert '<w:tblLayout w:type="autofit"' in xml
+
+
+def test_append_quote_attachment_chunked_table_writes_all_rows(tmp_path: Path) -> None:
+    docx_path = tmp_path / "contract-chunked.docx"
+    Document().save(docx_path)
+    rows = _attachment_rows(500, 50)
+
+    append_quote_attachment(docx_path, {"sheets": [{"name": "超大表", "rows": rows}]}, get_template_typography("caigouhetong"))
+
+    document = Document(docx_path)
+    table = document.tables[-1]
+    assert len(table.rows) == 500
+    assert len(table.rows[0].cells) == 50
+    assert table.cell(499, 49).text == "行499列50"
+
+
+def test_append_quote_attachment_logs_write_strategy(tmp_path: Path) -> None:
+    docx_path = tmp_path / "contract-log.docx"
+    Document().save(docx_path)
+    logs: list[tuple[str, dict[str, Any]]] = []
+
+    def logger(message: str, **meta: Any) -> None:
+        logs.append((message, meta))
+
+    append_quote_attachment(
+        docx_path,
+        {"sheets": [{"name": "报价", "rows": _attachment_rows(100, 8)}]},
+        get_template_typography("caigouhetong"),
+        logger=logger,
+    )
+
+    assert logs
+    message, meta = logs[-1]
+    assert message == "quote attachment appended"
+    assert meta["sheetStats"][0]["writeStrategy"] == "xml_bulk"
+    assert meta["sheetStats"][0]["rowCount"] == 100
+    assert meta["sheetStats"][0]["colCount"] == 8
+    assert meta["elapsedMs"] >= 0
+
+
+def test_generate_contract_large_attachment_completes_quickly() -> None:
+    import time
+
+    rows = _attachment_rows(451, 10)
+    content = xlsx_bytes(rows)
+    upload_id = upload_quote(
+        original_name="large-quote.xlsx",
+        mime_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        content=content,
+    )["id"]
+    extracted = {"supplierName": "浙江沃辉"}
+    append_elapsed_holder: dict[str, float] = {}
+
+    def fake_render(_render_data: dict[str, Any], _config: object, contract_id: str, **kwargs: Any) -> Path:
+        from agent.contract.config import CONTRACTS_DIR
+
+        path = CONTRACTS_DIR / f"{contract_id}.docx"
+        Document().save(path)
+        quote_attachment = kwargs.get("quote_attachment")
+        assert isinstance(quote_attachment, dict)
+        sheet_rows = quote_attachment["sheets"][0]["rows"]
+        assert len(sheet_rows) >= 450
+        append_start = time.perf_counter()
+        append_quote_attachment(path, quote_attachment, get_template_typography("simpleContract"))
+        append_elapsed_holder["seconds"] = time.perf_counter() - append_start
+        return path
+
+    with patch("agent.main.render_contract", side_effect=fake_render), patch(
+        "agent.main.upload_contract_to_dingdrive",
+        return_value={"spaceId": "space1", "fileId": "file1", "fileName": "large.docx", "filePath": "/large.docx"},
+    ), patch("agent.main.remove_upload", return_value=[]), patch(
+        "agent.main.remove_contract_files",
+        return_value=[],
+    ):
+        start = time.perf_counter()
+        draft = generate_contract(
+            upload_id,
+            "simpleContract",
+            "用户确认报价单文本",
+            None,
+            extracted,
+            {"userid": "uid1", "unionid": "union-x"},
+            table_mode="attachment",
+        )
+        total_elapsed = time.perf_counter() - start
+
+    assert draft["tableMode"] == "attachment"
+    assert draft["attachmentMode"]["enabled"] is True
+    assert total_elapsed < 60
+    assert append_elapsed_holder["seconds"] < 30
 
 
 def test_render_contract_centers_template_table_text() -> None:
