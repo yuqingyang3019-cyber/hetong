@@ -1370,8 +1370,7 @@ def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Pa
     with ZipFile(docx_path) as docx:
         xml = docx.read("word/document.xml").decode("utf-8")
     assert "<w:tblBorders>" in xml
-    assert '<w:tblLayout w:type="fixed"' in xml
-    assert '<w:tblW w:w="5000" w:type="pct"' in xml
+    assert '<w:tblLayout w:type="autofit"' in xml
     assert '<w:insideH w:val="single"' in xml
     assert '<w:insideV w:val="single"' in xml
 
@@ -1388,8 +1387,8 @@ def _grid_col_widths_from_xml(xml: str, expected_cols: int | None = None) -> lis
 
 
 def test_choose_attachment_write_strategy_tiers() -> None:
-    assert choose_attachment_write_strategy(2, 2) == "xml_bulk"
-    assert choose_attachment_write_strategy(10, 20) == "xml_bulk"
+    assert choose_attachment_write_strategy(2, 2) == "cell_api"
+    assert choose_attachment_write_strategy(10, 20) == "cell_api"
     assert choose_attachment_write_strategy(100, 8) == "xml_bulk"
     assert choose_attachment_write_strategy(451, 10) == "xml_bulk"
     assert choose_attachment_write_strategy(500, 50) == "xml_chunked"

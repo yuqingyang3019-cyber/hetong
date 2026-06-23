@@ -34,6 +34,7 @@ from .docx_typography import normalize_run_if_body
 
 LEFT_ALIGNED_HEADER_TABLE_COUNT = 2
 UNDERLINE_BLANK = "        "
+SMALL_CELL_LIMIT = 200
 BULK_CELL_LIMIT = 20_000
 CHUNK_ROW_SIZE = 100
 ATTACHMENT_TABLE_WIDTH_PCT = "5000"
@@ -322,8 +323,37 @@ def _add_attachment_heading(doc: Any, text: str, level: int, typography: Templat
     _set_run_font(run, typography, size_pt=14 if level == 1 else typography.size_pt)
 
 
+def _set_table_grid_borders(table: Any) -> None:
+    tbl_pr = table._tbl.tblPr
+    borders = tbl_pr.first_child_found_in("w:tblBorders")
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        tbl_pr.append(borders)
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        tag = f"w:{edge}"
+        element = borders.find(qn(tag))
+        if element is None:
+            element = OxmlElement(tag)
+            borders.append(element)
+        element.set(qn("w:val"), "single")
+        element.set(qn("w:sz"), "4")
+        element.set(qn("w:space"), "0")
+        element.set(qn("w:color"), "000000")
+
+
+def _set_table_autofit_layout(table: Any) -> None:
+    tbl_pr = table._tbl.tblPr
+    layout = tbl_pr.first_child_found_in("w:tblLayout")
+    if layout is None:
+        layout = OxmlElement("w:tblLayout")
+        tbl_pr.append(layout)
+    layout.set(qn("w:type"), "autofit")
+
+
 def choose_attachment_write_strategy(row_count: int, col_count: int) -> str:
     cell_count = row_count * col_count
+    if cell_count <= SMALL_CELL_LIMIT:
+        return "cell_api"
     if cell_count <= BULK_CELL_LIMIT:
         return "xml_bulk"
     return "xml_chunked"
@@ -339,6 +369,12 @@ def _append_table_borders(tbl_pr: OxmlElement) -> None:
         element.set(qn("w:color"), "000000")
         borders.append(element)
     tbl_pr.append(borders)
+
+
+def _append_table_autofit_layout(tbl_pr: OxmlElement) -> None:
+    layout = OxmlElement("w:tblLayout")
+    layout.set(qn("w:type"), "autofit")
+    tbl_pr.append(layout)
 
 
 def _append_table_width(tbl_pr: OxmlElement) -> None:
@@ -453,6 +489,12 @@ def _append_table_rows_chunked(tbl: OxmlElement, rows: list[list[str]], max_cols
             tbl.append(_build_table_row_xml(row, max_cols))
 
 
+def _fill_table_with_cell_api(table: Any, rows: list[list[str]], max_cols: int) -> None:
+    for row_index, row in enumerate(rows):
+        for col_index in range(max_cols):
+            table.cell(row_index, col_index).text = row[col_index] if col_index < len(row) else ""
+
+
 def _apply_typography_to_table(table: Any, typography: TemplateTypography) -> None:
     for row in table.rows:
         for cell in row.cells:
@@ -470,15 +512,21 @@ def _append_attachment_table(
     max_cols = max(len(row) for row in rows)
     row_count = len(rows)
     cell_count = row_count * max_cols
-    if strategy == "xml_chunked":
+    if strategy == "cell_api":
+        table = doc.add_table(rows=row_count, cols=max_cols)
+        _set_table_autofit_layout(table)
+        _set_table_grid_borders(table)
+        _fill_table_with_cell_api(table, rows, max_cols)
+        _apply_typography_to_table(table, typography)
+    elif strategy == "xml_bulk":
+        doc.element.body.append(_build_table_xml(rows, max_cols))
+        _apply_typography_to_table(doc.tables[-1], typography)
+    else:
         tbl = OxmlElement("w:tbl")
         tbl.append(_build_attachment_table_properties_xml())
         tbl.append(_build_table_grid_xml(rows, max_cols))
         _append_table_rows_chunked(tbl, rows, max_cols, CHUNK_ROW_SIZE)
         doc.element.body.append(tbl)
-        _apply_typography_to_table(doc.tables[-1], typography)
-    else:
-        doc.element.body.append(_build_table_xml(rows, max_cols))
         _apply_typography_to_table(doc.tables[-1], typography)
     return {"rowCount": row_count, "colCount": max_cols, "cellCount": cell_count}
 
