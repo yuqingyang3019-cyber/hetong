@@ -30,7 +30,7 @@ from agent.contract.config import (
 )
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
 from agent.contract.render import (
-    HEADER_DXA_PER_UNIT,
+    ATTACHMENT_TABLE_CONTENT_WIDTH_DXA,
     append_quote_attachment,
     apply_attachment_table_summary,
     build_attachment_summary_row,
@@ -1420,10 +1420,11 @@ def test_append_quote_attachment_large_table_uses_xml_bulk(tmp_path: Path) -> No
     assert '<w:tblLayout w:type="fixed"' in xml
     grid_widths = _grid_col_widths_from_xml(xml, expected_cols=10)
     assert len(grid_widths) == 10
-    assert sum(grid_widths) == 9026
+    assert sum(grid_widths) == ATTACHMENT_TABLE_CONTENT_WIDTH_DXA
+    assert 'w:orient="landscape"' in xml
 
 
-def test_column_content_weights_use_display_width() -> None:
+def test_column_display_weights_use_max_header_body() -> None:
     assert _text_display_width("单价 (元)") > _text_display_width("1")
     assert _text_display_width("设备名称") > _text_display_width("1")
 
@@ -1433,8 +1434,8 @@ def test_column_content_weights_use_display_width() -> None:
     ]
     widths = compute_attachment_column_widths(rows, 3)
     assert len(widths) == 3
-    assert sum(widths) == 9026
-    assert widths[2] >= _text_display_width("单价 (元)") * HEADER_DXA_PER_UNIT
+    assert sum(widths) == ATTACHMENT_TABLE_CONTENT_WIDTH_DXA
+    assert widths[1] > widths[0]
     assert widths[2] > widths[0]
 
 
@@ -1451,7 +1452,6 @@ def test_append_quote_attachment_xml_bulk_column_widths_follow_content(tmp_path:
         for index in range(3, 32)
     )
     rows = [header, *body]
-    unit_price_header_min = _text_display_width("单价 (元)") * HEADER_DXA_PER_UNIT
 
     append_quote_attachment(docx_path, {"sheets": [{"name": "方案报价表", "rows": rows}]}, get_template_typography("caigouhetong"))
 
@@ -1459,12 +1459,80 @@ def test_append_quote_attachment_xml_bulk_column_widths_follow_content(tmp_path:
         xml = docx.read("word/document.xml").decode("utf-8")
     grid_widths = _grid_col_widths_from_xml(xml, expected_cols=7)
     assert len(grid_widths) == 7
-    assert sum(grid_widths) == 9026
+    assert sum(grid_widths) == ATTACHMENT_TABLE_CONTENT_WIDTH_DXA
+    assert 'w:orient="landscape"' in xml
     assert grid_widths[1] > grid_widths[0]
-    assert grid_widths[4] >= unit_price_header_min
+    assert grid_widths[2] > grid_widths[0]
     assert grid_widths[4] > grid_widths[3]
-    assert grid_widths[5] >= _text_display_width("小计 (元)") * HEADER_DXA_PER_UNIT
+    assert grid_widths[5] >= grid_widths[4]
     assert len(set(grid_widths)) > 1
+
+
+def test_append_quote_attachment_wide_table_spec_column_wider_than_quantity(tmp_path: Path) -> None:
+    docx_path = tmp_path / "contract-wide-spec.docx"
+    Document().save(docx_path)
+    long_spec = (
+        "电磁流量计：1、安装位置：室内管道安装；2、技术参数：Q=0-5m3/h，DN25，一体式，法兰连接；"
+        "3、材质：哈氏合金电极，PTFE衬里"
+    )
+    long_param = "【电磁流量计】公称通径：DN25(1\")；过程连接标准：JB/T 81 法兰；公称压力：PN16"
+    header = [
+        "物料名称",
+        "设备位号",
+        "设备工艺名称",
+        "物料用区",
+        "下单规格说明",
+        "返资参数",
+        "型号",
+        "主数量",
+        "主单位",
+        "含税单价",
+        "含税总价",
+        "货期",
+    ]
+    body = [[
+        "流量仪表",
+        "FIT-105",
+        "氨氮废水中转池电磁流量计",
+        "废水",
+        long_spec,
+        long_param,
+        "LDG-SUP-A100-25JCMCKAAMGN6WA001-HZD",
+        "1",
+        "台",
+        "1",
+        "1",
+        "",
+    ]]
+    body.extend([
+        [
+            "流量仪表",
+            f"FIT-{index}",
+            "氨氮废水中转池电磁流量计",
+            "废水",
+            long_spec,
+            long_param,
+            "LDG-SUP-A100-25JCMCKAAMGN6WA001-HZD",
+            "1",
+            "台",
+            "1",
+            "1",
+            "",
+        ]
+        for index in range(106, 125)
+    ])
+    rows = [header, *body]
+
+    append_quote_attachment(docx_path, {"sheets": [{"name": "报价", "rows": rows}]}, get_template_typography("caigouhetong"))
+
+    with ZipFile(docx_path) as docx:
+        xml = docx.read("word/document.xml").decode("utf-8")
+    grid_widths = _grid_col_widths_from_xml(xml, expected_cols=12)
+    assert sum(grid_widths) == ATTACHMENT_TABLE_CONTENT_WIDTH_DXA
+    assert 'w:orient="landscape"' in xml
+    spec_index = header.index("下单规格说明")
+    quantity_index = header.index("主数量")
+    assert grid_widths[spec_index] > grid_widths[quantity_index] * 5
 
 
 def test_append_quote_attachment_chunked_table_writes_all_rows(tmp_path: Path) -> None:
@@ -1485,7 +1553,8 @@ def test_append_quote_attachment_chunked_table_writes_all_rows(tmp_path: Path) -
     assert '<w:tblLayout w:type="fixed"' in xml
     grid_widths = _grid_col_widths_from_xml(xml, expected_cols=50)
     assert len(grid_widths) == 50
-    assert sum(grid_widths) == 9026
+    assert sum(grid_widths) == ATTACHMENT_TABLE_CONTENT_WIDTH_DXA
+    assert 'w:orient="landscape"' in xml
 
 
 def test_append_quote_attachment_logs_write_strategy(tmp_path: Path) -> None:

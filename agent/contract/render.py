@@ -38,9 +38,8 @@ SMALL_CELL_LIMIT = 200
 BULK_CELL_LIMIT = 20_000
 CHUNK_ROW_SIZE = 100
 ATTACHMENT_TABLE_WIDTH_PCT = "5000"
-ATTACHMENT_TABLE_CONTENT_WIDTH_DXA = 9026
+ATTACHMENT_TABLE_CONTENT_WIDTH_DXA = 12756
 ATTACHMENT_COLUMN_MIN_WEIGHT = 2
-HEADER_DXA_PER_UNIT = 120
 LogFunc = Callable[..., None]
 PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
 ITEMS_CONTENT_OVERRIDE_KEY = "itemsContentOverride"
@@ -401,81 +400,22 @@ def _text_display_width(text: str) -> int:
     return width
 
 
-def _column_content_weights(rows: list[list[str]], max_cols: int, min_weight: int = ATTACHMENT_COLUMN_MIN_WEIGHT) -> list[int]:
+def _column_display_weights(rows: list[list[str]], max_cols: int, min_weight: int = ATTACHMENT_COLUMN_MIN_WEIGHT) -> list[int]:
+    header = rows[0] if rows else []
     weights: list[int] = []
     for col_index in range(max_cols):
-        max_width = 0
-        for row in rows:
-            if col_index < len(row):
-                max_width = max(max_width, _text_display_width(str(row[col_index])))
-        weights.append(max(max_width, min_weight))
+        header_width = _text_display_width(header[col_index]) if col_index < len(header) else 0
+        body_max = max(
+            (_text_display_width(str(row[col_index])) for row in rows[1:] if col_index < len(row)),
+            default=0,
+        )
+        weights.append(max(header_width, body_max, min_weight))
     return weights
 
 
-def _header_min_column_widths(rows: list[list[str]], max_cols: int) -> list[int]:
-    if not rows:
-        return [0] * max_cols
-    header = rows[0]
-    return [
-        _text_display_width(header[col_index]) * HEADER_DXA_PER_UNIT if col_index < len(header) else 0
-        for col_index in range(max_cols)
-    ]
-
-
-def _apply_header_column_width_floor(
-    widths: list[int],
-    header_mins: list[int],
-    total_width_dxa: int,
-) -> list[int]:
-    if not widths:
-        return []
-    normalized_header_mins = list(header_mins)
-    header_sum = sum(normalized_header_mins)
-    if header_sum > total_width_dxa:
-        scale = total_width_dxa / header_sum
-        normalized_header_mins = [max(1, int(min_width * scale)) for min_width in normalized_header_mins]
-        remainder = total_width_dxa - sum(normalized_header_mins)
-        if remainder:
-            widest_index = max(range(len(normalized_header_mins)), key=normalized_header_mins.__getitem__)
-            normalized_header_mins[widest_index] += remainder
-
-    adjusted = [max(widths[index], normalized_header_mins[index]) for index in range(len(widths))]
-    overflow = sum(adjusted) - total_width_dxa
-    if overflow > 0:
-        slack = [adjusted[index] - normalized_header_mins[index] for index in range(len(adjusted))]
-        slack_total = sum(slack)
-        if slack_total > 0:
-            for index, column_slack in enumerate(slack):
-                if column_slack <= 0:
-                    continue
-                reduction = min(column_slack, int(overflow * column_slack / slack_total))
-                adjusted[index] -= reduction
-            while sum(adjusted) > total_width_dxa:
-                flexible_indexes = [
-                    index
-                    for index, column_slack in enumerate(slack)
-                    if adjusted[index] > normalized_header_mins[index]
-                ]
-                if not flexible_indexes:
-                    break
-                widest_index = max(flexible_indexes, key=adjusted.__getitem__)
-                adjusted[widest_index] -= 1
-        else:
-            scale = total_width_dxa / sum(adjusted)
-            adjusted = [max(1, int(width * scale)) for width in adjusted]
-
-    remainder = total_width_dxa - sum(adjusted)
-    if remainder:
-        widest_index = max(range(len(adjusted)), key=adjusted.__getitem__)
-        adjusted[widest_index] += remainder
-    return adjusted
-
-
 def compute_attachment_column_widths(rows: list[list[str]], max_cols: int) -> list[int]:
-    weights = _column_content_weights(rows, max_cols)
-    widths = _proportional_column_widths(weights, ATTACHMENT_TABLE_CONTENT_WIDTH_DXA)
-    header_mins = _header_min_column_widths(rows, max_cols)
-    return _apply_header_column_width_floor(widths, header_mins, ATTACHMENT_TABLE_CONTENT_WIDTH_DXA)
+    weights = _column_display_weights(rows, max_cols)
+    return _proportional_column_widths(weights, ATTACHMENT_TABLE_CONTENT_WIDTH_DXA)
 
 
 def _proportional_column_widths(weights: list[int], total_width_dxa: int) -> list[int]:
@@ -591,6 +531,30 @@ def _append_attachment_table(
     return {"rowCount": row_count, "colCount": max_cols, "cellCount": cell_count}
 
 
+def _landscape_sect_pr(sect_pr: OxmlElement) -> OxmlElement:
+    pg_sz = sect_pr.find(qn("w:pgSz"))
+    if pg_sz is not None:
+        width = pg_sz.get(qn("w:w"))
+        height = pg_sz.get(qn("w:h"))
+        if width and height:
+            pg_sz.set(qn("w:w"), height)
+            pg_sz.set(qn("w:h"), width)
+        pg_sz.set(qn("w:orient"), "landscape")
+    return sect_pr
+
+
+def _append_landscape_section_break(doc: Any) -> None:
+    body = doc.element.body
+    if body.sectPr is None:
+        return
+    landscape_sect = _landscape_sect_pr(deepcopy(body.sectPr))
+    paragraph = doc.add_paragraph()
+    paragraph_pr = OxmlElement("w:pPr")
+    paragraph_pr.append(deepcopy(landscape_sect))
+    paragraph._element.insert(0, paragraph_pr)
+    body.replace(body.sectPr, landscape_sect)
+
+
 def _strip_caigouhetong_attachment_section(path: Path, config: TemplateConfig, table_mode: str) -> None:
     if config.type != "caigouhetong" or table_mode == "attachment":
         return
@@ -648,6 +612,7 @@ def append_quote_attachment(
     start = time.perf_counter()
     doc = Document(str(path))
     doc.add_page_break()
+    _append_landscape_section_break(doc)
     _add_attachment_heading(doc, "附件：报价单明细", level=1, typography=typography)
     sheet_stats: list[dict[str, Any]] = []
     for sheet_name, rows in valid_sheets:
