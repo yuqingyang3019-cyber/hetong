@@ -531,6 +531,17 @@ def _append_attachment_table(
     return {"rowCount": row_count, "colCount": max_cols, "cellCount": cell_count}
 
 
+def _append_sect_pr_to_paragraph(paragraph_element: OxmlElement, sect_pr: OxmlElement) -> None:
+    paragraph_pr = paragraph_element.find(qn("w:pPr"))
+    if paragraph_pr is None:
+        paragraph_pr = OxmlElement("w:pPr")
+        paragraph_element.insert(0, paragraph_pr)
+    existing_sect_pr = paragraph_pr.find(qn("w:sectPr"))
+    if existing_sect_pr is not None:
+        paragraph_pr.remove(existing_sect_pr)
+    paragraph_pr.append(deepcopy(sect_pr))
+
+
 def _landscape_sect_pr(sect_pr: OxmlElement) -> OxmlElement:
     pg_sz = sect_pr.find(qn("w:pgSz"))
     if pg_sz is not None:
@@ -545,13 +556,12 @@ def _landscape_sect_pr(sect_pr: OxmlElement) -> OxmlElement:
 
 def _append_landscape_section_break(doc: Any) -> None:
     body = doc.element.body
-    if body.sectPr is None:
+    if body.sectPr is None or not doc.paragraphs:
         return
+    portrait_sect = deepcopy(body.sectPr)
     landscape_sect = _landscape_sect_pr(deepcopy(body.sectPr))
-    paragraph = doc.add_paragraph()
-    paragraph_pr = OxmlElement("w:pPr")
-    paragraph_pr.append(deepcopy(landscape_sect))
-    paragraph._element.insert(0, paragraph_pr)
+    page_break_paragraph = doc.paragraphs[-1]._element
+    _append_sect_pr_to_paragraph(page_break_paragraph, portrait_sect)
     body.replace(body.sectPr, landscape_sect)
 
 

@@ -1356,6 +1356,46 @@ def test_append_quote_attachment_does_not_require_heading_styles(tmp_path: Path)
     assert any(paragraph.text == "报价" for paragraph in document.paragraphs)
 
 
+def test_append_quote_attachment_preserves_portrait_body_section(tmp_path: Path) -> None:
+    docx_path = tmp_path / "contract-portrait-body.docx"
+    Document().save(docx_path)
+
+    append_quote_attachment(docx_path, {
+        "sheets": [{
+            "name": "报价",
+            "rows": [["品名", "数量"], ["阀门", "2"]],
+        }],
+    }, get_template_typography("caigouhetong"))
+
+    with ZipFile(docx_path) as docx:
+        xml = docx.read("word/document.xml").decode("utf-8")
+
+    sect_pr_blocks = re.findall(r"<w:sectPr[^>]*>([\s\S]*?)</w:sectPr>", xml)
+    assert len(sect_pr_blocks) >= 2
+    assert 'w:orient="landscape"' in xml
+
+    def _section_is_portrait(block: str) -> bool:
+        if 'w:orient="landscape"' in block:
+            return False
+        width_match = re.search(r'w:w="(\d+)"', block)
+        height_match = re.search(r'w:h="(\d+)"', block)
+        if not width_match or not height_match:
+            return False
+        return int(width_match.group(1)) < int(height_match.group(1))
+
+    def _section_is_landscape(block: str) -> bool:
+        if 'w:orient="landscape"' in block:
+            return True
+        width_match = re.search(r'w:w="(\d+)"', block)
+        height_match = re.search(r'w:h="(\d+)"', block)
+        if not width_match or not height_match:
+            return False
+        return int(width_match.group(1)) > int(height_match.group(1))
+
+    assert any(_section_is_portrait(block) for block in sect_pr_blocks)
+    assert any(_section_is_landscape(block) for block in sect_pr_blocks)
+
+
 def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Path) -> None:
     docx_path = tmp_path / "contract.docx"
     Document().save(docx_path)
