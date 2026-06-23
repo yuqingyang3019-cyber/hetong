@@ -47,6 +47,7 @@ const taskLogDetails = document.querySelector("#taskLogDetails");
 const taskLogText = document.querySelector("#taskLogText");
 
 const MAX_TASKS = 5;
+const MAX_QUOTE_ORIGINAL_NAME_BYTES = 512;
 const supportedQuoteFileExtensions = new Set([
   ".pdf",
   ".xls",
@@ -248,6 +249,10 @@ function validateQuoteFile(file) {
   if (!file) return "请先选择报价单文件。";
   if (file.size === 0) return "报价单文件为空，请重新选择文件。";
   if (!supportedQuoteFileExtensions.has(quoteFileExtension(file))) return "仅支持 PDF、Excel 和常见图片格式报价单。";
+  const fileName = file.name || "";
+  if (fileName && new TextEncoder().encode(fileName).length > MAX_QUOTE_ORIGINAL_NAME_BYTES) {
+    return "文件名过长，请缩短后重试（建议不超过 80 个汉字）。";
+  }
   return "";
 }
 

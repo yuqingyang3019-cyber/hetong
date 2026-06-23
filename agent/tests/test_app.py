@@ -19,7 +19,15 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from fastapi.testclient import TestClient
 
 from agent.contract import llm as contract_llm
-from agent.contract.config import TEMPLATE_BASENAME, UPLOADS_DIR, get_template_config, get_template_typography, template_docx_path
+from agent.contract.config import (
+    MAX_STORED_FILE_NAME_BYTES,
+    TEMPLATE_BASENAME,
+    UPLOADS_DIR,
+    get_template_config,
+    get_template_typography,
+    template_docx_path,
+    truncate_file_name_to_bytes,
+)
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
 from agent.contract.render import (
     HEADER_DXA_PER_UNIT,
@@ -131,6 +139,59 @@ def test_upload_json_base64_pdf() -> None:
     body = upload_quote(content=content)
     assert body["size"] == len(content)
     assert body["ok"] is True
+
+
+LONG_UPLOAD_FILENAME = (
+    "浙江沃乐科技股份有限公司-禾润肯尼亚-电磁流量计询价单--杭州美仪报价2026.4.21-"
+    "改：最终优惠价23000元（改：中水部分取消；FIT-501数量3改为1；FIT-202参数变更为："
+    "Q=0-40m3h，DN65，FIT-202 调整为铂金电极） - 副本.xlsx"
+)
+
+
+def test_truncate_file_name_to_bytes_preserves_extension() -> None:
+    long_name = f"{'浙' * 80}.xlsx"
+    truncated = truncate_file_name_to_bytes(long_name, 100)
+    assert truncated.endswith(".xlsx")
+    assert len(truncated.encode("utf-8")) <= 100
+
+
+def test_upload_long_chinese_filename_succeeds() -> None:
+    content = xlsx_bytes([["品名", "数量"], ["设备1", 1]])
+    response = client.post(
+        "/api/uploads",
+        headers=agent_auth_header(),
+        json={
+            "originalName": LONG_UPLOAD_FILENAME,
+            "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "size": len(content),
+            "data": base64.b64encode(content).decode("ascii"),
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["originalName"] == LONG_UPLOAD_FILENAME
+    record = upload_record(body["id"])
+    assert Path(record["path"]).exists()
+    assert len(record["fileName"].encode("utf-8")) <= MAX_STORED_FILE_NAME_BYTES
+    assert record["fileName"].endswith(".xlsx")
+
+
+def test_upload_rejects_extremely_long_filename() -> None:
+    original_name = f"{'浙' * 200}.xlsx"
+    response = client.post(
+        "/api/uploads",
+        headers=agent_auth_header(),
+        json={
+            "originalName": original_name,
+            "mimeType": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "size": 4,
+            "data": base64.b64encode(xlsx_bytes([["品名", "数量"], ["设备1", 1]])).decode("ascii"),
+        },
+    )
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "FILENAME_TOO_LONG"
 
 
 @pytest.mark.parametrize(

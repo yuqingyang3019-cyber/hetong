@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import errno
 import hashlib
 import hmac
 import json
@@ -28,10 +29,12 @@ from fastapi.responses import FileResponse, JSONResponse, Response, StreamingRes
 try:
     from .contract.config import (
         DEFAULT_TEMPLATE_TYPE,
+        MAX_QUOTE_ORIGINAL_NAME_BYTES,
         UPLOADS_DIR,
         ensure_storage,
         get_template_config,
         safe_file_name,
+        stored_upload_file_name,
     )
     from .contract.extract import extract_excel_payload, extract_text_from_file, parser_metadata_for_file
     from .contract.llm import extract_template_render_data, is_timeout_error, scalar_only_template_config
@@ -39,10 +42,12 @@ try:
 except ImportError:
     from contract.config import (
         DEFAULT_TEMPLATE_TYPE,
+        MAX_QUOTE_ORIGINAL_NAME_BYTES,
         UPLOADS_DIR,
         ensure_storage,
         get_template_config,
         safe_file_name,
+        stored_upload_file_name,
     )
     from contract.extract import extract_excel_payload, extract_text_from_file, parser_metadata_for_file
     from contract.llm import extract_template_render_data, is_timeout_error, scalar_only_template_config
@@ -503,10 +508,20 @@ def validate_supported_quote_file(original_name: str, mime_type: str) -> None:
     raise api_error(400, "UNSUPPORTED_FILE_TYPE", "当前版本支持 PDF、Excel 或图片报价单")
 
 
+def validate_upload_original_name(original_name: str) -> None:
+    if len(original_name.encode("utf-8")) > MAX_QUOTE_ORIGINAL_NAME_BYTES:
+        raise api_error(
+            400,
+            "FILENAME_TOO_LONG",
+            "文件名过长，请缩短后重试（建议不超过 80 个汉字）",
+        )
+
+
 def save_upload_bytes(content: bytes, original_name: str, mime_type: str, current_user: dict[str, Any]) -> dict[str, Any]:
     ensure_storage()
+    validate_upload_original_name(original_name)
     upload_id = new_id("upload")
-    file_name = f"{upload_id}_{safe_file_name(original_name)}"
+    file_name = stored_upload_file_name(upload_id, original_name)
     path = UPLOADS_DIR / file_name
     path.write_bytes(content)
     record = {
@@ -1250,6 +1265,17 @@ async def upload_file(
         return {"ok": True, **public_upload_record(record)}
     except HTTPException:
         raise
+    except OSError as exc:
+        if getattr(exc, "errno", None) == errno.ENAMETOOLONG or "too long" in str(exc).lower():
+            log_exception("upload request failed filename too long", exc, clientHost=client_host, originalName=original_name, elapsedMs=elapsed_ms(start))
+            raise api_error(
+                400,
+                "FILENAME_TOO_LONG",
+                "文件名过长，请缩短后重试（建议不超过 80 个汉字）",
+                str(exc),
+            ) from exc
+        log_exception("upload request failed", exc, clientHost=client_host, originalName=original_name, elapsedMs=elapsed_ms(start))
+        raise api_error(500, "INTERNAL_ERROR", "上传失败，请稍后重试", str(exc)) from exc
     except Exception as exc:
         log_exception("upload request failed", exc, clientHost=client_host, originalName=original_name, elapsedMs=elapsed_ms(start))
         raise api_error(500, "INTERNAL_ERROR", "上传失败，请稍后重试", str(exc)) from exc

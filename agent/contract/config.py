@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import json
 from dataclasses import dataclass
 from functools import lru_cache
@@ -13,6 +14,8 @@ TEMPLATE_ROOT = CONTRACT_ROOT / "templates" / "zhanweifu"
 STORAGE_ROOT = APP_ROOT / "storage"
 UPLOADS_DIR = STORAGE_ROOT / "uploads"
 CONTRACTS_DIR = STORAGE_ROOT / "contracts"
+MAX_STORED_FILE_NAME_BYTES = 255
+MAX_QUOTE_ORIGINAL_NAME_BYTES = 512
 
 
 DEFAULT_TEMPLATE_TYPE = "simpleContract"
@@ -93,6 +96,47 @@ def safe_file_name(name: str) -> str:
         else:
             allowed.append("_")
     return "".join(allowed) or "file"
+
+
+def truncate_file_name_to_bytes(name: str, max_bytes: int) -> str:
+    if max_bytes <= 0:
+        return "file"
+    if len(name.encode("utf-8")) <= max_bytes:
+        return name
+    suffix = Path(name).suffix
+    stem = name[: -len(suffix)] if suffix else name
+    suffix_bytes = suffix.encode("utf-8")
+    if len(suffix_bytes) >= max_bytes:
+        truncated = name.encode("utf-8")[:max_bytes]
+        while truncated:
+            try:
+                return truncated.decode("utf-8")
+            except UnicodeDecodeError:
+                truncated = truncated[:-1]
+        return "file"
+    max_stem_bytes = max_bytes - len(suffix_bytes)
+    stem_bytes = stem.encode("utf-8")
+    if len(stem_bytes) <= max_stem_bytes:
+        return name
+    truncated_stem_bytes = stem_bytes[:max_stem_bytes]
+    while truncated_stem_bytes:
+        try:
+            return f"{truncated_stem_bytes.decode('utf-8')}{suffix}"
+        except UnicodeDecodeError:
+            truncated_stem_bytes = truncated_stem_bytes[:-1]
+    return f"file{suffix}" if len(suffix.encode("utf-8")) <= max_bytes else "file"
+
+
+def stored_upload_file_name(upload_id: str, original_name: str) -> str:
+    prefix = f"{upload_id}_"
+    safe = safe_file_name(original_name)
+    max_safe_bytes = MAX_STORED_FILE_NAME_BYTES - len(prefix.encode("utf-8"))
+    if max_safe_bytes < 1:
+        raise OSError(errno.ENAMETOOLONG, "File name too long", prefix + safe)
+    file_name = prefix + truncate_file_name_to_bytes(safe, max_safe_bytes)
+    if len(file_name.encode("utf-8")) > MAX_STORED_FILE_NAME_BYTES:
+        raise OSError(errno.ENAMETOOLONG, "File name too long", file_name)
+    return file_name
 
 
 def template_basename(template_type: str) -> str:
