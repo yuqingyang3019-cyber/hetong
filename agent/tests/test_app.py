@@ -1879,11 +1879,11 @@ def test_build_attachment_summary_row_for_caigouhetong() -> None:
         "index": "1",
         "name": "阀门及配件",
         "spec": "详情见附件",
-        "unit": "",
-        "quantity": "",
-        "unitPrice": "",
+        "unit": "批",
+        "quantity": "1",
+        "unitPrice": "/",
         "totalPrice": "113000",
-        "tagNo": "",
+        "tagNo": "/",
     }
 
 
@@ -1898,6 +1898,9 @@ def test_build_attachment_summary_row_for_labor_subcontract() -> None:
     assert row["index"] == "1"
     assert row["laborItem"] == "清包工劳务"
     assert row["remark"] == "详情见附件"
+    assert row["unit"] == "批"
+    assert row["quantity"] == "1"
+    assert row["unitPrice"] == "/"
     assert row["totalPrice"] == "50000"
 
 
@@ -1910,7 +1913,7 @@ def test_build_attachment_summary_row_for_professional_subcontract() -> None:
 
     assert row["node"] == "机电安装"
     assert row["progressDescription"] == "详情见附件"
-    assert row["paymentRate"] == ""
+    assert row["paymentRate"] == "/"
 
 
 def test_apply_attachment_table_summary_replaces_existing_rows() -> None:
@@ -1927,11 +1930,11 @@ def test_apply_attachment_table_summary_replaces_existing_rows() -> None:
         "index": "1",
         "name": "阀门及配件",
         "spec": "详情见附件",
-        "unit": "",
-        "quantity": "",
-        "unitPrice": "",
+        "unit": "批",
+        "quantity": "1",
+        "unitPrice": "/",
         "totalPrice": "113000",
-        "tagNo": "",
+        "tagNo": "/",
     }]
 
 

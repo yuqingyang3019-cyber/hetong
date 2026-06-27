@@ -44,6 +44,9 @@ LogFunc = Callable[..., None]
 PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
 ITEMS_CONTENT_OVERRIDE_KEY = "itemsContentOverride"
 ATTACHMENT_DETAIL_REF = "详情见附件"
+ATTACHMENT_SUMMARY_UNIT = "批"
+ATTACHMENT_SUMMARY_QUANTITY = "1"
+ATTACHMENT_SUMMARY_PLACEHOLDER = "/"
 TITLE_SCALAR_KEYS = ("purchaseSubject", "workDescription", "projectName", "engineeringScope")
 TITLE_COLUMN_KEYS = ("name", "laborItem", "node")
 DETAIL_COLUMN_KEYS = ("spec", "remark", "progressDescription")
@@ -189,6 +192,13 @@ def build_attachment_summary_row(columns: list[str], scalars: dict[str, Any]) ->
         row[detail_column] = ATTACHMENT_DETAIL_REF
     if AMOUNT_COLUMN_KEY in row:
         row[AMOUNT_COLUMN_KEY] = _stringify(scalars.get(AMOUNT_SCALAR_KEY)).strip()
+    if "unit" in row:
+        row["unit"] = ATTACHMENT_SUMMARY_UNIT
+    if "quantity" in row:
+        row["quantity"] = ATTACHMENT_SUMMARY_QUANTITY
+    for column in columns:
+        if not row[column].strip():
+            row[column] = ATTACHMENT_SUMMARY_PLACEHOLDER
     return row
 
 

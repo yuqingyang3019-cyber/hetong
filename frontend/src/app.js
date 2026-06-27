@@ -1102,6 +1102,9 @@ function createEmptyTableRow(columns) {
 }
 
 const ATTACHMENT_DETAIL_REF = "详情见附件";
+const ATTACHMENT_SUMMARY_UNIT = "批";
+const ATTACHMENT_SUMMARY_QUANTITY = "1";
+const ATTACHMENT_SUMMARY_PLACEHOLDER = "/";
 const ATTACHMENT_TITLE_SCALAR_KEYS = ["purchaseSubject", "workDescription", "projectName", "engineeringScope"];
 const ATTACHMENT_TITLE_COLUMN_KEYS = ["name", "laborItem", "node"];
 const ATTACHMENT_DETAIL_COLUMN_KEYS = ["spec", "remark", "progressDescription"];
@@ -1128,6 +1131,11 @@ function buildAttachmentSummaryRow(columns, extractedData) {
   const detailColumn = firstColumnKey(columns, ATTACHMENT_DETAIL_COLUMN_KEYS);
   if (detailColumn) row[detailColumn] = ATTACHMENT_DETAIL_REF;
   if ("totalPrice" in row) row.totalPrice = String(extractedData?.totalAmount ?? "").trim();
+  if ("unit" in row) row.unit = ATTACHMENT_SUMMARY_UNIT;
+  if ("quantity" in row) row.quantity = ATTACHMENT_SUMMARY_QUANTITY;
+  columnKeys.forEach((key) => {
+    if (!String(row[key] ?? "").trim()) row[key] = ATTACHMENT_SUMMARY_PLACEHOLDER;
+  });
   return row;
 }
 
