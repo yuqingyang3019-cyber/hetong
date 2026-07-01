@@ -1300,6 +1300,39 @@ def test_simple_contract_context_uses_songti() -> None:
     assert 'w:sz w:val="21"' in contract_xml
 
 
+def test_simple_contract_amount_chinese_not_duplicated() -> None:
+    config = get_template_config("simpleContract")
+    render_data = merge_render_data({
+        "contractNo": "SC-001",
+        "supplierName": "测试供应商",
+        "totalAmount": "300",
+        "totalAmountChinese": "人民币叁佰元整",
+        "amountWithoutTax": "265.49",
+        "taxRate": "13",
+        "items": [{
+            "index": "1",
+            "name": "产品A",
+            "spec": "",
+            "quantity": "1",
+            "unit": "台",
+            "unitPrice": "300",
+            "totalPrice": "300",
+            "remark": "",
+        }],
+    }, config)
+    output_path = render_contract(render_data, config, "test_simple_contract_amount_chinese")
+    try:
+        document = Document(output_path)
+        table_text = "\n".join(
+            cell.text for table in document.tables for row in table.rows for cell in row.cells
+        )
+        assert "（大写）人民币叁佰元整（￥300元）" in table_text
+        assert "人民币人民币" not in table_text
+        assert "元整元整" not in table_text
+    finally:
+        output_path.unlink(missing_ok=True)
+
+
 def test_append_quote_attachment_adds_excel_tables(tmp_path: Path) -> None:
     docx_path = tmp_path / "contract.docx"
     Document().save(docx_path)

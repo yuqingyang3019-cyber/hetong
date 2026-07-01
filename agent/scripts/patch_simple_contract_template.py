@@ -25,6 +25,8 @@ SOURCE_PATH = TEMPLATE_DIR / "simple-contract.source.docx"
 OUTPUT_PATH = TEMPLATE_DIR / "simple-contract.docx"
 ROOT_SOURCE = ROOT / "简易合同模板.docx"
 PLACEHOLDER_MARKER = "{{r contractNo }}"
+AMOUNT_PLACEHOLDER = "（大写）{{r totalAmountChinese }}（￥{{r totalAmount }}元）"
+WRONG_AMOUNT_PLACEHOLDER = "（大写）人民币{{r totalAmountChinese }}元整（￥{{r totalAmount }}元）"
 
 
 def ensure_source() -> None:
@@ -53,16 +55,19 @@ def find_paragraph(cell, predicate) -> Paragraph:
     raise RuntimeError(f"未找到匹配段落：{predicate}")
 
 
-def replace_in_cell_lines(cell, replacements: list[tuple[str, str]]) -> None:
+def replace_in_cell_lines(cell, replacements: list[tuple[str, str]], *, required: bool = True) -> bool:
+    changed = False
     for old, new in replacements:
         matched = False
         for paragraph in cell.paragraphs:
             if old in paragraph.text:
                 replace_paragraph_text_preserving_format(paragraph, old, new)
                 matched = True
+                changed = True
                 break
-        if not matched:
+        if not matched and required:
             raise RuntimeError(f"单元格中未找到锚点 {old!r}：{cell.text!r}")
+    return changed
 
 
 def clone_row_after(table, row_index: int) -> _Row:
@@ -132,6 +137,15 @@ def patch_table2_items(doc: Document) -> None:
     set_cell_text_preserving_format(end_row.cells[0], "{%tr endfor %}")
 
 
+def fix_table2_amount_placeholder(doc: Document) -> bool:
+    cell = doc.tables[2].rows[4].cells[2]
+    return replace_in_cell_lines(
+        cell,
+        [(WRONG_AMOUNT_PLACEHOLDER, AMOUNT_PLACEHOLDER)],
+        required=False,
+    )
+
+
 def patch_table2_amounts(doc: Document) -> None:
     cell = doc.tables[2].rows[4].cells[2]
     replace_in_cell_lines(
@@ -139,7 +153,7 @@ def patch_table2_amounts(doc: Document) -> None:
         [
             (
                 "（大写）人民币元整（￥.00元）",
-                "（大写）人民币{{r totalAmountChinese }}元整（￥{{r totalAmount }}元）",
+                AMOUNT_PLACEHOLDER,
             ),
             ("不计税总金额：元", "不计税总金额：{{r amountWithoutTax }}元"),
         ],
@@ -192,6 +206,7 @@ def patch_table3(doc: Document) -> None:
 
 def patch_document(doc: Document) -> None:
     if is_already_patched(doc):
+        fix_table2_amount_placeholder(doc)
         return
     patch_table0(doc)
     patch_table1(doc)
@@ -204,6 +219,13 @@ def patch_document(doc: Document) -> None:
 
 def main() -> None:
     ensure_source()
+    if OUTPUT_PATH.exists():
+        output_doc = Document(str(OUTPUT_PATH))
+        if is_already_patched(output_doc):
+            fixed = fix_table2_amount_placeholder(output_doc)
+            output_doc.save(str(OUTPUT_PATH))
+            print(f"{'Fixed' if fixed else 'Checked'} {OUTPUT_PATH}")
+            return
     doc = Document(str(SOURCE_PATH))
     patch_document(doc)
     doc.save(str(OUTPUT_PATH))
