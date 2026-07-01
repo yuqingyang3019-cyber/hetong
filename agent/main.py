@@ -36,7 +36,7 @@ try:
         safe_file_name,
         stored_upload_file_name,
     )
-    from .contract.extract import extract_excel_payload, extract_text_from_file, parser_metadata_for_file
+    from .contract.extract import extract_excel_payload, extract_quote_content, extract_text_from_file, parser_metadata_for_file
     from .contract.llm import extract_template_render_data, is_timeout_error, scalar_only_template_config
     from .contract.render import merge_render_data, render_contract
 except ImportError:
@@ -49,7 +49,7 @@ except ImportError:
         safe_file_name,
         stored_upload_file_name,
     )
-    from contract.extract import extract_excel_payload, extract_text_from_file, parser_metadata_for_file
+    from contract.extract import extract_excel_payload, extract_quote_content, extract_text_from_file, parser_metadata_for_file
     from contract.llm import extract_template_render_data, is_timeout_error, scalar_only_template_config
     from contract.render import merge_render_data, render_contract
 
@@ -872,7 +872,8 @@ def extract_quote_text(upload_id: str, current_user: dict[str, Any]) -> tuple[di
             "attachmentMode": attachment_mode_for_payload(excel_payload),
         }
     else:
-        quote_text = extract_text_from_file(Path(upload["path"]), upload.get("mimeType", ""))
+        quote_text, parser_patch = extract_quote_content(Path(upload["path"]), upload.get("mimeType", ""))
+        parser = {**parser, **parser_patch}
     log_info(
         "quote text extracted",
         uploadId=upload_id,

@@ -28,7 +28,7 @@ from agent.contract.config import (
     template_docx_path,
     truncate_file_name_to_bytes,
 )
-from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text
+from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text, extract_quote_content
 from agent.contract.render import (
     ATTACHMENT_TABLE_CONTENT_WIDTH_DXA,
     append_quote_attachment,
@@ -362,6 +362,88 @@ def test_extract_pdf_text_outputs_tsv_without_html() -> None:
     assert "<td>" not in text
 
 
+def test_extract_pdf_text_keeps_pdfplumber_when_text_exists() -> None:
+    class FakeTable:
+        def extract(self) -> list[list[str]]:
+            return [["品名", "数量"], ["阀门", "2"]]
+
+    class FakePage:
+        def find_tables(self, table_settings: dict) -> list[FakeTable]:
+            return [FakeTable()]
+
+        def extract_text(self, **kwargs: object) -> str:
+            return "报价备注"
+
+    class FakePdf:
+        pages = [FakePage()]
+
+        def __enter__(self) -> "FakePdf":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+    with patch("pdfplumber.open", return_value=FakePdf()), patch(
+        "agent.contract.extract._recognize_all_text",
+    ) as ocr_mock:
+        text = extract_pdf_text(Path("quote.pdf"))
+
+    ocr_mock.assert_not_called()
+    assert "pdfplumber-lines" in text
+    assert "报价备注" in text
+
+
+def test_extract_pdf_text_falls_back_to_ocr_when_no_text(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 scan")
+
+    class FakePage:
+        def find_tables(self, table_settings: dict) -> list[object]:
+            return []
+
+        def extract_text(self, **kwargs: object) -> str:
+            return ""
+
+    class FakePdf:
+        pages = [FakePage(), FakePage()]
+
+        def __enter__(self) -> "FakePdf":
+            return self
+
+        def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+            return None
+
+    with patch("pdfplumber.open", return_value=FakePdf()), patch(
+        "agent.contract.extract._recognize_all_text",
+        side_effect=[
+            "--- 第 1 页 ---\n[第 1 页文字]\n扫描页一",
+            "--- 第 2 页 ---\n[第 1 页文字]\n扫描页二",
+        ],
+    ) as ocr_mock:
+        text = extract_pdf_text(pdf_path)
+
+    assert ocr_mock.call_count == 2
+    assert "扫描页一" in text
+    assert "扫描页二" in text
+
+
+def test_extract_quote_content_marks_pdf_ocr_used_on_fallback(tmp_path: Path) -> None:
+    pdf_path = tmp_path / "scan.pdf"
+    pdf_path.write_bytes(b"%PDF-1.4 scan")
+
+    with patch(
+        "agent.contract.extract._extract_pdf_with_pdfplumber",
+        side_effect=ValueError("PDF 未解析到文本"),
+    ), patch(
+        "agent.contract.extract._extract_pdf_with_ocr",
+        return_value="--- 第 1 页 ---\n[第 1 页文字]\n扫描内容",
+    ):
+        quote_text, parser_patch = extract_quote_content(pdf_path, "application/pdf")
+
+    assert "扫描内容" in quote_text
+    assert parser_patch == {"ocrUsed": True}
+
+
 def test_yonbip_vendor_query_uses_explicit_fields() -> None:
     payload = vendor_query_payload(1, 500)
 
@@ -661,7 +743,8 @@ def test_extract_image_text_uses_recognize_all_text(tmp_path: Path) -> None:
 
         def recognize_all_text_with_options(self, request: object, runtime: object) -> object:
             calls["all_text"] = True
-            assert getattr(request, "type") == "General"
+            assert getattr(request, "type") == "Advanced"
+            assert getattr(request, "advanced_config").output_table is True
             assert getattr(request, "body").read().startswith(b"\x89PNG")
 
             class Response:
@@ -673,6 +756,10 @@ def test_extract_image_text_uses_recognize_all_text(tmp_path: Path) -> None:
         def recognize_general_with_options(self, request: object, runtime: object) -> object:
             calls["general"] = True
             raise AssertionError("should not call RecognizeGeneral")
+
+    class FakeRecognizeAllTextRequestAdvancedConfig:
+        def __init__(self, **kwargs: object) -> None:
+            self.__dict__.update(kwargs)
 
     class FakeRecognizeAllTextRequest:
         def __init__(self, **kwargs: object) -> None:
@@ -695,6 +782,121 @@ def test_extract_image_text_uses_recognize_all_text(tmp_path: Path) -> None:
 
     fake_ocr_client.Client = FakeOcrClient
     fake_ocr_models.RecognizeAllTextRequest = FakeRecognizeAllTextRequest
+    fake_ocr_models.RecognizeAllTextRequestAdvancedConfig = FakeRecognizeAllTextRequestAdvancedConfig
+    fake_ocr_root.models = fake_ocr_models
+    fake_openapi.models = fake_openapi_models
+    fake_openapi_models.Config = FakeConfig
+    fake_util.models = fake_util_models
+    fake_util_models.RuntimeOptions = FakeRuntimeOptions
+
+    with patch.dict(
+        sys.modules,
+        {
+            "alibabacloud_ocr_api20210707": fake_ocr_root,
+            "alibabacloud_ocr_api20210707.client": fake_ocr_client,
+            "alibabacloud_ocr_api20210707.models": fake_ocr_models,
+            "alibabacloud_tea_openapi": fake_openapi,
+            "alibabacloud_tea_openapi.models": fake_openapi_models,
+            "alibabacloud_tea_util": fake_util,
+            "alibabacloud_tea_util.models": fake_util_models,
+        },
+    ), patch.dict(os.environ, {
+        "ALIYUN_ACCESS_KEY_ID": "ak",
+        "ALIYUN_ACCESS_KEY_SECRET": "sk",
+        "ALIYUN_OCR_SCENE": "Advanced",
+        "ALIYUN_OCR_OUTPUT_TABLE": "true",
+    }):
+        text = extract_image_text(image_path)
+
+    assert "--- 第 1 页 ---" in text
+    assert "[第 1 页文字]" in text
+    assert "报价单文本" in text
+    assert calls == {"all_text": True, "general": False}
+
+
+def test_ocr_response_parses_table_info_to_tsv(tmp_path: Path) -> None:
+    from agent.contract.extract import extract_image_text
+
+    image_path = tmp_path / "quote.png"
+    image_path.write_bytes(PNG_BYTES)
+
+    class FakeOcrClient:
+        def __init__(self, config: object) -> None:
+            self.config = config
+
+        def recognize_all_text_with_options(self, request: object, runtime: object) -> object:
+            class Response:
+                def to_map(self) -> dict:
+                    return {
+                        "body": {
+                            "Data": {
+                                "Content": "报价备注",
+                                "TableInfo": {
+                                    "TableDetails": [{
+                                        "CellDetails": [
+                                            {
+                                                "CellContent": "品名",
+                                                "RowStart": 0,
+                                                "RowEnd": 0,
+                                                "ColumnStart": 0,
+                                                "ColumnEnd": 0,
+                                            },
+                                            {
+                                                "CellContent": "数量",
+                                                "RowStart": 0,
+                                                "RowEnd": 0,
+                                                "ColumnStart": 1,
+                                                "ColumnEnd": 1,
+                                            },
+                                            {
+                                                "CellContent": "阀门",
+                                                "RowStart": 1,
+                                                "RowEnd": 1,
+                                                "ColumnStart": 0,
+                                                "ColumnEnd": 0,
+                                            },
+                                            {
+                                                "CellContent": "2",
+                                                "RowStart": 1,
+                                                "RowEnd": 1,
+                                                "ColumnStart": 1,
+                                                "ColumnEnd": 1,
+                                            },
+                                        ],
+                                    }],
+                                },
+                            },
+                        },
+                    }
+
+            return Response()
+
+    class FakeRecognizeAllTextRequestAdvancedConfig:
+        def __init__(self, **kwargs: object) -> None:
+            self.__dict__.update(kwargs)
+
+    class FakeRecognizeAllTextRequest:
+        def __init__(self, **kwargs: object) -> None:
+            self.__dict__.update(kwargs)
+
+    class FakeConfig:
+        def __init__(self, **kwargs: object) -> None:
+            self.__dict__.update(kwargs)
+
+    class FakeRuntimeOptions:
+        pass
+
+    fake_ocr_root = types.ModuleType("alibabacloud_ocr_api20210707")
+    fake_ocr_client = types.ModuleType("alibabacloud_ocr_api20210707.client")
+    fake_ocr_models = types.ModuleType("alibabacloud_ocr_api20210707.models")
+    fake_openapi = types.ModuleType("alibabacloud_tea_openapi")
+    fake_openapi_models = types.ModuleType("alibabacloud_tea_openapi.models")
+    fake_util = types.ModuleType("alibabacloud_tea_util")
+    fake_util_models = types.ModuleType("alibabacloud_tea_util.models")
+
+    fake_ocr_client.Client = FakeOcrClient
+    fake_ocr_models.RecognizeAllTextRequest = FakeRecognizeAllTextRequest
+    fake_ocr_models.RecognizeAllTextRequestAdvancedConfig = FakeRecognizeAllTextRequestAdvancedConfig
     fake_ocr_root.models = fake_ocr_models
     fake_openapi.models = fake_openapi_models
     fake_openapi_models.Config = FakeConfig
@@ -713,9 +915,12 @@ def test_extract_image_text_uses_recognize_all_text(tmp_path: Path) -> None:
             "alibabacloud_tea_util.models": fake_util_models,
         },
     ), patch.dict(os.environ, {"ALIYUN_ACCESS_KEY_ID": "ak", "ALIYUN_ACCESS_KEY_SECRET": "sk"}):
-        assert extract_image_text(image_path) == "报价单文本"
+        text = extract_image_text(image_path)
 
-    assert calls == {"all_text": True, "general": False}
+    assert "[表格 parser=ocr-advanced page=1 index=1 format=tsv]" in text
+    assert "品名\t数量" in text
+    assert "阀门\t2" in text
+    assert "报价备注" in text
 
 
 def test_upload_rejects_empty_file() -> None:

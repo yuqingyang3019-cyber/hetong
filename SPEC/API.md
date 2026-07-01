@@ -293,7 +293,7 @@ Authorization: Bearer <agentAccessToken>
 }
 ```
 
-图片报价单响应中的 `parser.ocrUsed` 应为 `true`，并可附带 OCR 服务、页数、表格数量等排障字段。
+图片报价单响应中的 `parser.ocrUsed` 应为 `true`；PDF 在无文字层并回退 OCR 时，`parser.ocrUsed` 也应为 `true`。可附带 OCR 服务、页数、表格数量等排障字段。
 
 ### 6.3 字段识别预览
 
