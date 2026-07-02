@@ -36,17 +36,6 @@ jobs:
       - name: Run tests
         run: python3 -m pytest agent/tests
 
-      - name: Build Agent Python wheelhouse
-        run: |
-          rm -rf agent/wheelhouse
-          docker run --rm \
-            -v "$PWD":/io \
-            -w /io \
-            quay.io/pypa/manylinux2014_x86_64 \
-            /opt/python/cp312-cp312/bin/python -m pip wheel \
-              --wheel-dir agent/wheelhouse \
-              -r agent/requirements.txt
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -89,57 +78,17 @@ jobs:
       YONBIP_TENANT_ID: ${{ secrets.YONBIP_TENANT_ID }}
       APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
       AGENT_ALLOWED_ORIGINS: ${{ secrets.AGENT_ALLOWED_ORIGINS }}
+      ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+      ACR_USERNAME: ${{ secrets.ACR_USERNAME }}
+      ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
+      ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+      ACR_REPOSITORY: ${{ secrets.ACR_REPOSITORY }}
     concurrency:
       group: fc-deploy
       cancel-in-progress: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: agent/requirements.txt
-
-      - name: Install Serverless Devs
-        run: npm install -g @serverless-devs/s
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install H5 frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Build H5 frontend
-        working-directory: frontend
-        run: npm run build
-
-      - name: Build Agent Python wheelhouse
-        run: |
-          rm -rf agent/wheelhouse
-          docker run --rm \
-            -v "$PWD":/io \
-            -w /io \
-            quay.io/pypa/manylinux2014_x86_64 \
-            /opt/python/cp312-cp312/bin/python -m pip wheel \
-              --wheel-dir agent/wheelhouse \
-              -r agent/requirements.txt
-
-      - name: Configure Aliyun credentials
-        run: |
-          s config add \
-            -a default \
-            --AccountID ${{ secrets.ALIYUN_ACCOUNT_ID }} \
-            --AccessKeyID ${{ secrets.ALIYUN_ACCESS_KEY_ID }} \
-            --AccessKeySecret ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }} \
-            -f
 
       - name: Verify required secrets for deploy
         run: |
@@ -150,7 +99,8 @@ jobs:
             DINGTALK_CLIENT_ID DINGTALK_CLIENT_SECRET DINGTALK_CORP_ID \
             DINGTALK_DRIVE_SPACE_ID DINGTALK_DRIVE_PARENT_ID \
             YONBIP_APP_KEY YONBIP_APP_SECRET \
-            APP_SESSION_SECRET; do
+            APP_SESSION_SECRET \
+            ACR_REGISTRY ACR_USERNAME ACR_PASSWORD ACR_NAMESPACE ACR_REPOSITORY; do
             val="$(printenv "$var" || true)"
             if [ -z "$val" ]; then
               missing="$missing $var"
@@ -162,7 +112,39 @@ jobs:
             exit 1
           fi
 
+      - name: Install Serverless Devs
+        run: npm install -g @serverless-devs/s
+
+      - name: Login to ACR
+        run: |
+          echo "${{ secrets.ACR_PASSWORD }}" | docker login \
+            "${{ secrets.ACR_REGISTRY }}" \
+            --username "${{ secrets.ACR_USERNAME }}" \
+            --password-stdin
+
+      - name: Build and push container image
+        env:
+          ACR_REGISTRY: ${{ secrets.ACR_REGISTRY }}
+          ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
+          ACR_REPOSITORY: ${{ secrets.ACR_REPOSITORY }}
+        run: |
+          IMAGE="${ACR_REGISTRY}/${ACR_NAMESPACE}/${ACR_REPOSITORY}"
+          docker build --platform linux/amd64 -f agent/Dockerfile -t "${IMAGE}:${GITHUB_SHA}" -t "${IMAGE}:latest" .
+          docker push "${IMAGE}:${GITHUB_SHA}"
+          docker push "${IMAGE}:latest"
+
+      - name: Configure Aliyun credentials
+        run: |
+          s config add \
+            -a default \
+            --AccountID ${{ secrets.ALIYUN_ACCOUNT_ID }} \
+            --AccessKeyID ${{ secrets.ALIYUN_ACCESS_KEY_ID }} \
+            --AccessKeySecret ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }} \
+            -f
+
       - name: Deploy to FC
+        env:
+          FC_IMAGE_TAG: ${{ github.sha }}
         run: s deploy -t s.yaml --assume-yes
 
       - name: Get FC URL

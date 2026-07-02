@@ -28,9 +28,9 @@ PRD 负责描述用户需求、功能范围和验收口径；架构文档负责�
 
 ## 4. 运行时拓扑
 
-当前部署收敛为一个 FC3 自定义运行时，职责仍按客户端、鉴权和业务 API 分层：
+当前部署收敛为一个 FC3 自定义容器运行时，职责仍按客户端、鉴权和业务 API 分层：
 
-- `app`：FC3 自定义运行时，启动 `agent/bootstrap.sh` 运行 FastAPI，提供 H5 静态资源、`/config.js`、`/bff/auth/*` 鉴权接口和业务 API。
+- `app`：FC3 自定义容器（ACR 镜像），容器内 `uvicorn` 运行 FastAPI，提供 H5 静态资源、`/config.js`、`/bff/auth/*` 鉴权接口和业务 API。
 
 ```mermaid
 flowchart LR
@@ -51,7 +51,17 @@ flowchart LR
 
 | 资源 | 配置来源 | 运行内容 | 说明 |
 | --- | --- | --- | --- |
-| `app` | [`s.yaml`](../s.yaml) | `agent/bootstrap.sh` 启动 FastAPI，托管 `agent/static` 前端资源和业务 API | CPU 0.5、内存 1024MB、端口 9000 |
+| `app` | [`s.yaml`](../s.yaml)、[`agent/Dockerfile`](../agent/Dockerfile) | ACR 容器镜像内 `uvicorn` 启动 FastAPI，托管 `agent/static` 前端资源和业务 API | CPU 0.5、内存 1024MB、端口 9000 |
+
+本地开发与线上一致，统一通过 Docker 镜像运行，不再维护 `bootstrap.sh`、wheelhouse 或宿主机直跑 Python 的备用路径。镜像为多阶段构建：Node 阶段打包 H5 到 `agent/static`，Python 阶段安装依赖并启动 `uvicorn`。
+
+| 场景 | 命令 |
+| --- | --- |
+| 本地构建并启动 | `docker compose up --build` 或 `./scripts/docker.sh up` |
+| 健康检查 | `./scripts/docker.sh smoke` |
+| 拉取 ACR 镜像并运行 | `./scripts/docker.sh pull` → `./scripts/docker.sh run-pulled` |
+
+环境变量使用根目录 `.env.local`（参考 [`.env.docker.example`](../.env.docker.example)），`docker-compose.yml` 会挂载 `agent/storage` 以保留本地上传文件。
 
 ### 4.2 逻辑分层
 

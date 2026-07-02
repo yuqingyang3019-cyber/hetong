@@ -10,12 +10,12 @@ tmp/
 # Local environment files
 .env
 .env.*
+!.env.docker.example
 
 # Generated app artifacts
 frontend/node_modules/
 agent/.venv/
 agent/python/
-agent/wheelhouse/
 agent/storage/uploads/*
 !agent/storage/uploads/.gitkeep
 agent/storage/contracts/*
@@ -39,5 +39,6 @@ agent/static/
 !/scripts/
 !/scripts/dxf_to_image_poc.py
 !/scripts/yonyou_vendor_probe.py
+!/scripts/docker.sh
 /合同模板/
 /报价单/

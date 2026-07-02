@@ -5,6 +5,7 @@ access: default
 vars:
   region: cn-hangzhou
   function_name: hetong-agui
+  image: crpi-b919j45wlpk47opd.cn-hangzhou.personal.cr.aliyuncs.com/hetong-2026/hetong-gui
 
 resources:
   app:
@@ -13,12 +14,9 @@ resources:
       region: ${vars.region}
       functionName: ${vars.function_name}
       description: 合同生成助手 H5 与业务 API
-      runtime: custom.debian11
-      code: ./agent
-      customRuntimeConfig:
-        command:
-          - /bin/bash
-          - bootstrap.sh
+      runtime: custom-container
+      customContainerConfig:
+        image: ${vars.image}:${env("FC_IMAGE_TAG")}
         port: 9000
       cpu: 0.5
       memorySize: 1024
@@ -29,8 +27,7 @@ resources:
       environmentVariables:
         PORT: "9000"
         H5_STATIC_DIR: /code/static
-        PATH: /var/fc/lang/python3.12/bin:/usr/local/bin:/usr/bin:/bin
-        PYTHONPATH: /code:/code/python:/opt/python
+        PYTHONPATH: /code
         DASHSCOPE_API_KEY: ${env("DASHSCOPE_API_KEY")}
         DASHSCOPE_BASE_URL: https://dashscope.aliyuncs.com/compatible-mode/v1
         DASHSCOPE_MODEL: ${env("DASHSCOPE_MODEL")}
