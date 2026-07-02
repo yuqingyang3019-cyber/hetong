@@ -166,19 +166,6 @@ h2 {
   font-weight: 800;
 }
 
-.beta-badge {
-  background: rgba(180, 83, 9, 0.1);
-  border: 1px solid rgba(180, 83, 9, 0.22);
-  border-radius: 999px;
-  color: var(--color-warning);
-  flex-shrink: 0;
-  font-size: 0.6875rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  line-height: 1;
-  padding: 4px 7px;
-}
-
 .hero-steps {
   display: flex;
   flex-wrap: wrap;
