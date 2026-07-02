@@ -16,7 +16,7 @@ resources:
       description: 合同生成助手 H5 与业务 API
       runtime: custom-container
       customContainerConfig:
-        image: ${vars.image}:${env("FC_IMAGE_TAG")}
+        image: ${vars.image}:${env("FC_IMAGE_TAG", "latest")}
         port: 9000
       cpu: 0.5
       memorySize: 1024
