@@ -142,12 +142,6 @@ jobs:
             --AccessKeySecret ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }} \
             -f
 
-      - name: Recreate function for container runtime migration
-        if: ${{ secrets.FC_RECREATE_FUNCTION == 'true' }}
-        env:
-          FC_IMAGE_TAG: ${{ github.sha }}
-        run: s remove -t s.yaml --assume-yes
-
       - name: Deploy to FC
         env:
           FC_IMAGE_TAG: ${{ github.sha }}
