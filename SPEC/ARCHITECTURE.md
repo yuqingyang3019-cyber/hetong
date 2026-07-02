@@ -51,7 +51,7 @@ flowchart LR
 
 | 资源 | 配置来源 | 运行内容 | 说明 |
 | --- | --- | --- | --- |
-| `app` | [`s.yaml`](../s.yaml)、[`agent/Dockerfile`](../agent/Dockerfile) | ACR 容器镜像内 `uvicorn` 启动 FastAPI，托管 `agent/static` 前端资源和业务 API | CPU 0.5、内存 1024MB、端口 9000 |
+| `app` | [`s.yaml`](../s.yaml)、[`agent/Dockerfile`](../agent/Dockerfile) | ACR 容器镜像内 `uvicorn` 启动 FastAPI，托管 `agent/static` 前端资源和业务 API | CPU 0.5、内存 1024MB、端口 9000；函数 RAM 角色需含 `AliyunContainerRegistryReadOnlyAccess` 以拉取个人版 ACR 镜像 |
 
 本地开发与线上一致，统一通过 Docker 镜像运行，不再维护 `bootstrap.sh`、wheelhouse 或宿主机直跑 Python 的备用路径。镜像为多阶段构建：Node 阶段打包 H5 到 `agent/static`，Python 阶段安装依赖并启动 `uvicorn`。
 

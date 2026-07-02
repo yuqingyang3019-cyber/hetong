@@ -15,6 +15,7 @@ resources:
       functionName: ${vars.function_name}
       description: 合同生成助手 H5 与业务 API
       runtime: custom-container
+      role: acs:ram::${env("ALIYUN_ACCOUNT_ID")}:role/AliyunFCDefaultRole
       customContainerConfig:
         image: ${vars.image}:${env("FC_IMAGE_TAG", "latest")}
         port: 9000
