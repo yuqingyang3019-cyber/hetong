@@ -83,7 +83,6 @@ jobs:
       ACR_PASSWORD: ${{ secrets.ACR_PASSWORD }}
       ACR_NAMESPACE: ${{ secrets.ACR_NAMESPACE }}
       ACR_REPOSITORY: ${{ secrets.ACR_REPOSITORY }}
-      FC_RECREATE_FUNCTION: ${{ secrets.FC_RECREATE_FUNCTION }}
     concurrency:
       group: fc-deploy
       cancel-in-progress: true
@@ -144,7 +143,7 @@ jobs:
             -f
 
       - name: Recreate function for container runtime migration
-        if: env('FC_RECREATE_FUNCTION') == 'true'
+        if: ${{ secrets.FC_RECREATE_FUNCTION == 'true' }}
         env:
           FC_IMAGE_TAG: ${{ github.sha }}
         run: s remove -t s.yaml --assume-yes
