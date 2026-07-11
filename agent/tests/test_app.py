@@ -16,6 +16,7 @@ from zipfile import ZipFile
 import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from fastapi.testclient import TestClient
 
 from agent.contract import llm as contract_llm
@@ -1594,6 +1595,30 @@ def test_append_quote_attachment_does_not_require_heading_styles(tmp_path: Path)
     assert any(paragraph.text == "报价" for paragraph in document.paragraphs)
 
 
+def _sect_pr_page_size(block: str) -> tuple[int, int] | None:
+    width_match = re.search(r'<w:pgSz[^>]*w:w="(\d+)"', block)
+    height_match = re.search(r'<w:pgSz[^>]*w:h="(\d+)"', block)
+    if not width_match or not height_match:
+        return None
+    return int(width_match.group(1)), int(height_match.group(1))
+
+
+def _section_is_portrait(block: str) -> bool:
+    size = _sect_pr_page_size(block)
+    if size is None:
+        return False
+    width, height = size
+    return width < height and 'w:orient="landscape"' not in block
+
+
+def _section_is_landscape(block: str) -> bool:
+    size = _sect_pr_page_size(block)
+    if size is None:
+        return False
+    width, height = size
+    return width > height and 'w:orient="landscape"' in block
+
+
 def test_append_quote_attachment_preserves_portrait_body_section(tmp_path: Path) -> None:
     docx_path = tmp_path / "contract-portrait-body.docx"
     Document().save(docx_path)
@@ -1610,28 +1635,41 @@ def test_append_quote_attachment_preserves_portrait_body_section(tmp_path: Path)
 
     sect_pr_blocks = re.findall(r"<w:sectPr[^>]*>([\s\S]*?)</w:sectPr>", xml)
     assert len(sect_pr_blocks) >= 2
-    assert 'w:orient="landscape"' in xml
-
-    def _section_is_portrait(block: str) -> bool:
-        if 'w:orient="landscape"' in block:
-            return False
-        width_match = re.search(r'w:w="(\d+)"', block)
-        height_match = re.search(r'w:h="(\d+)"', block)
-        if not width_match or not height_match:
-            return False
-        return int(width_match.group(1)) < int(height_match.group(1))
-
-    def _section_is_landscape(block: str) -> bool:
-        if 'w:orient="landscape"' in block:
-            return True
-        width_match = re.search(r'w:w="(\d+)"', block)
-        height_match = re.search(r'w:h="(\d+)"', block)
-        if not width_match or not height_match:
-            return False
-        return int(width_match.group(1)) > int(height_match.group(1))
-
     assert any(_section_is_portrait(block) for block in sect_pr_blocks)
-    assert any(_section_is_landscape(block) for block in sect_pr_blocks)
+    assert _section_is_landscape(sect_pr_blocks[-1])
+
+
+def test_append_quote_attachment_keeps_landscape_when_template_already_landscape(tmp_path: Path) -> None:
+    """Templates like caigouhetong already end in landscape; do not double-flip back to portrait."""
+    docx_path = tmp_path / "contract-already-landscape.docx"
+    document = Document()
+    body = document.element.body
+    assert body.sectPr is not None
+    pg_sz = body.sectPr.find(qn("w:pgSz"))
+    assert pg_sz is not None
+    width = pg_sz.get(qn("w:w"))
+    height = pg_sz.get(qn("w:h"))
+    pg_sz.set(qn("w:w"), height)
+    pg_sz.set(qn("w:h"), width)
+    pg_sz.set(qn("w:orient"), "landscape")
+    document.save(docx_path)
+
+    append_quote_attachment(docx_path, {
+        "sheets": [{
+            "name": "报价",
+            "rows": [["品名", "数量"], ["阀门", "2"]],
+        }],
+    }, get_template_typography("caigouhetong"))
+
+    with ZipFile(docx_path) as docx:
+        xml = docx.read("word/document.xml").decode("utf-8")
+
+    sect_pr_blocks = re.findall(r"<w:sectPr[^>]*>([\s\S]*?)</w:sectPr>", xml)
+    assert len(sect_pr_blocks) >= 2
+    assert _section_is_landscape(sect_pr_blocks[-1])
+    final_size = _sect_pr_page_size(sect_pr_blocks[-1])
+    assert final_size is not None
+    assert final_size[0] > final_size[1]
 
 
 def test_append_quote_attachment_writes_table_borders_without_style(tmp_path: Path) -> None:

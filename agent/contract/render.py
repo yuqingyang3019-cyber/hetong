@@ -552,15 +552,31 @@ def _append_sect_pr_to_paragraph(paragraph_element: OxmlElement, sect_pr: OxmlEl
     paragraph_pr.append(deepcopy(sect_pr))
 
 
+def _pg_sz_is_landscape(pg_sz: OxmlElement) -> bool:
+    if pg_sz.get(qn("w:orient")) == "landscape":
+        return True
+    width = pg_sz.get(qn("w:w"))
+    height = pg_sz.get(qn("w:h"))
+    if not width or not height:
+        return False
+    try:
+        return int(width) > int(height)
+    except ValueError:
+        return False
+
+
 def _landscape_sect_pr(sect_pr: OxmlElement) -> OxmlElement:
+    """Force section page size to landscape without double-flipping an already-landscape section."""
     pg_sz = sect_pr.find(qn("w:pgSz"))
-    if pg_sz is not None:
+    if pg_sz is None:
+        return sect_pr
+    if not _pg_sz_is_landscape(pg_sz):
         width = pg_sz.get(qn("w:w"))
         height = pg_sz.get(qn("w:h"))
         if width and height:
             pg_sz.set(qn("w:w"), height)
             pg_sz.set(qn("w:h"), width)
-        pg_sz.set(qn("w:orient"), "landscape")
+    pg_sz.set(qn("w:orient"), "landscape")
     return sect_pr
 
 
@@ -568,10 +584,11 @@ def _append_landscape_section_break(doc: Any) -> None:
     body = doc.element.body
     if body.sectPr is None or not doc.paragraphs:
         return
-    portrait_sect = deepcopy(body.sectPr)
+    # Close the previous section with its current page setup (may already be landscape on some templates).
+    previous_sect = deepcopy(body.sectPr)
     landscape_sect = _landscape_sect_pr(deepcopy(body.sectPr))
     page_break_paragraph = doc.paragraphs[-1]._element
-    _append_sect_pr_to_paragraph(page_break_paragraph, portrait_sect)
+    _append_sect_pr_to_paragraph(page_break_paragraph, previous_sect)
     body.replace(body.sectPr, landscape_sect)
 
 
