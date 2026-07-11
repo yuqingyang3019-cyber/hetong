@@ -40,6 +40,12 @@ CHUNK_ROW_SIZE = 100
 ATTACHMENT_TABLE_WIDTH_PCT = "5000"
 ATTACHMENT_TABLE_CONTENT_WIDTH_DXA = 12756
 ATTACHMENT_COLUMN_MIN_WEIGHT = 2
+ATTACHMENT_COLUMN_SOFT_CAP = 32
+ATTACHMENT_COLUMN_HARD_CAP = 64
+ATTACHMENT_COLUMN_HEADER_CAP_FACTOR = 3
+ATTACHMENT_COLUMN_MIN_DXA = 720
+ATTACHMENT_COLUMN_MAX_SHARE = 0.40
+ATTACHMENT_COLUMN_BODY_PERCENTILE = 0.90
 LogFunc = Callable[..., None]
 PAYMENT_TERMS_OVERRIDE_KEY = "paymentTermsOverride"
 ITEMS_CONTENT_OVERRIDE_KEY = "itemsContentOverride"
@@ -410,37 +416,99 @@ def _text_display_width(text: str) -> int:
     return width
 
 
+def _percentile_nearest_rank(values: list[int], percentile: float) -> int:
+    if not values:
+        return 0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    rank = max(1, min(len(ordered), int((len(ordered) - 1) * percentile) + 1))
+    return ordered[rank - 1]
+
+
 def _column_display_weights(rows: list[list[str]], max_cols: int, min_weight: int = ATTACHMENT_COLUMN_MIN_WEIGHT) -> list[int]:
     header = rows[0] if rows else []
     weights: list[int] = []
     for col_index in range(max_cols):
         header_width = _text_display_width(header[col_index]) if col_index < len(header) else 0
-        body_max = max(
-            (_text_display_width(str(row[col_index])) for row in rows[1:] if col_index < len(row)),
-            default=0,
-        )
-        weights.append(max(header_width, body_max, min_weight))
+        body_widths = [
+            _text_display_width(str(row[col_index]))
+            for row in rows[1:]
+            if col_index < len(row)
+        ]
+        body_signal = _percentile_nearest_rank(body_widths, ATTACHMENT_COLUMN_BODY_PERCENTILE)
+        desired = max(header_width, body_signal, min_weight)
+        soft_cap = max(header_width * ATTACHMENT_COLUMN_HEADER_CAP_FACTOR, ATTACHMENT_COLUMN_SOFT_CAP)
+        weights.append(min(desired, soft_cap, ATTACHMENT_COLUMN_HARD_CAP))
     return weights
+
+
+def _column_floor_dxa(col_count: int, total_width_dxa: int) -> int:
+    if col_count <= 0:
+        return 0
+    return max(ATTACHMENT_COLUMN_MIN_DXA, total_width_dxa // (col_count * 3))
+
+
+def _redistribute_capped_widths(widths: list[int], total_width_dxa: int, max_share: float = ATTACHMENT_COLUMN_MAX_SHARE) -> list[int]:
+    if not widths:
+        return []
+    max_width = max(1, int(total_width_dxa * max_share))
+    result = list(widths)
+    for _ in range(len(result)):
+        overflow = 0
+        uncapped: list[int] = []
+        for index, width in enumerate(result):
+            if width > max_width:
+                overflow += width - max_width
+                result[index] = max_width
+            else:
+                uncapped.append(index)
+        if overflow <= 0 or not uncapped:
+            break
+        base = overflow // len(uncapped)
+        remainder = overflow % len(uncapped)
+        for offset, index in enumerate(uncapped):
+            result[index] += base + (1 if offset < remainder else 0)
+
+    drift = total_width_dxa - sum(result)
+    if drift > 0:
+        candidates = [index for index, width in enumerate(result) if width < max_width]
+        target = max(candidates, key=lambda index: max_width - result[index]) if candidates else len(result) - 1
+        result[target] += drift
+    elif drift < 0:
+        target = max(range(len(result)), key=result.__getitem__)
+        result[target] += drift
+    return result
 
 
 def compute_attachment_column_widths(rows: list[list[str]], max_cols: int) -> list[int]:
     weights = _column_display_weights(rows, max_cols)
-    return _proportional_column_widths(weights, ATTACHMENT_TABLE_CONTENT_WIDTH_DXA)
+    return _allocate_attachment_column_widths(weights, ATTACHMENT_TABLE_CONTENT_WIDTH_DXA)
 
 
-def _proportional_column_widths(weights: list[int], total_width_dxa: int) -> list[int]:
+def _allocate_attachment_column_widths(weights: list[int], total_width_dxa: int) -> list[int]:
     if not weights:
         return []
-    weight_total = sum(weights)
-    if weight_total <= 0:
-        equal = total_width_dxa // len(weights)
-        return [equal] * len(weights)
-    widths = [int(total_width_dxa * weight / weight_total) for weight in weights]
-    remainder = total_width_dxa - sum(widths)
+    col_count = len(weights)
+    floor = _column_floor_dxa(col_count, total_width_dxa)
+    # If floors alone exceed total width, fall back to equal split.
+    if floor * col_count >= total_width_dxa:
+        equal = total_width_dxa // col_count
+        widths = [equal] * col_count
+        widths[-1] += total_width_dxa - sum(widths)
+        return widths
+
+    widths = [floor] * col_count
+    remaining = total_width_dxa - floor * col_count
+    weight_total = sum(max(weight, 1) for weight in weights)
+    shares = [int(remaining * max(weight, 1) / weight_total) for weight in weights]
+    remainder = remaining - sum(shares)
+    for index, share in enumerate(shares):
+        widths[index] += share
     if remainder:
-        widest_index = max(range(len(widths)), key=widths.__getitem__)
+        widest_index = max(range(col_count), key=lambda index: weights[index])
         widths[widest_index] += remainder
-    return widths
+    return _redistribute_capped_widths(widths, total_width_dxa)
 
 
 def _build_table_cell_xml(text: str) -> OxmlElement:

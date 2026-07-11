@@ -31,6 +31,8 @@ from agent.contract.config import (
 )
 from agent.contract.extract import extract_excel_payload, extract_excel_text, extract_pdf_text, extract_quote_content
 from agent.contract.render import (
+    ATTACHMENT_COLUMN_MAX_SHARE,
+    ATTACHMENT_COLUMN_MIN_DXA,
     ATTACHMENT_TABLE_CONTENT_WIDTH_DXA,
     append_quote_attachment,
     apply_attachment_table_summary,
@@ -1770,7 +1772,7 @@ def test_append_quote_attachment_large_table_uses_xml_bulk(tmp_path: Path) -> No
     assert 'w:orient="landscape"' in xml
 
 
-def test_column_display_weights_use_max_header_body() -> None:
+def test_column_display_weights_prefer_name_over_index() -> None:
     assert _text_display_width("单价 (元)") > _text_display_width("1")
     assert _text_display_width("设备名称") > _text_display_width("1")
 
@@ -1783,6 +1785,26 @@ def test_column_display_weights_use_max_header_body() -> None:
     assert sum(widths) == ATTACHMENT_TABLE_CONTENT_WIDTH_DXA
     assert widths[1] > widths[0]
     assert widths[2] > widths[0]
+
+
+def test_column_widths_floor_and_cap_outlier_long_cells() -> None:
+    long_remark = "详细说明" * 80
+    rows = [
+        ["序号", "设备名称", "数量", "单价", "备注"],
+        ["1", "阀门", "2", "100", long_remark],
+        ["2", "水泵", "1", "200", "短备注"],
+        *[[str(index), "短名", "1", "1", "短备注"] for index in range(3, 12)],
+    ]
+    widths = compute_attachment_column_widths(rows, 5)
+    floor = max(ATTACHMENT_COLUMN_MIN_DXA, ATTACHMENT_TABLE_CONTENT_WIDTH_DXA // (5 * 3))
+    max_width = int(ATTACHMENT_TABLE_CONTENT_WIDTH_DXA * ATTACHMENT_COLUMN_MAX_SHARE)
+
+    assert sum(widths) == ATTACHMENT_TABLE_CONTENT_WIDTH_DXA
+    assert widths[2] >= floor
+    assert widths[3] >= floor
+    assert widths[4] <= max_width
+    assert widths[1] > widths[0]
+    assert widths[4] > widths[2]
 
 
 def test_append_quote_attachment_xml_bulk_column_widths_follow_content(tmp_path: Path) -> None:
@@ -1810,7 +1832,8 @@ def test_append_quote_attachment_xml_bulk_column_widths_follow_content(tmp_path:
     assert grid_widths[1] > grid_widths[0]
     assert grid_widths[2] > grid_widths[0]
     assert grid_widths[4] > grid_widths[3]
-    assert grid_widths[5] >= grid_widths[4]
+    assert grid_widths[5] > grid_widths[3]
+    assert abs(grid_widths[5] - grid_widths[4]) <= 32
     assert len(set(grid_widths)) > 1
 
 
@@ -1878,7 +1901,11 @@ def test_append_quote_attachment_wide_table_spec_column_wider_than_quantity(tmp_
     assert 'w:orient="landscape"' in xml
     spec_index = header.index("下单规格说明")
     quantity_index = header.index("主数量")
-    assert grid_widths[spec_index] > grid_widths[quantity_index] * 5
+    floor = max(ATTACHMENT_COLUMN_MIN_DXA, ATTACHMENT_TABLE_CONTENT_WIDTH_DXA // (12 * 3))
+    max_width = int(ATTACHMENT_TABLE_CONTENT_WIDTH_DXA * ATTACHMENT_COLUMN_MAX_SHARE)
+    assert grid_widths[quantity_index] >= floor
+    assert grid_widths[spec_index] > grid_widths[quantity_index]
+    assert grid_widths[spec_index] <= max_width
 
 
 def test_append_quote_attachment_chunked_table_writes_all_rows(tmp_path: Path) -> None:
