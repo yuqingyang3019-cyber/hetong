@@ -1,4 +1,3 @@
-const statusEl = document.querySelector("#status");
 const generateButton = document.querySelector("#generateButton");
 const identifyFieldsButton = document.querySelector("#identifyFieldsButton");
 const backToExtraInfoButton = document.querySelector("#backToExtraInfoButton");
@@ -219,19 +218,8 @@ function configState(value) {
   return value ? "已配置" : "缺失";
 }
 
-function setStatus(message, tone = "info") {
-  if (!statusEl) return;
-  if (!message) {
-    statusEl.textContent = "";
-    statusEl.hidden = true;
-    statusEl.classList.remove("is-error", "is-success");
-    return;
-  }
-  statusEl.hidden = false;
-  statusEl.textContent = message;
-  statusEl.classList.toggle("is-error", tone === "error");
-  statusEl.classList.toggle("is-success", tone === "success");
-  if (!drawerOpen) statusEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+function setStatus(_message, _tone = "info") {
+  // 全局通知栏已移除；进度与错误改由任务卡片 / 详情抽屉提示。
 }
 
 function formatFileSize(size) {

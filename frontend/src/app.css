@@ -591,30 +591,6 @@ button:disabled {
   opacity: 0.78;
 }
 
-.status {
-  align-items: flex-start;
-  background: rgba(15, 108, 189, 0.08);
-  border: 1px solid rgba(15, 108, 189, 0.14);
-  border-radius: var(--radius-md);
-  color: #0f548c;
-  display: flex;
-  font-size: 0.9375rem;
-  margin: 0;
-  padding: 10px 12px;
-}
-
-.status.is-error {
-  background: rgba(220, 38, 38, 0.08);
-  border-color: rgba(220, 38, 38, 0.22);
-  color: #991b1b;
-}
-
-.status.is-success {
-  background: rgba(5, 150, 105, 0.09);
-  border-color: rgba(5, 150, 105, 0.22);
-  color: #047857;
-}
-
 .task-list {
   display: grid;
   gap: var(--space-3);
