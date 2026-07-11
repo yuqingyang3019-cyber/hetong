@@ -966,6 +966,10 @@ button:disabled {
   min-width: 216px;
 }
 
+.drawer-secondary-action {
+  min-width: 216px;
+}
+
 .drawer-close {
   min-height: var(--touch-min);
   padding: 7px 12px;

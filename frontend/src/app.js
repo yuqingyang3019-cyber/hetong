@@ -1,6 +1,7 @@
 const statusEl = document.querySelector("#status");
 const generateButton = document.querySelector("#generateButton");
 const identifyFieldsButton = document.querySelector("#identifyFieldsButton");
+const backToExtraInfoButton = document.querySelector("#backToExtraInfoButton");
 const quoteFile = document.querySelector("#quoteFile");
 const previewCard = document.querySelector("#previewCard");
 const fieldPreviewCard = document.querySelector("#fieldPreviewCard");
@@ -320,6 +321,9 @@ function updateActionAvailability() {
   if (identifyFieldsButton) {
     identifyFieldsButton.disabled = !canEditCurrent || !current?.upload || !quoteTextPreview.value.trim();
   }
+  if (backToExtraInfoButton) {
+    backToExtraInfoButton.disabled = !canEditCurrent || !current?.upload || current?.manualEntry;
+  }
   generateButton.disabled = !canEditCurrent || !current?.fieldPreview?.extractedData || (!current?.manualEntry && !current?.upload);
 
   if (taskQueueHint) {
@@ -451,7 +455,7 @@ function taskNextAction(task) {
   if (task.status === "needs_fields") {
     return task.manualEntry
       ? "下一步：在字段确认稿中手工补充合同字段，确认后生成合同。"
-      : "下一步：补齐红色字段，确认后生成合同。";
+      : "下一步：补齐红色字段后生成；缺信息可返回补充后重新识别，或直接在确认稿中填写。";
   }
   if (task.status === "generating") return "正在生成合同并上传钉盘。";
   if (task.status === "completed") {
@@ -2433,6 +2437,49 @@ function resetFieldPreviewUi() {
   }
 }
 
+function syncTextReviewActionButtons(task) {
+  const onTextReview = Boolean(task && !task.manualEntry && task.quoteText && task.status === "needs_text");
+  const onFieldReview = Boolean(task && !task.manualEntry && task.upload && task.status === "needs_fields");
+  if (identifyFieldsButton) {
+    identifyFieldsButton.hidden = !onTextReview;
+    identifyFieldsButton.textContent = "识别当前任务字段";
+  }
+  if (generateButton) {
+    generateButton.hidden = !(task && taskHasWorkbench(task) && task.status === "needs_fields");
+  }
+  if (backToExtraInfoButton) {
+    backToExtraInfoButton.hidden = !onFieldReview;
+  }
+}
+
+function returnToTextReview(task, options = {}) {
+  if (!task) return;
+  const {
+    logMessage = "请修改后重新识别字段。",
+    toastMessage = "请修改后重新识别字段。",
+    focusExtraInfo = false,
+  } = options;
+
+  task.fieldPreview = null;
+  const shouldTransition = task.status !== "failed" && task.status !== "needs_text";
+
+  if (shouldTransition) {
+    setTaskStatus(task, "needs_text", logMessage);
+  } else {
+    resetFieldPreviewUi();
+    renderTaskList();
+    setDrawerStep("text", task);
+    syncTextReviewActionButtons(task);
+    updateActionAvailability();
+  }
+
+  if (toastMessage) setStatus(toastMessage, "info");
+  if (focusExtraInfo && extraInfoText) {
+    previewCard?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.setTimeout(() => extraInfoText.focus({ preventScroll: true }), 220);
+  }
+}
+
 function clearActiveEditor() {
   if (processingCard) processingCard.hidden = true;
   if (taskLogCard) taskLogCard.hidden = true;
@@ -2449,6 +2496,7 @@ function clearActiveEditor() {
     identifyFieldsButton.hidden = true;
     identifyFieldsButton.textContent = "识别当前任务字段";
   }
+  if (backToExtraInfoButton) backToExtraInfoButton.hidden = true;
   if (generateButton) generateButton.hidden = true;
   syncDrawerVisibility(false);
 }
@@ -2817,7 +2865,9 @@ async function syncActiveTaskEditor() {
       : task.status === "needs_text"
         ? "AI 已整理出报价单文本，请先校对识别内容；有问题直接修改，再识别字段。"
         : task.status === "needs_fields"
-          ? "AI 已按模板匹配字段，红色内容代表还需要人工补充或确认，可直接修改。"
+          ? (task.manualEntry
+            ? "请按模板字段顺序手工补充内容后生成合同。"
+            : "AI 已按模板匹配字段，红色内容代表还需要人工补充；也可返回补充信息后重新识别。")
           : task.message || "请按当前阶段继续处理任务。";
     activeTaskHint.textContent = `${task.templateName}。${helperHint}`;
   }
@@ -2830,6 +2880,9 @@ async function syncActiveTaskEditor() {
   if (identifyFieldsButton) {
     identifyFieldsButton.hidden = task.manualEntry || !(task.quoteText && task.status === "needs_text");
     identifyFieldsButton.textContent = "识别当前任务字段";
+  }
+  if (backToExtraInfoButton) {
+    backToExtraInfoButton.hidden = task.manualEntry || !(task.upload && task.status === "needs_fields");
   }
 
   previewCard.hidden = task.manualEntry || !task.quoteText;
@@ -2984,26 +3037,37 @@ quoteTextPreview.addEventListener("input", () => {
   const task = activeTask();
   if (!task || taskIsBusy(task)) return;
   task.quoteText = quoteTextPreview.value;
-  task.fieldPreview = null;
-  if (task.status !== "failed") task.status = "needs_text";
-  renderTaskList();
-  resetFieldPreviewUi();
-  setDrawerStep("text");
-  setStatus("解析内容已修改，请重新识别合同字段。");
-  updateActionAvailability();
+  returnToTextReview(task, {
+    logMessage: "解析内容已修改，请重新识别合同字段。",
+    toastMessage: "解析内容已修改，请重新识别合同字段。",
+  });
 });
 
 extraInfoText?.addEventListener("input", () => {
   const task = activeTask();
   if (!task || taskIsBusy(task)) return;
   task.extraInfo = extraInfoText.value;
-  task.fieldPreview = null;
-  if (task.status !== "failed") task.status = "needs_text";
-  renderTaskList();
-  resetFieldPreviewUi();
-  setDrawerStep("text");
-  setStatus("额外信息已修改，请重新识别合同字段。");
-  updateActionAvailability();
+  returnToTextReview(task, {
+    logMessage: "额外信息已修改，请重新识别合同字段。",
+    toastMessage: "额外信息已修改，请重新识别合同字段。",
+  });
+});
+
+backToExtraInfoButton?.addEventListener("click", () => {
+  const task = activeTask();
+  if (!task) {
+    setStatus("请先选择任务。", "error");
+    return;
+  }
+  if (task.manualEntry || !task.upload) {
+    setStatus("当前任务无需返回补充信息。", "error");
+    return;
+  }
+  returnToTextReview(task, {
+    logMessage: "已返回补充信息，请修改后重新识别字段。",
+    toastMessage: "已返回补充信息，请修改后重新识别字段。",
+    focusExtraInfo: true,
+  });
 });
 
 identifyFieldsButton?.addEventListener("click", async () => {
