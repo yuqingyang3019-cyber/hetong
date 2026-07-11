@@ -34,6 +34,19 @@ def _rows_to_tsv(rows: list[list[str]]) -> str:
     return "\n".join("\t".join(cell.replace("\n", " / ") for cell in row) for row in rows)
 
 
+def _openpyxl_sheet_is_visible(sheet: Any) -> bool:
+    state = str(getattr(sheet, "sheet_state", "visible") or "visible").strip().lower()
+    return state == "visible"
+
+
+def _xlrd_sheet_is_visible(sheet: Any) -> bool:
+    # xlrd: 0=visible, 1=hidden, 2=very hidden
+    try:
+        return int(getattr(sheet, "visibility", 0) or 0) == 0
+    except (TypeError, ValueError):
+        return True
+
+
 def _read_excel_sheets(path: Path) -> list[dict[str, Any]]:
     suffix = path.suffix.lower()
     sheets: list[dict[str, Any]] = []
@@ -43,6 +56,8 @@ def _read_excel_sheets(path: Path) -> list[dict[str, Any]]:
 
             workbook = load_workbook(path, data_only=True, read_only=True)
             for sheet in workbook.worksheets:
+                if not _openpyxl_sheet_is_visible(sheet):
+                    continue
                 rows = [[_normalize_cell(cell) for cell in row] for row in sheet.iter_rows(values_only=True)]
                 trimmed_rows = _trim_empty_edges(rows)
                 sheets.append({"name": sheet.title, "rows": trimmed_rows, "rowCount": len(trimmed_rows)})
@@ -51,6 +66,8 @@ def _read_excel_sheets(path: Path) -> list[dict[str, Any]]:
 
             workbook = xlrd.open_workbook(str(path))
             for sheet in workbook.sheets():
+                if not _xlrd_sheet_is_visible(sheet):
+                    continue
                 rows = [[_normalize_cell(sheet.cell_value(r, c)) for c in range(sheet.ncols)] for r in range(sheet.nrows)]
                 trimmed_rows = _trim_empty_edges(rows)
                 sheets.append({"name": sheet.name, "rows": trimmed_rows, "rowCount": len(trimmed_rows)})

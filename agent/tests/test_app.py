@@ -331,6 +331,36 @@ def test_extract_excel_payload_marks_multi_sheet_attachment_mode(tmp_path: Path)
     assert "multiple_sheets" in payload["attachmentMode"]["reasons"]
 
 
+def test_extract_excel_payload_skips_hidden_and_very_hidden_sheets(tmp_path: Path) -> None:
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    visible = workbook.active
+    visible.title = "报价"
+    visible.append(["品名", "数量"])
+    visible.append(["阀门", 2])
+
+    hidden = workbook.create_sheet("billDataDto")
+    hidden.append(['{"billnum":"ipricecard","name":"报价单导出模板"}'])
+    hidden.sheet_state = "hidden"
+
+    very_hidden = workbook.create_sheet("meta")
+    very_hidden.append(["should-not-appear"])
+    very_hidden.sheet_state = "veryHidden"
+
+    path = tmp_path / "yonyou-export.xlsx"
+    workbook.save(path)
+
+    payload = extract_excel_payload(path)
+
+    assert [sheet["name"] for sheet in payload["sheets"]] == ["报价"]
+    assert "billDataDto" not in payload["quoteText"]
+    assert "ipricecard" not in payload["quoteText"]
+    assert "should-not-appear" not in payload["quoteText"]
+    assert payload["attachmentMode"]["sheetCount"] == 1
+    assert payload["attachmentMode"]["enabled"] is False
+
+
 def test_extract_pdf_text_outputs_tsv_without_html() -> None:
     class FakeTable:
         def extract(self) -> list[list[str]]:
