@@ -6,6 +6,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
 COPY frontend/ ./
+COPY agent/contract/templates/zhanweifu/ /build/agent/contract/templates/zhanweifu/
 RUN npm run build
 
 
