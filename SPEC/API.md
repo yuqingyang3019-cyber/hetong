@@ -96,7 +96,7 @@ Content-Type: application/json
 
 ### 4.2 下载钉盘合同
 
-合同生成完成后，FC 后端返回钉盘文件信息。前端调用下载接口，FC 后端使用钉盘官方新版 SDK 获取文件下载信息并代理返回合同文件流。
+合同生成完成后，ECS 后端返回钉盘文件信息。前端调用下载接口，ECS 后端使用钉盘官方新版 SDK 获取文件下载信息并代理返回合同文件流。
 
 输入：
 
@@ -105,7 +105,7 @@ Content-Type: application/json
 | `spaceId` | `POST /api/contracts/generate` 响应 | 钉盘空间 ID |
 | `fileId` | `POST /api/contracts/generate` 响应 | 钉盘文件 ID |
 | `fileName` | `POST /api/contracts/generate` 响应 | 合同文件名 |
-| `downloadUrl` | 前端内部接口 | FC 下载接口路径 |
+| `downloadUrl` | 前端内部接口 | ECS 下载接口路径 |
 
 前端下载完成后应提示用户文件会保存到浏览器或钉钉客户端默认下载目录；如系统弹窗提示，可选择目标保存位置。
 
@@ -117,7 +117,7 @@ Content-Type: application/json
 GET /bff/auth/config
 ```
 
-用途：返回前端公开配置。纯 FC 同域部署时 `agentBaseUrl` 可为空字符串，前端使用相对路径访问业务接口。
+用途：返回前端公开配置。ECS 同域部署时 `agentBaseUrl` 可为空字符串，前端使用相对路径访问业务接口。
 
 响应：
 
@@ -161,7 +161,7 @@ GET /bff/auth/me
 POST /bff/auth/dingtalk-login
 ```
 
-用途：FC 后端接收前端通过钉钉客户端 JSAPI SDK 获取的免登 `code`，服务端使用钉钉官方新版服务端 SDK 换取用户身份，写入 H5 会话，并返回短期业务访问凭证。
+用途：ECS 后端接收前端通过钉钉客户端 JSAPI SDK 获取的免登 `code`，服务端使用钉钉官方新版服务端 SDK 换取用户身份，写入 H5 会话，并返回短期业务访问凭证。
 
 请求：
 
@@ -346,7 +346,7 @@ POST /api/contracts/generate
 Authorization: Bearer <agentAccessToken>
 ```
 
-用途：前端提交用户确认后的字段数据，FC 后端同步生成合同、使用钉盘官方新版 SDK 上传钉盘，并一次性返回钉盘文件信息。
+用途：前端提交用户确认后的字段数据，ECS 后端同步生成合同、使用钉盘官方新版 SDK 上传钉盘，并一次性返回钉盘文件信息。
 
 请求：
 
@@ -396,7 +396,7 @@ Authorization: Bearer <agentAccessToken>
 - 无 `uploadId` 时，`extractedData` 必填，且不得依赖服务端重新解析或 LLM 识别。
 - 有 `uploadId` 时，`extractedData` 必须来自用户确认后的字段预览结果。
 - 合同文件名使用 `合同编号_供应商名称_项目名称.docx`；合同编号为空时用生成时间兜底，供应商或项目为空时用 `未知乙方`、`未知项目`。
-- FC 后端上传钉盘后返回必要文件元数据和下载提示信息。
+- ECS 后端上传钉盘后返回必要文件元数据和下载提示信息。
 - 前端通过 `POST /api/dingdrive/download` 带 Bearer Token 下载合同文件，不直接暴露钉盘下载签名 URL 和 headers。
 
 ### 6.5 下载钉盘合同
@@ -416,7 +416,7 @@ Authorization: Bearer <agentAccessToken>
 }
 ```
 
-用途：FC 后端调用钉盘 `GetFileDownloadInfo` 获取下载 URL 和 headers，并代理返回合同文件流。前端收到文件流后触发浏览器或钉钉客户端下载，并提示用户保存路径。
+用途：ECS 后端调用钉盘 `GetFileDownloadInfo` 获取下载 URL 和 headers，并代理返回合同文件流。前端收到文件流后触发浏览器或钉钉客户端下载，并提示用户保存路径。
 
 字段识别预览响应可附带用友供应商抬头回填结果：
 
@@ -434,12 +434,12 @@ Authorization: Bearer <agentAccessToken>
 
 规则：
 
-- FC 后端根据字段识别结果中的 `supplierName` 实时调用用友 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体使用 `condition.simpleVOs = [{ field: "name", op: "eq", value1: supplierName }]`，并通过 `partParam.vendorbanks.data = "*,openaccountbank.name"` 请求银行子表，通过 `partParam.vendorcontactss.data = "*"` 请求联系人子表。
+- ECS 后端根据字段识别结果中的 `supplierName` 实时调用用友 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体使用 `condition.simpleVOs = [{ field: "name", op: "eq", value1: supplierName }]`，并通过 `partParam.vendorbanks.data = "*,openaccountbank.name"` 请求银行子表，通过 `partParam.vendorcontactss.data = "*"` 请求联系人子表。
 - 仅命中唯一可用供应商时自动覆盖乙方抬头字段；未命中、多条命中或接口失败时返回 `supplierPatch.matched=false` 和稳定 `reason`，不阻塞字段确认。
 - 用友返回的乙方抬头信息作为权威数据，可覆盖 `supplierName`、`supplierTaxNo`、`supplierAddress`、`supplierPhone`、`supplierBank`、`supplierAccount`、`supplierRepresentativeName`、`supplierRepresentativePhone`、`supplierRepresentativeEmail` 等字段。
 - 银行账户优先选择 `defaultbank=true` 且 `stopstatus=false` 的记录，否则选择第一条未停用账户。
 - 若用友缺少税号、地址、电话、开户行或银行账号等合同需要的抬头字段，`missingYonbipFields` 应列出缺失字段，前端提示用户到用友系统补充供应商抬头信息或先手动填写。
-- FC 后端不生成、不下载、不上传 `supplier-cache.xlsx`，不在本地或钉盘长期保存供应商档案。
+- ECS 后端不生成、不下载、不上传 `supplier-cache.xlsx`，不在本地或钉盘长期保存供应商档案。
 
 ### 6.5 用友供应商抬头查询
 
@@ -484,7 +484,7 @@ Authorization: Bearer <agentAccessToken>
 
 - 前端只使用钉钉客户端 JSAPI SDK 获取免登授权码。
 - BFF 必须使用钉钉官方新版服务端 SDK 完成免登 code 换取、用户身份查询和必要的通讯录信息查询。
-- FC 后端必须使用钉盘官方新版 SDK 上传合同、获取钉盘文件元数据和下载信息。
+- ECS 后端必须使用钉盘官方新版 SDK 上传合同、获取钉盘文件元数据和下载信息。
 - 新增实现不得继续引入旧版 OAPI/Storage API 手写 HTTP 调用；确需保留旧实现时，只能作为迁移期兼容路径，并必须在当前实现差距中标注。
 - SDK 抛出的异常必须转换为本文档定义的稳定错误码，不允许将 SDK 原始错误直接透传给前端。
 
@@ -495,15 +495,15 @@ Authorization: Bearer <agentAccessToken>
 | 接口 | 原因 |
 | --- | --- |
 | `GET /api/contracts/{contractId}/download` | 合同成功上传钉盘后通过钉盘文件信息下载，不暴露本地合同下载 |
-| BFF 代理 `/api` | 纯 FC 同域部署，前端带短期凭证直接调用同域业务接口 |
+| BFF 代理 `/api` | ECS 同域部署，前端带短期凭证直接调用同域业务接口 |
 | `POST /api/suppliers/sync` | 供应商抬头改为字段识别阶段实时只读查询用友，不再维护 `supplier-cache.xlsx` |
 
 ## 9. 当前实现差距
 
 | 项目 | 目标接口设计 | 当前实现 | 待办 |
 | --- | --- | --- | --- |
-| 鉴权职责 | FC 后端使用钉钉官方新版服务端 SDK 完成免登并签发短期业务凭证 | 已迁移为同一 FC 内的 `/bff/auth/*` + Bearer 鉴权 | 后续在真实钉钉环境验证新版 SDK 免登字段稳定性 |
-| 业务请求路径 | 前端同域调用 FC 业务接口 | 已改为相对路径 + `Authorization: Bearer` | 部署时确认自定义域名指向单个 FC 服务 |
-| 合同交付 | FC 后端使用钉盘官方新版 SDK 返回钉盘文件信息，前端通过 FC 下载合同 | 已返回 `dingDrive` 和 `download` 结构，并通过 `/api/dingdrive/download` 下载 | 继续确认钉盘下载信息接口在真实环境的权限配置 |
-| 图片 OCR | FC 后端解析图片报价单 | 已接入图片解析入口和 OCR SDK 调用封装 | 需在真实 OCR 环境验证识别质量和错误码 |
+| 鉴权职责 | ECS 后端使用钉钉官方新版服务端 SDK 完成免登并签发短期业务凭证 | 同一 ECS 服务内的 `/bff/auth/*` + Bearer 鉴权 | 在真实钉钉环境验证新版 SDK 免登字段稳定性 |
+| 业务请求路径 | 前端同域调用 ECS 业务接口 | 相对路径 + `Authorization: Bearer` | 确认 `contract.water-healer.com` 指向 edge-caddy |
+| 合同交付 | ECS 后端使用钉盘官方新版 SDK 返回钉盘文件信息，前端通过 ECS 下载合同 | 返回 `dingDrive` 和 `download` 结构，并通过 `/api/dingdrive/download` 下载 | 确认钉盘下载信息接口在真实环境的权限配置 |
+| 图片 OCR | ECS 后端解析图片报价单 | 已接入图片解析入口和 OCR SDK 调用封装 | 在真实 OCR 环境验证识别质量和错误码 |
 | 用友抬头回填 | 字段识别后按乙方名称实时查询用友供应商档案，并以用友返回信息覆盖乙方抬头字段 | 已替换供应商缓存同步链路 | 需在真实 YonBIP 环境验证名称精确查询、银行子表和缺失字段提示 |

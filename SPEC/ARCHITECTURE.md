@@ -74,12 +74,12 @@ flowchart LR
 
 - 调用钉钉客户端 JSAPI SDK 获取免登授权码。
 - 展示合同模板选择和报价单上传入口。
-- 使用 FC 后端签发的短期访问凭证提交报价单和生成请求。
+- 使用 ECS 后端签发的短期访问凭证提交报价单和生成请求。
 - 展示报价单解析文本，允许用户编辑和补充额外信息。
 - 展示字段识别结果，标记已识别字段和待填写字段。
 - 维护当前页面内任务列表，限制未完成任务数量。
 - 通过同步 HTTP 生成合同并展示生成结果。
-- 通过 FC 下载接口下载钉盘合同文件，并提示用户保存位置。
+- 通过 ECS 下载接口下载钉盘合同文件，并提示用户保存位置。
 - 展示上传、解析、字段识别、合同生成、钉盘上传失败原因。
 
 前端不负责：
@@ -101,7 +101,7 @@ flowchart LR
 - 服务端调用钉钉官方新版服务端 SDK 换取用户身份。
 - 维护前端域名下的 H5 会话。
 - 为前端签发短期业务凭证。
-- 返回凭证过期时间；纯 FC 同域部署时业务入口可使用相对路径。
+- 返回凭证过期时间；ECS 同域部署时业务入口可使用相对路径。
 
 BFF 鉴权层不负责：
 
@@ -113,7 +113,7 @@ BFF 鉴权层不负责：
 
 ### 5.3 业务 API 与编排
 
-业务 API 由 `agent/main.py` 承担。前端通过同一 FC 服务签发的短期访问凭证调用业务接口，业务接口不依赖 H5 Cookie。
+业务 API 由 `agent/main.py` 承担。前端通过同一 ECS 服务签发的短期访问凭证调用业务接口，业务接口不依赖 H5 Cookie。
 
 职责包括：
 
@@ -152,7 +152,7 @@ BFF 鉴权层不负责：
 | 钉钉免登 | 鉴权与静态资源层 | 使用钉钉官方新版服务端 SDK 通过免登 code 换取 userid，并获取用户详情 |
 | 业务访问凭证 | 鉴权与静态资源层、业务 API | 后端签发短期凭证，业务 API 校验后处理业务请求 |
 | 钉盘上传 | `agent/dingdrive.py` | 使用钉盘官方新版 SDK 上传合同文件到指定钉盘空间和目录 |
-| 钉盘下载 | `agent/dingdrive.py`、前端 H5 | FC 后端获取钉盘下载信息并代理文件流，前端触发浏览器或钉钉客户端下载 |
+| 钉盘下载 | `agent/dingdrive.py`、前端 H5 | ECS 后端获取钉盘下载信息并代理文件流，前端触发浏览器或钉钉客户端下载 |
 | 用友抬头回填 | `agent/yonyou_vendor.py`、`agent/main.py` | 使用 YonBIP 开放 API 按乙方名称查询供应商主档和银行子表 |
 
 ## 6. 核心数据流
@@ -162,8 +162,8 @@ BFF 鉴权层不负责：
 ```mermaid
 flowchart TD
   openApp["打开钉钉 H5"] --> auth["JSAPI SDK获取免登码"]
-  auth --> fcAuth["FC换取用户身份\n签发业务凭证"]
-  fcAuth --> upload["调用FC上传报价单"]
+  auth --> ecsAuth["ECS换取用户身份\n签发业务凭证"]
+  ecsAuth --> upload["调用ECS上传报价单"]
   upload --> parse["解析报价单\nExcel PDF Image OCR"]
   parse --> reviewText["用户确认解析文本"]
   reviewText --> previewFields["字段识别预览"]
@@ -173,21 +173,21 @@ flowchart TD
   render --> uploadDrive["上传钉盘"]
   uploadDrive --> returnFile["返回钉盘文件信息"]
   returnFile --> cleanup["清理本地临时文件"]
-  cleanup --> download["FC代理下载合同"]
+  cleanup --> download["ECS代理下载合同"]
 ```
 
 ### 6.2 上传与解析流程
 
 1. 前端读取用户选择的报价单文件。
-2. 前端从 FC 后端获取短期业务访问凭证。
+2. 前端从 ECS 后端获取短期业务访问凭证。
 3. 前端调用 `POST /api/uploads` 上传文件。
-4. FC 后端校验访问凭证，保存上传文件和上传元数据。
+4. ECS 后端校验访问凭证，保存上传文件和上传元数据。
 5. 前端调用 `POST /api/uploads/{uploadId}/quote-text` 发起解析。
-6. FC 后端根据文件类型选择解析方式：
+6. ECS 后端根据文件类型选择解析方式：
    - Excel：读取工作表和单元格内容。
    - PDF：抽取页面文本和表格。
    - 图片：调用阿里云 OCR 抽取文本和表格。
-7. FC 后端返回可编辑 `quoteText`。
+7. ECS 后端返回可编辑 `quoteText`。
 8. 前端展示解析文本，用户可编辑和补充额外信息。
 
 ### 6.3 无报价单手工填写流程
@@ -195,25 +195,25 @@ flowchart TD
 1. 用户选择合同模板后，可不传报价单直接创建任务。
 2. 前端按模板字段契约初始化空白字段确认稿，并预置一行空明细（如模板含明细表）。
 3. 用户在字段确认稿中手工补充全部字段后，直接调用 `POST /api/contracts/generate`，请求体省略 `uploadId`，仅提交 `templateType` 与用户确认后的 `extractedData`。
-4. FC 后端使用确认字段渲染合同并上传钉盘，不执行报价单解析、LLM 识别或 Excel 附件追加。
+4. ECS 后端使用确认字段渲染合同并上传钉盘，不执行报价单解析、LLM 识别或 Excel 附件追加。
 
 ### 6.4 字段识别与合同生成流程
 
 1. 前端调用 `POST /api/uploads/{uploadId}/field-preview`，提交用户确认后的 `quoteText`、`extraInfo` 和 `templateType`。
-2. FC 后端加载模板字段契约。
-3. FC 后端调用 DashScope 识别结构化字段。
-4. FC 后端返回已识别字段、缺失字段和表格行数。
+2. ECS 后端加载模板字段契约。
+3. ECS 后端调用 DashScope 识别结构化字段。
+4. ECS 后端返回已识别字段、缺失字段和表格行数。
 5. 前端展示字段预览，待填写字段只作为确认界面提示。
-6. 用户确认后调用 `POST /api/contracts/generate`，FC 后端使用用户确认后的字段数据渲染合同；仍缺失的字段在生成的 Word 合同中渲染为空白。
-7. FC 后端上传合同到钉盘。
-8. FC 后端一次性返回钉盘文件信息和下载提示。
+6. 用户确认后调用 `POST /api/contracts/generate`，ECS 后端使用用户确认后的字段数据渲染合同；仍缺失的字段在生成的 Word 合同中渲染为空白。
+7. ECS 后端上传合同到钉盘。
+8. ECS 后端一次性返回钉盘文件信息和下载提示。
 
 ### 6.5 钉盘下载流程
 
 1. 前端从 `POST /api/contracts/generate` 响应获得钉盘 `spaceId`、`fileId` 和 `fileName`。
 2. 用户点击下载后，前端携带业务 Bearer Token 调用 `POST /api/dingdrive/download`。
-3. FC 后端调用钉盘 `GetFileDownloadInfo` 获取下载 URL 和 headers。
-4. FC 后端代理下载文件流并返回给前端。
+3. ECS 后端调用钉盘 `GetFileDownloadInfo` 获取下载 URL 和 headers。
+4. ECS 后端代理下载文件流并返回给前端。
 5. 前端触发浏览器或钉钉客户端下载，并提示用户文件会保存到默认下载目录；如系统弹窗提示，可选择目标保存位置。
 
 ### 6.6 用友供应商抬头实时回填流程
@@ -229,41 +229,41 @@ flowchart TD
   overwriteTitle --> result["返回supplierPatch和字段预览"]
 ```
 
-1. 字段识别完成后，FC 后端读取 `extractedData.supplierName`。
-2. FC 后端使用 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
-3. FC 后端调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含：
+1. 字段识别完成后，ECS 后端读取 `extractedData.supplierName`。
+2. ECS 后端使用 `YONBIP_APP_KEY`、`YONBIP_APP_SECRET` 获取用友访问令牌。
+3. ECS 后端调用 `POST /yonbip/digitalModel/vendor/queryByPage`，请求体包含：
    - 显式供应商主档字段：`id`、`code`、`name`、`creditcode`、`address`、`contactphone`、`vendorphone`、`vendorfax`、`vendoraddress`、`orgId`、`org`、`accessstatus`、`freezestatus`、`pubts`
    - `condition.simpleVOs: [{ field: "name", op: "eq", value1: supplierName }]`
    - `queryOrders: [{ field: "code", order: "asc" }]`
    - `partParam.vendorbanks.data: "*,openaccountbank.name"`
    - `partParam.vendorcontactss.data: "*"`
-4. FC 后端只接受唯一可用供应商；未命中、多条命中或接口失败时返回提示，不阻塞字段确认和合同生成。
-5. FC 后端从 `vendorbanks` 中选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；若不存在默认账户，则选择第一条未停用账户。
-6. FC 后端从 `vendorcontactss` 中选择 `defaultcontact=true` 的联系人；若分页响应没有联系人子表，则按唯一供应商补查详情接口。
-7. FC 后端以用友返回的乙方抬头信息为准，覆盖乙方名称、税号、地址、电话、开户行、银行账号、乙方代表姓名、电话、邮箱等字段。
+4. ECS 后端只接受唯一可用供应商；未命中、多条命中或接口失败时返回提示，不阻塞字段确认和合同生成。
+5. ECS 后端从 `vendorbanks` 中选择 `defaultbank=true` 且 `stopstatus=false` 的银行账户；若不存在默认账户，则选择第一条未停用账户。
+6. ECS 后端从 `vendorcontactss` 中选择 `defaultcontact=true` 的联系人；若分页响应没有联系人子表，则按唯一供应商补查详情接口。
+7. ECS 后端以用友返回的乙方抬头信息为准，覆盖乙方名称、税号、地址、电话、开户行、银行账号、乙方代表姓名、电话、邮箱等字段。
 8. 若用友未返回合同需要的抬头字段，`supplierPatch.missingYonbipFields` 返回缺失项，前端提示用户到用友系统补充供应商档案。
-9. FC 后端不生成、不下载、不上传 `supplier-cache.xlsx`，也不在合同生成后写回供应商档案。
+9. ECS 后端不生成、不下载、不上传 `supplier-cache.xlsx`，也不在合同生成后写回供应商档案。
 
 ## 7. 鉴权设计
 
 ```mermaid
 sequenceDiagram
   participant Fe as H5前端
-  participant Fc as FC后端
+  participant Ecs as ECS后端
   participant Dt as 钉钉新版服务端SDK
 
-  Fe->>Fc: GET /bff/auth/config
-  Fc-->>Fe: 返回corpId clientId
+  Fe->>Ecs: GET /bff/auth/config
+  Ecs-->>Fe: 返回corpId clientId
   Fe->>Fe: 调用钉钉JSAPI SDK获取免登code
-  Fe->>Fc: POST /bff/auth/dingtalk-login
-  Fc->>Dt: 换取userid和用户详情
-  Dt-->>Fc: 用户信息
-  Fc-->>Fe: Set-Cookie h5_session + agentAccessToken
-  Fe->>Fc: POST /api/uploads Authorization Bearer
-  Fc-->>Fe: 业务响应
+  Fe->>Ecs: POST /bff/auth/dingtalk-login
+  Ecs->>Dt: 换取userid和用户详情
+  Dt-->>Ecs: 用户信息
+  Ecs-->>Fe: Set-Cookie h5_session + agentAccessToken
+  Fe->>Ecs: POST /api/uploads Authorization Bearer
+  Ecs-->>Fe: 业务响应
 ```
 
-后续业务请求必须携带 FC 后端签发的短期访问凭证。业务 API 校验凭证后获得当前用户上下文，未通过鉴权的请求不得进入上传、解析、字段识别或合同生成流程。
+后续业务请求必须携带 ECS 后端签发的短期访问凭证。业务 API 校验凭证后获得当前用户上下文，未通过鉴权的请求不得进入上传、解析、字段识别或合同生成流程。
 
 ## 8. 接口边界
 
@@ -296,7 +296,7 @@ sequenceDiagram
 | 合同模板 | `agent/contract/templates/zhanweifu` | 随代码发布 |
 | 模板字段契约 | `*.placeholders.json` | 随模板维护 |
 
-临时文件清理由 FC 后端在合同生成成功后执行。若合同生成或钉盘上传失败，应优先保留必要上下文，便于用户重试和研发排查。
+临时文件清理由 ECS 后端在合同生成成功后执行。若合同生成或钉盘上传失败，应优先保留必要上下文，便于用户重试和研发排查。
 
 ## 11. 配置与密钥
 
@@ -306,20 +306,20 @@ sequenceDiagram
 | --- | --- | --- |
 | `DINGTALK_CLIENT_ID` | 前端钉钉 JSAPI 免登 | 前端可见 |
 | `DINGTALK_CORP_ID` | 钉钉企业 ID | 前端可见 |
-| `DINGTALK_CLIENT_SECRET` | 钉钉服务端接口密钥 | 仅 FC 后端 |
-| `APP_SESSION_SECRET` | H5 会话和短期业务凭证签名 | 仅 FC 后端 |
-| `DASHSCOPE_API_KEY` | LLM 字段识别 | 仅 FC 后端 |
-| `DASHSCOPE_MODEL` | LLM 模型 | 仅 FC 后端 |
-| `ALIYUN_ACCESS_KEY_ID` | 阿里云 OCR 访问凭证 | 仅 FC 后端 |
-| `ALIYUN_ACCESS_KEY_SECRET` | 阿里云 OCR 访问凭证 | 仅 FC 后端 |
-| `ALIYUN_OCR_ENDPOINT` | OCR 服务端点 | 仅 FC 后端 |
-| `DINGTALK_DRIVE_SPACE_ID` | 钉盘空间 | 仅 FC 后端 |
-| `DINGTALK_DRIVE_PARENT_ID` | 钉盘目标目录 | 仅 FC 后端 |
-| `DINGTALK_DRIVE_CONFLICT_POLICY` | 钉盘同名冲突策略 | 仅 FC 后端 |
-| `YONBIP_APP_KEY` | 用友 YonBIP 自建应用 Key | 仅 FC 后端 |
-| `YONBIP_APP_SECRET` | 用友 YonBIP 自建应用 Secret | 仅 FC 后端 |
-| `YONBIP_GATEWAY_URL` | 用友业务接口域名，默认 `https://c3.yonyoucloud.com/iuap-api-gateway`，仅需跨数据中心时覆盖 | 仅 FC 后端 |
-| `YONBIP_TOKEN_URL` | 用友 token 接口域名，默认与 `YONBIP_GATEWAY_URL` 相同 | 仅 FC 后端 |
+| `DINGTALK_CLIENT_SECRET` | 钉钉服务端接口密钥 | 仅 ECS 后端 |
+| `APP_SESSION_SECRET` | H5 会话和短期业务凭证签名 | 仅 ECS 后端 |
+| `DASHSCOPE_API_KEY` | LLM 字段识别 | 仅 ECS 后端 |
+| `DASHSCOPE_MODEL` | LLM 模型 | 仅 ECS 后端 |
+| `ALIYUN_ACCESS_KEY_ID` | 阿里云 OCR 访问凭证 | 仅 ECS 后端 |
+| `ALIYUN_ACCESS_KEY_SECRET` | 阿里云 OCR 访问凭证 | 仅 ECS 后端 |
+| `ALIYUN_OCR_ENDPOINT` | OCR 服务端点 | 仅 ECS 后端 |
+| `DINGTALK_DRIVE_SPACE_ID` | 钉盘空间 | 仅 ECS 后端 |
+| `DINGTALK_DRIVE_PARENT_ID` | 钉盘目标目录 | 仅 ECS 后端 |
+| `DINGTALK_DRIVE_CONFLICT_POLICY` | 钉盘同名冲突策略 | 仅 ECS 后端 |
+| `YONBIP_APP_KEY` | 用友 YonBIP 自建应用 Key | 仅 ECS 后端 |
+| `YONBIP_APP_SECRET` | 用友 YonBIP 自建应用 Secret | 仅 ECS 后端 |
+| `YONBIP_GATEWAY_URL` | 用友业务接口域名，默认 `https://c3.yonyoucloud.com/iuap-api-gateway`，仅需跨数据中心时覆盖 | 仅 ECS 后端 |
+| `YONBIP_TOKEN_URL` | 用友 token 接口域名，默认与 `YONBIP_GATEWAY_URL` 相同 | 仅 ECS 后端 |
 
 前端页面只允许拿到完成免登所需的公开配置，不允许暴露服务端密钥。
 
@@ -346,7 +346,7 @@ sequenceDiagram
 
 ## 13. 可观测性
 
-V1 主要依赖 FC 日志和前端任务日志排障。
+V1 主要依赖 ECS 容器日志和前端任务日志排障。
 
 - ECS 容器日志应覆盖鉴权、上传、解析、字段识别、用友抬头查询、合同生成、钉盘上传和清理阶段。
 - 前端在同步请求开始、成功和失败时记录任务日志。
