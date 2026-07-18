@@ -11,7 +11,7 @@ services:
     volumes:
       - ./storage:/app/agent/storage
     networks:
-      yongyou_bi:
+      water_healer_edge:
         aliases:
           - hetong-agui-app
     read_only: true
@@ -41,6 +41,6 @@ services:
         max-file: "3"
 
 networks:
-  yongyou_bi:
+  water_healer_edge:
     external: true
-    name: yongyou-bi_default
+    name: water-healer-edge

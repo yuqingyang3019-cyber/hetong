@@ -28,14 +28,16 @@ PRD 负责描述用户需求、功能范围和验收口径；架构文档负责�
 
 ## 4. 运行时拓扑
 
-当前部署为一个由 Docker 运行在 ECS 上的 FastAPI 服务，职责仍按客户端、鉴权和业务 API 分层：
+当前部署由独立 Caddy 网关和运行在 ECS Docker 中的 FastAPI 服务组成，职责仍按客户端、鉴权和业务 API 分层：
 
+- `edge-caddy`：独立网关容器，占用公网 80/443，按域名将请求转发给加入 `water-healer-edge` Docker 网络的应用。
 - `app`：ECS Docker 容器，启动 Uvicorn 运行 FastAPI，提供 H5 静态资源、`/config.js`、`/bff/auth/*` 鉴权接口和业务 API。
 
 ```mermaid
 flowchart LR
   user["钉钉 H5 用户"] --> jsapi["钉钉 JSAPI"]
-  user --> app["ECS FastAPI\nagent/main.py"]
+  user --> gateway["edge-caddy\ncontract.water-healer.com"]
+  gateway --> app["ECS FastAPI\nagent/main.py"]
   app -->|"鉴权协同\n签发短期凭证"| user
   app --> dingtalk["钉钉新版服务端 SDK"]
   user -->|"业务请求\nBearer Token"| app
@@ -51,6 +53,7 @@ flowchart LR
 
 | 资源 | 配置来源 | 运行内容 | 说明 |
 | --- | --- | --- | --- |
+| `edge-caddy` | ECS `/opt/edge-proxy` | TLS 终止与域名路由 | 独立于业务应用，站点片段位于 `/opt/edge-proxy/sites` |
 | `app` | [`docker-compose.ecs.yml`](../docker-compose.ecs.yml) | Uvicorn 启动 FastAPI，托管 `agent/static` 前端资源和业务 API | 单副本，CPU 0.75、内存 512MB、端口 9000 |
 
 ### 4.2 逻辑分层
