@@ -1,0 +1,46 @@
+services:
+  app:
+    image: "${HETONG_IMAGE:?set HETONG_IMAGE to the deployed image tag}"
+    container_name: hetong-agui-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      PORT: "9000"
+      H5_STATIC_DIR: /app/agent/static
+    volumes:
+      - ./storage:/app/agent/storage
+    networks:
+      yongyou_bi:
+        aliases:
+          - hetong-agui-app
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 150
+    cpus: 0.75
+    mem_limit: 512m
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:9000/health').status == 200",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  yongyou_bi:
+    external: true
+    name: yongyou-bi_default

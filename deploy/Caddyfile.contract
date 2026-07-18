@@ -1,0 +1,4 @@
+contract.water-healer.com {
+    encode zstd gzip
+    reverse_proxy hetong-agui-app:9000
+}

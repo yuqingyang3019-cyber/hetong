@@ -8,7 +8,7 @@
 | 文档版本 | V1.0 |
 | 创建日期 | 2026-05-23 |
 | 关联文档 | [PRD.md](./PRD.md)、[ARCHITECTURE.md](./ARCHITECTURE.md) |
-| 适用范围 | 前端 H5、FC 鉴权与业务接口、钉盘下载交付 |
+| 适用范围 | 前端 H5、ECS 鉴权与业务接口、钉盘下载交付 |
 
 ## 2. 接口分层
 
@@ -17,16 +17,16 @@ V1 接口按职责拆分为三类：
 | 类型 | 域名 | 调用方 | 职责 |
 | --- | --- | --- | --- |
 | 钉钉客户端 JSAPI SDK | 钉钉客户端内置 | 前端 H5 | 获取免登授权码 |
-| FC 鉴权接口 | H5 同域 | 前端 H5 | 提供公开配置、使用钉钉官方新版服务端 SDK 完成免登、维护 H5 会话、签发短期业务凭证 |
-| FC 业务接口 | H5 同域 | 前端 H5 | 处理报价单上传、解析、字段识别、合同生成和钉盘上传 |
+| ECS 鉴权接口 | H5 同域 | 前端 H5 | 提供公开配置、使用钉钉官方新版服务端 SDK 完成免登、维护 H5 会话、签发短期业务凭证 |
+| ECS 业务接口 | H5 同域 | 前端 H5 | 处理报价单上传、解析、字段识别、合同生成和钉盘上传 |
 
-前端与 FC 后端同域，使用 Cookie 维护 H5 登录态；业务接口使用 `Authorization: Bearer <agentAccessToken>` 访问。
+前端与 ECS 后端同域，使用 Cookie 维护 H5 登录态；业务接口使用 `Authorization: Bearer <agentAccessToken>` 访问。
 
 ## 3. 通用约定
 
 ### 3.1 请求头
 
-调用 FC 业务接口时，前端必须携带：
+调用 ECS 业务接口时，前端必须携带：
 
 ```http
 Authorization: Bearer <agentAccessToken>
@@ -37,7 +37,7 @@ Content-Type: application/json
 
 ### 3.2 业务错误响应
 
-所有 FC JSON 错误响应应尽量保持一致：
+所有 ECS JSON 错误响应应尽量保持一致：
 
 ```json
 {
@@ -214,7 +214,7 @@ POST /bff/auth/agent-token
 }
 ```
 
-## 6. FC 业务接口
+## 6. ECS 业务接口
 
 ### 6.1 上传报价单
 

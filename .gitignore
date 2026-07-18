@@ -10,6 +10,7 @@ tmp/
 # Local environment files
 .env
 .env.*
+!.env.ecs.example
 
 # Generated app artifacts
 frontend/node_modules/

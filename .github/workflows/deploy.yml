@@ -1,4 +1,4 @@
-name: Deploy to FC
+name: Deploy to ECS
 
 on:
   push:
@@ -36,26 +36,6 @@ jobs:
       - name: Run tests
         run: python3 -m pytest agent/tests
 
-      - name: Build Agent Python wheelhouse
-        run: |
-          set -euo pipefail
-          rm -rf agent/wheelhouse
-          docker pull quay.io/pypa/manylinux_2_28_x86_64
-          for attempt in 1 2 3; do
-            echo "wheelhouse build attempt ${attempt}/3"
-            if docker run --rm \
-              -v "$PWD":/io \
-              -w /io \
-              quay.io/pypa/manylinux_2_28_x86_64 \
-              /opt/python/cp312-cp312/bin/python -m pip wheel \
-                --wheel-dir agent/wheelhouse \
-                -r agent/requirements.txt; then
-              exit 0
-            fi
-            sleep 15
-          done
-          exit 1
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -79,142 +59,68 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     env:
-      ALIYUN_ACCOUNT_ID: ${{ secrets.ALIYUN_ACCOUNT_ID }}
-      ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-      ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
-      DASHSCOPE_MODEL: ${{ secrets.DASHSCOPE_MODEL }}
-      DASHSCOPE_FALLBACK_MODELS: ${{ secrets.DASHSCOPE_FALLBACK_MODELS }}
-      DINGTALK_CLIENT_ID: ${{ secrets.DINGTALK_CLIENT_ID }}
-      DINGTALK_CLIENT_SECRET: ${{ secrets.DINGTALK_CLIENT_SECRET }}
-      DINGTALK_CORP_ID: ${{ secrets.DINGTALK_CORP_ID }}
-      DINGTALK_DRIVE_SPACE_ID: ${{ secrets.DINGTALK_DRIVE_SPACE_ID }}
-      DINGTALK_DRIVE_PARENT_ID: ${{ secrets.DINGTALK_DRIVE_PARENT_ID }}
-      DINGTALK_DRIVE_CONFLICT_POLICY: ${{ secrets.DINGTALK_DRIVE_CONFLICT_POLICY }}
-      YONBIP_APP_KEY: ${{ secrets.YONBIP_APP_KEY }}
-      YONBIP_APP_SECRET: ${{ secrets.YONBIP_APP_SECRET }}
-      YONBIP_GATEWAY_URL: ${{ secrets.YONBIP_GATEWAY_URL }}
-      YONBIP_TOKEN_URL: ${{ secrets.YONBIP_TOKEN_URL }}
-      YONBIP_TENANT_ID: ${{ secrets.YONBIP_TENANT_ID }}
-      APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
-      AGENT_ALLOWED_ORIGINS: ${{ secrets.AGENT_ALLOWED_ORIGINS }}
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_PRIVATE_KEY: ${{ secrets.ECS_SSH_PRIVATE_KEY }}
     concurrency:
-      group: fc-deploy
+      group: ecs-deploy
       cancel-in-progress: true
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: agent/requirements.txt
-
-      - name: Install Serverless Devs
-        run: npm install -g @serverless-devs/s
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install H5 frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Build H5 frontend
-        working-directory: frontend
-        run: npm run build
-
-      - name: Build Agent Python wheelhouse
-        run: |
-          set -euo pipefail
-          rm -rf agent/wheelhouse
-          docker pull quay.io/pypa/manylinux_2_28_x86_64
-          for attempt in 1 2 3; do
-            echo "wheelhouse build attempt ${attempt}/3"
-            if docker run --rm \
-              -v "$PWD":/io \
-              -w /io \
-              quay.io/pypa/manylinux_2_28_x86_64 \
-              /opt/python/cp312-cp312/bin/python -m pip wheel \
-                --wheel-dir agent/wheelhouse \
-                -r agent/requirements.txt; then
-              exit 0
-            fi
-            sleep 15
-          done
-          exit 1
-
-      - name: Configure Aliyun credentials
-        run: |
-          s config add \
-            -a default \
-            --AccountID ${{ secrets.ALIYUN_ACCOUNT_ID }} \
-            --AccessKeyID ${{ secrets.ALIYUN_ACCESS_KEY_ID }} \
-            --AccessKeySecret ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }} \
-            -f
-
-      - name: Verify required secrets for deploy
+      - name: Verify ECS deployment secrets
         run: |
           set -euo pipefail
           missing=""
-          for var in ALIYUN_ACCOUNT_ID ALIYUN_ACCESS_KEY_ID ALIYUN_ACCESS_KEY_SECRET \
-            DASHSCOPE_API_KEY DASHSCOPE_MODEL \
-            DINGTALK_CLIENT_ID DINGTALK_CLIENT_SECRET DINGTALK_CORP_ID \
-            DINGTALK_DRIVE_SPACE_ID DINGTALK_DRIVE_PARENT_ID \
-            YONBIP_APP_KEY YONBIP_APP_SECRET \
-            APP_SESSION_SECRET; do
-            val="$(printenv "$var" || true)"
-            if [ -z "$val" ]; then
+          for var in ECS_HOST ECS_USER ECS_SSH_PRIVATE_KEY; do
+            if [ -z "$(printenv "$var" || true)" ]; then
               missing="$missing $var"
             fi
           done
           if [ -n "${missing# }" ]; then
-            echo "::error::缺少或未配置的环境变量（GitHub Secrets）：${missing# }"
-            echo "请对照 s.yaml 中 environmentVariables 的 env(...) 项补齐后再部署。"
+            echo "::error::缺少 GitHub Actions Secrets：${missing# }"
             exit 1
           fi
 
-      - name: Deploy to FC
-        run: s deploy -t s.yaml --assume-yes
-
-      - name: Get FC URL
-        id: get-url
+      - name: Configure SSH
         run: |
-          s info -t s.yaml
-          URLS="$(s info -t s.yaml 2>/dev/null | grep -Eo 'https?://[^[:space:]]+' || true)"
-          APP_URL=$(echo "$URLS" | tail -1)
-          echo "app_url=$APP_URL" >> "$GITHUB_OUTPUT"
-          if [ -n "$APP_URL" ]; then
-            echo "FC URL: $APP_URL"
-          else
-            echo "::notice::未能从 s info 输出中解析 FC URL，部署已完成，请在函数计算控制台查看自定义域名或函数 HTTP 触发地址。"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$ECS_SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$ECS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Build deployment image
+        run: |
+          docker build --tag "hetong-agui:${GITHUB_SHA}" .
+          docker save "hetong-agui:${GITHUB_SHA}" | gzip > /tmp/hetong-agui-image.tar.gz
+
+      - name: Upload and start ECS release
+        run: |
+          set -euo pipefail
+          scp /tmp/hetong-agui-image.tar.gz docker-compose.ecs.yml \
+            "${ECS_USER}@${ECS_HOST}:/tmp/"
+          ssh "${ECS_USER}@${ECS_HOST}" "GITHUB_SHA='${GITHUB_SHA}' bash -s" <<'REMOTE'
+          set -euo pipefail
+          app_dir=/opt/hetong-agui
+          install -d -m 750 "$app_dir/storage/uploads" "$app_dir/storage/contracts"
+          chown -R 10001:10001 "$app_dir/storage"
+          if [ ! -f "$app_dir/.env" ]; then
+            echo "缺少 $app_dir/.env；请根据 .env.ecs.example 在 ECS 配置运行时密钥。" >&2
+            exit 1
           fi
-
-      - name: H5 page check
-        if: steps.get-url.outputs.app_url != ''
-        run: |
-          APP_URL="${{ steps.get-url.outputs.app_url }}"
-          PAGE="$(curl --fail-with-body --connect-timeout 10 --max-time 60 "$APP_URL")"
-          echo "$PAGE" | grep "合同生成助手"
-          echo "$PAGE" | grep "上传报价单 → 补充信息 → 确认字段 → 生成合同"
-          echo "$PAGE" | grep "accessModal"
-
-      - name: FC health check
-        if: steps.get-url.outputs.app_url != ''
-        run: |
-          sleep 30
-          APP_URL="${{ steps.get-url.outputs.app_url }}"
-          curl --fail-with-body --connect-timeout 10 --max-time 60 --retry 2 --retry-delay 10 --retry-all-errors "${APP_URL}/health"
-
-      - name: Dump FC logs on failure
-        if: failure()
-        run: |
-          s info -t s.yaml || true
-          s logs -t s.yaml --type fail || true
-          s logs -t s.yaml --tail 100 || true
+          install -m 640 /tmp/docker-compose.ecs.yml "$app_dir/docker-compose.ecs.yml"
+          docker load --input /tmp/hetong-agui-image.tar.gz
+          rm -f /tmp/hetong-agui-image.tar.gz /tmp/docker-compose.ecs.yml
+          cd "$app_dir"
+          HETONG_IMAGE="hetong-agui:${GITHUB_SHA}" docker compose -f docker-compose.ecs.yml up -d --remove-orphans
+          for attempt in $(seq 1 12); do
+            health="$(docker inspect --format '{{.State.Health.Status}}' hetong-agui-app 2>/dev/null || true)"
+            if [ "$health" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose -f docker-compose.ecs.yml logs --tail 100 app
+          exit 1
+          REMOTE
