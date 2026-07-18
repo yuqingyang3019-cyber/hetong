@@ -60,8 +60,26 @@ jobs:
     runs-on: ubuntu-latest
     env:
       ECS_HOST: ${{ secrets.ECS_HOST }}
-      ECS_USER: ${{ secrets.ECS_USER }}
       ECS_SSH_PRIVATE_KEY: ${{ secrets.ECS_SSH_PRIVATE_KEY }}
+      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      DASHSCOPE_MODEL: ${{ secrets.DASHSCOPE_MODEL }}
+      DASHSCOPE_FALLBACK_MODELS: ${{ secrets.DASHSCOPE_FALLBACK_MODELS }}
+      ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+      ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+      DINGTALK_CLIENT_ID: ${{ secrets.DINGTALK_CLIENT_ID }}
+      DINGTALK_CLIENT_SECRET: ${{ secrets.DINGTALK_CLIENT_SECRET }}
+      DINGTALK_CORP_ID: ${{ secrets.DINGTALK_CORP_ID }}
+      DINGTALK_DRIVE_SPACE_ID: ${{ secrets.DINGTALK_DRIVE_SPACE_ID }}
+      DINGTALK_DRIVE_PARENT_ID: ${{ secrets.DINGTALK_DRIVE_PARENT_ID }}
+      DINGTALK_DRIVE_CONFLICT_POLICY: ${{ secrets.DINGTALK_DRIVE_CONFLICT_POLICY }}
+      YONBIP_APP_KEY: ${{ secrets.YONBIP_APP_KEY }}
+      YONBIP_APP_SECRET: ${{ secrets.YONBIP_APP_SECRET }}
+      YONBIP_GATEWAY_URL: ${{ secrets.YONBIP_GATEWAY_URL }}
+      YONBIP_TOKEN_URL: ${{ secrets.YONBIP_TOKEN_URL }}
+      YONBIP_TENANT_ID: ${{ secrets.YONBIP_TENANT_ID }}
+      APP_SESSION_SECRET: ${{ secrets.APP_SESSION_SECRET }}
+      AGENT_ALLOWED_ORIGINS: ${{ secrets.AGENT_ALLOWED_ORIGINS }}
+      AGENT_ALLOWED_ORIGIN_REGEX: ${{ secrets.AGENT_ALLOWED_ORIGIN_REGEX }}
     concurrency:
       group: ecs-deploy
       cancel-in-progress: true
@@ -73,7 +91,10 @@ jobs:
         run: |
           set -euo pipefail
           missing=""
-          for var in ECS_HOST ECS_USER ECS_SSH_PRIVATE_KEY; do
+          for var in ECS_HOST ECS_SSH_PRIVATE_KEY DASHSCOPE_API_KEY DASHSCOPE_MODEL \
+            ALIYUN_ACCESS_KEY_ID ALIYUN_ACCESS_KEY_SECRET \
+            DINGTALK_CLIENT_ID DINGTALK_CLIENT_SECRET DINGTALK_CORP_ID \
+            DINGTALK_DRIVE_SPACE_ID DINGTALK_DRIVE_PARENT_ID APP_SESSION_SECRET; do
             if [ -z "$(printenv "$var" || true)" ]; then
               missing="$missing $var"
             fi
@@ -95,23 +116,65 @@ jobs:
           docker build --tag "hetong-agui:${GITHUB_SHA}" .
           docker save "hetong-agui:${GITHUB_SHA}" | gzip > /tmp/hetong-agui-image.tar.gz
 
+      - name: Create runtime environment file
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          values = {
+              "DASHSCOPE_API_KEY": os.environ["DASHSCOPE_API_KEY"],
+              "DASHSCOPE_BASE_URL": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+              "DASHSCOPE_MODEL": os.environ["DASHSCOPE_MODEL"],
+              "DASHSCOPE_FALLBACK_MODELS": os.environ["DASHSCOPE_FALLBACK_MODELS"],
+              "DASHSCOPE_ENABLE_THINKING": "false",
+              "DASHSCOPE_TIMEOUT_SECONDS": "180",
+              "ALIYUN_ACCESS_KEY_ID": os.environ["ALIYUN_ACCESS_KEY_ID"],
+              "ALIYUN_ACCESS_KEY_SECRET": os.environ["ALIYUN_ACCESS_KEY_SECRET"],
+              "ALIYUN_OCR_ENDPOINT": "ocr-api.cn-hangzhou.aliyuncs.com",
+              "ALIYUN_OCR_REGION_ID": "cn-hangzhou",
+              "ALIYUN_OCR_SCENE": "Advanced",
+              "ALIYUN_OCR_OUTPUT_TABLE": "true",
+              "ALIYUN_OCR_LINELESS_TABLE": "false",
+              "DINGTALK_CLIENT_ID": os.environ["DINGTALK_CLIENT_ID"],
+              "DINGTALK_CLIENT_SECRET": os.environ["DINGTALK_CLIENT_SECRET"],
+              "DINGTALK_CORP_ID": os.environ["DINGTALK_CORP_ID"],
+              "DINGTALK_DRIVE_SPACE_ID": os.environ["DINGTALK_DRIVE_SPACE_ID"],
+              "DINGTALK_DRIVE_PARENT_ID": os.environ["DINGTALK_DRIVE_PARENT_ID"],
+              "DINGTALK_DRIVE_CONFLICT_POLICY": os.environ["DINGTALK_DRIVE_CONFLICT_POLICY"] or "AUTO_RENAME",
+              "YONBIP_APP_KEY": os.environ["YONBIP_APP_KEY"],
+              "YONBIP_APP_SECRET": os.environ["YONBIP_APP_SECRET"],
+              "YONBIP_GATEWAY_URL": os.environ["YONBIP_GATEWAY_URL"] or "https://c3.yonyoucloud.com/iuap-api-gateway",
+              "YONBIP_TOKEN_URL": os.environ["YONBIP_TOKEN_URL"] or "https://c3.yonyoucloud.com/iuap-api-gateway",
+              "YONBIP_TENANT_ID": os.environ["YONBIP_TENANT_ID"],
+              "APP_SESSION_SECRET": os.environ["APP_SESSION_SECRET"],
+              "AGENT_ALLOWED_ORIGINS": os.environ["AGENT_ALLOWED_ORIGINS"],
+              "AGENT_ALLOWED_ORIGIN_REGEX": os.environ["AGENT_ALLOWED_ORIGIN_REGEX"],
+              "AGENT_TOKEN_TTL_SEC": "1800",
+              "H5_SESSION_TTL_SEC": "604800",
+          }
+          if any("\n" in value or "\r" in value for value in values.values()):
+              raise SystemExit("运行时密钥不能包含换行符")
+          Path("/tmp/hetong-agui.env").write_text(
+              "".join(f"{key}={value}\n" for key, value in values.items()),
+              encoding="utf-8",
+          )
+          PY
+
       - name: Upload and start ECS release
         run: |
           set -euo pipefail
-          scp /tmp/hetong-agui-image.tar.gz docker-compose.ecs.yml \
-            "${ECS_USER}@${ECS_HOST}:/tmp/"
-          ssh "${ECS_USER}@${ECS_HOST}" "GITHUB_SHA='${GITHUB_SHA}' bash -s" <<'REMOTE'
+          scp /tmp/hetong-agui-image.tar.gz /tmp/hetong-agui.env docker-compose.ecs.yml \
+            "root@${ECS_HOST}:/tmp/"
+          ssh "root@${ECS_HOST}" "GITHUB_SHA='${GITHUB_SHA}' bash -s" <<'REMOTE'
           set -euo pipefail
           app_dir=/opt/hetong-agui
           install -d -m 750 "$app_dir/storage/uploads" "$app_dir/storage/contracts"
           chown -R 10001:10001 "$app_dir/storage"
-          if [ ! -f "$app_dir/.env" ]; then
-            echo "缺少 $app_dir/.env；请根据 .env.ecs.example 在 ECS 配置运行时密钥。" >&2
-            exit 1
-          fi
+          install -m 600 /tmp/hetong-agui.env "$app_dir/.env"
           install -m 640 /tmp/docker-compose.ecs.yml "$app_dir/docker-compose.ecs.yml"
           docker load --input /tmp/hetong-agui-image.tar.gz
-          rm -f /tmp/hetong-agui-image.tar.gz /tmp/docker-compose.ecs.yml
+          rm -f /tmp/hetong-agui-image.tar.gz /tmp/hetong-agui.env /tmp/docker-compose.ecs.yml
           cd "$app_dir"
           HETONG_IMAGE="hetong-agui:${GITHUB_SHA}" docker compose -f docker-compose.ecs.yml up -d --remove-orphans
           for attempt in $(seq 1 12); do
